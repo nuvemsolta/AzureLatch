@@ -1,98 +1,31 @@
---========================================================
--- SAFE EXTERNAL LOADER
---========================================================
-
-local function safeLoadUrl(url, label, required, bypassCache)
-    label = label or url
-
-    local okHttp, source =
-        pcall(function()
-            return game:HttpGet(
-                url,
-                bypassCache == true
-            )
-        end)
-
-    if not okHttp
-        or type(source) ~= "string"
-        or source == "" then
-
-        local message =
-            "[Azure Latch] HTTP load failed for "
-            .. tostring(label)
-            .. ": "
-            .. tostring(source)
-
-        warn(message)
-
-        if required then
-            error(message, 0)
-        end
-
-        return nil
-    end
-
-    if type(loadstring) ~= "function" then
-        local message =
-            "[Azure Latch] loadstring is unavailable in this environment."
-
-        warn(message)
-
-        if required then
-            error(message, 0)
-        end
-
-        return nil
-    end
-
-    local chunk, compileError =
-        loadstring(source)
-
-    if not chunk then
-        local message =
-            "[Azure Latch] Compile failed for "
-            .. tostring(label)
-            .. ": "
-            .. tostring(compileError)
-
-        warn(message)
-
-        if required then
-            error(message, 0)
-        end
-
-        return nil
-    end
-
-    local okRun, result =
-        pcall(chunk)
-
-    if not okRun then
-        local message =
-            "[Azure Latch] Runtime failed for "
-            .. tostring(label)
-            .. ": "
-            .. tostring(result)
-
-        warn(message)
-
-        if required then
-            error(message, 0)
-        end
-
-        return nil
-    end
-
-    return result
-end
-
-local ui =
-    safeLoadUrl(
-        "https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui",
-        "Celeron UI",
-        true
+if game.PlaceId == 139609232261520 then
+    local source = game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/hgghhghghhgg")
+    source = source:gsub(
+        "https://pastebin.com/raw/wk7ZrGyr",
+        "https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui"
     )
 
+    local f, err = loadstring(source)
+    if not f then
+        warn(err)
+        return
+    end
+
+    f()
+else
+
+local uiSource = game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui")
+local uiChunk, uiError = loadstring(uiSource)
+
+if not uiChunk then
+    warn(uiError)
+    return
+end
+
+local ui = uiChunk()
+if not ui then
+    return
+end
 
 local win = ui:Create({
     Name = "Celeron's GUI (Azure Latch)",
@@ -114,91 +47,42 @@ local helptab = win:Tab("Info")
 
 hometab:Label("Script Made By Celeron! Check Info For Additional Credits.")
 hometab:Label("Join The Discord Server In Info For Updates / Suggestions.")
-hometab:Label("Patch: Mobile AutoQTE + Gagamaru Wild Instincts / Scorpion buffs.")
 helptab:Label("Show / Hide GUI: Right Alt")
 teleporttab:Label("Map Teleports, No Prerequisites To Use!")
 misctab:Label("Miscellaneous Features, They Give No Advantages In-Game!")
 exploittab:Label("This Tab Comes With Useful Features.")
 
---- NETWORK BOOTSTRAP
+--- IGNORE THESE
 local buffers = {}
 
-safeLoadUrl(
-    "https://pastebin.com/raw/8XJh7dzh",
-    "ByteNet buffer bootstrap",
-    false
-)
+local bufferSource = game:HttpGet("https://pastebin.com/raw/8XJh7dzh")
+local bufferChunk, bufferError = loadstring(bufferSource)
 
-local bufferFolder =
-    game.Lighting:
-    FindFirstChild("BUFFERSTRINGS")
-
-if not bufferFolder then
-    bufferFolder =
-        game.Lighting:
-        WaitForChild(
-            "BUFFERSTRINGS",
-            8
-        )
-end
-
-if bufferFolder then
-    for _, val in ipairs(
-        bufferFolder:GetChildren()
-    ) do
-        if val:IsA("StringValue") then
-            buffers[val.Name] = val.Value
-        end
-    end
-
-    bufferFolder:Destroy()
+if bufferChunk then
+    bufferChunk()
 else
-    warn(
-        "[Azure Latch] BUFFERSTRINGS was not created. "
-        .. "Remote-dependent features may be unavailable."
-    )
+    warn(bufferError)
 end
 
-buffers.base = buffers.base or ""
-buffers.grabball = buffers.grabball or ""
-
-local bytenetStorage =
-    game:GetService("ReplicatedStorage"):
-    WaitForChild(
-        "BytenetStorage",
-        15
-    )
-
-local networking =
-    bytenetStorage
-    and bytenetStorage:
-        FindFirstChild("Networking")
-
-local role = nil
-
-if networking then
-    role =
-        tostring(networking.Value):
-        match(
-            '"bytenet_selectRole"%s*:%s*(%d+)'
-        )
-
-    role = role
-        and tonumber(role)
-        or nil
+local bufferFolder = game.Lighting:WaitForChild("BUFFERSTRINGS", 10)
+if not bufferFolder then
+    return
 end
 
-local pick =
-    role
-    and string.char(role)
-    or ""
-
-if not role then
-    warn(
-        "[Azure Latch] Could not resolve bytenet_selectRole. "
-        .. "Position-selection features may be unavailable."
-    )
+for _, val in ipairs(bufferFolder:GetChildren()) do
+    buffers[val.Name] = val.Value
 end
+
+bufferFolder:Destroy()
+
+local role = game:GetService("ReplicatedStorage")
+    :WaitForChild("BytenetStorage")
+    :WaitForChild("Networking").Value
+    :match('"bytenet_selectRole"%s*:%s*(%d+)')
+
+role = role and tonumber(role)
+
+local pick = role and string.char(role) or ""
 ---
 
 local Players = game:GetService("Players")
@@ -268,11 +152,11 @@ local meta = maintab:Folder("Metavision Features.", Color3.fromRGB(24, 255, 228)
 meta:Label("Metavision Features.")
 
 meta:Button("Metavision V1", "This Feature Emulates Having Isagi's Metavision From The Show.", function()
-    safeLoadUrl("https://pastebin.com/raw/FVgs7bQw", "Metavision V1", false)
+    loadstring(game:HttpGet("https://pastebin.com/raw/FVgs7bQw"))()
 end)
 
 meta:Button("Metavision V2", "Similar To V1, Only Can Be Used Below 1:30 On Clock, Click Puzzle Piece To Activate.", function()
-    safeLoadUrl("https://pastebin.com/raw/HfpQBAsF", "Metavision V2", false)
+    loadstring(game:HttpGet("https://pastebin.com/raw/HfpQBAsF"))()
 end)
 
 local ballfolder = maintab:Folder("Ball Features.", Color3.fromRGB(24, 255, 228), true)
@@ -2109,7 +1993,7 @@ add:Toggle("Kick Like Kaiser", "Makes You Kick Like Kaiser!1!11!", function(stat
 end)
 
 add:Button("Shachoko GK Catch (Req. GK Position.)", "Makes It Almost Impossible To Be Scored On As GK And Does Shachoko Kick.", function()
-safeLoadUrl("https://pastebin.com/raw/Hr1HnK38", "Shachoko GK Catch", false)
+loadstring(game:HttpGet("https://pastebin.com/raw/Hr1HnK38"))()
 end)
 
 local oth = maintab:Folder("Other Blatant Features.", Color3.fromRGB(24, 255, 228), true)
@@ -2676,23 +2560,18 @@ local DashConfigs = {
     },
     WildInstincts = {
         animId = nil,
-        sliderVar = "wildInstinctDist",
-        duration = 0.5,
+        sliderVar = "wildInstinctsDist",
+        duration = 0.4,
         cooldown = 0.15,
-        wait = 0,
-        useTrackLength = true,
-        minDuration = 0.20,
-        maxDuration = 1.50
+        wait = 0.05,
+        useMoveDirection = true
     },
     Scorpion = {
         animId = nil,
         sliderVar = "scorpionDist",
-        duration = 0.45,
+        duration = 0.35,
         cooldown = 0.15,
-        wait = 0,
-        useTrackLength = true,
-        minDuration = 0.18,
-        maxDuration = 1.25
+        wait = 0.05
     },
     ReflexTackle = {
         animId = "rbxassetid://113088324958896",
@@ -2895,140 +2774,11 @@ for _, cfg in pairs(DashConfigs) do
     Distances[cfg.sliderVar] = 0
 end
 
-local env =
-    type(getgenv) == "function"
-    and getgenv()
-    or _G
-
-env.AzureLatchGagamaruAnimations =
-    env.AzureLatchGagamaruAnimations
-    or {}
-
-local gagamaruCaptureState = {
-    pending = nil,
-    expiresAt = 0,
-}
-
-local function moveBuffNotify(title, message)
-    pcall(function()
-        StarterGui:
-            SetCore(
-                "SendNotification",
-                {
-                    Title = title,
-                    Text = message,
-                    Duration = 4,
-                }
-            )
-    end)
-end
-
-local function applySavedGagamaruAnimations()
-    local saved =
-        env.AzureLatchGagamaruAnimations
-
-    if type(saved.WildInstincts) == "string"
-        and saved.WildInstincts ~= "" then
-
-        DashConfigs.WildInstincts.animId =
-            saved.WildInstincts
-    end
-
-    if type(saved.Scorpion) == "string"
-        and saved.Scorpion ~= "" then
-
-        DashConfigs.Scorpion.animId =
-            saved.Scorpion
-    end
-end
-
-applySavedGagamaruAnimations()
-
-local function beginGagamaruCapture(name)
-    if not DashConfigs[name] then
-        return
-    end
-
-    gagamaruCaptureState.pending =
-        name
-
-    gagamaruCaptureState.expiresAt =
-        os.clock() + 10
-
-    moveBuffNotify(
-        "Gagamaru Move Learner",
-        "Use "
-        .. (
-            name == "WildInstincts"
-            and "Wild Instincts"
-            or "Scorpion"
-        )
-        .. " now."
-    )
-end
-
-local function tryCaptureGagamaruMove(track)
-    local name =
-        gagamaruCaptureState.pending
-
-    if not name then
-        return false
-    end
-
-    if os.clock()
-        > gagamaruCaptureState.expiresAt then
-
-        gagamaruCaptureState.pending =
-            nil
-
-        moveBuffNotify(
-            "Gagamaru Move Learner",
-            "Capture timed out. Press Learn again."
-        )
-
-        return false
-    end
-
-    if not track
-        or not track.Animation then
-        return false
-    end
-
-    local id =
-        track.Animation.AnimationId
-
-    if type(id) ~= "string"
-        or id == ""
-        or id == "rbxassetid://0" then
-        return false
-    end
-
-    DashConfigs[name].animId =
-        id
-
-    env.AzureLatchGagamaruAnimations[name] =
-        id
-
-    gagamaruCaptureState.pending =
-        nil
-
-    moveBuffNotify(
-        "Gagamaru Move Learned",
-        (
-            name == "WildInstincts"
-            and "Wild Instincts: "
-            or "Scorpion: "
-        )
-        .. id
-    )
-
-    return true
-end
+local gagamaruCapture = nil
 
 local ActiveDashes = {}
 local cachedHRP = nil
 local renderConn = nil
-local MoveCooldowns = {}
 
 local ZERO = Vector3.new()
 local DEFAULT_DIR = Vector3.new(0,0,1)
@@ -3056,7 +2806,9 @@ local function updateDashes(dt)
         local step = dash.cfg.isUnlimited and (dash.speed * dt) or math.min(dash.speed * dt, dash.remaining)
         local moveDir
 
-        if dash.isDirectional then
+        if dash.moveDir then
+            moveDir = dash.moveDir
+        elseif dash.isDirectional then
             local baseLook = hrp.CFrame.LookVector
             local right = baseLook:Cross(Vector3.new(0,1,0))
             local offset = dash.offset
@@ -3091,112 +2843,76 @@ local function startUpdateIfNeeded()
 end
 
 local function startDash(hrp, cfg, track, directionName)
-    local dist =
-        Distances[cfg.sliderVar]
+    local dist = Distances[cfg.sliderVar]
+    if dist <= 0 then return end
+    
+    task.delay(cfg.wait or 0, function()
+        if not hrp or not hrp.Parent then return end
+        
+        local dash = {
+            hrp = hrp,
+            remaining = dist,
+            cfg = cfg,
+            isDirectional = cfg.isDirectional == true
+        }
 
-    if not dist
-        or dist <= 0 then
-        return
-    end
+        if cfg.useMoveDirection then
+            local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+            local dir = hum and hum.MoveDirection or Vector3.new()
 
-    local now = os.clock()
-    local last =
-        MoveCooldowns[cfg]
-
-    if last
-        and now - last
-            < (cfg.cooldown or 0) then
-        return
-    end
-
-    MoveCooldowns[cfg] = now
-
-    task.delay(
-        cfg.wait or 0,
-        function()
-            if not hrp
-                or not hrp.Parent then
-                return
-            end
-
-            local dash = {
-                hrp = hrp,
-                remaining = dist,
-                cfg = cfg,
-                isDirectional =
-                    cfg.isDirectional == true,
-            }
-
-            if dash.isDirectional
-                and directionName then
-
-                dash.offset =
-                    DirectionOffsets[directionName]
-                    or Vector3.new(0, 0, 1)
-            end
-
-            if cfg.isUnlimited then
-                dash.remaining = math.huge
-                dash.speed =
-                    cfg.speed or 150
+            if dir.Magnitude > 0.01 then
+                dash.moveDir = Vector3.new(dir.X, 0, dir.Z).Unit
             else
-                local duration =
-                    cfg.duration or 0.4
+                local vel = hrp.AssemblyLinearVelocity
+                local flatVel = Vector3.new(vel.X, 0, vel.Z)
 
-                if cfg.useTrackLength
-                    and track
-                    and track.Length
-                    and track.Length > 0.05 then
-
-                    duration =
-                        math.clamp(
-                            track.Length,
-                            cfg.minDuration or 0.15,
-                            cfg.maxDuration or 2
-                        )
+                if flatVel.Magnitude > 0.01 then
+                    dash.moveDir = flatVel.Unit
                 end
-
-                dash.speed =
-                    dist
-                    / math.max(
-                        duration,
-                        0.05
-                    )
             end
-
-            if track then
-                local stoppedConn = nil
-
-                stoppedConn =
-                    track.Stopped:
-                    Connect(function()
-                        dash.remaining = 0
-
-                        if stoppedConn then
-                            stoppedConn:
-                                Disconnect()
-
-                            stoppedConn = nil
-                        end
-                    end)
-            end
-
-            table.insert(
-                ActiveDashes,
-                dash
-            )
-
-            startUpdateIfNeeded()
         end
-    )
+        
+        if dash.isDirectional and directionName then
+            dash.offset = DirectionOffsets[directionName] or Vector3.new(0,0,1)
+        end
+
+        if cfg.isUnlimited then
+            dash.remaining = math.huge
+            dash.speed = cfg.speed
+            if track then
+                local stoppedConn
+                stoppedConn = track.Stopped:Connect(function()
+                    dash.remaining = 0
+                    if stoppedConn then stoppedConn:Disconnect() end
+                end)
+            end
+        else
+            dash.speed = dist / cfg.duration
+        end
+        
+        table.insert(ActiveDashes, dash)
+        startUpdateIfNeeded()
+    end)
 end
 
 local function onAnimationPlayed(track)
     if not track.Animation then return end
-
-    tryCaptureGagamaruMove(track)
-
     local id = track.Animation.AnimationId
+
+    if gagamaruCapture and DashConfigs[gagamaruCapture] then
+        DashConfigs[gagamaruCapture].animId = id
+
+        local moveName = gagamaruCapture == "WildInstincts" and "Wild Instincts" or "Scorpion"
+        gagamaruCapture = nil
+
+        pcall(function()
+            game.StarterGui:SetCore("SendNotification", {
+                Title = moveName,
+                Text = id,
+                Duration = 5
+            })
+        end)
+    end
     
     for _, cfg in pairs(DashConfigs) do
         local match = false
@@ -3216,13 +2932,8 @@ local function onAnimationPlayed(track)
         if match then
             if cachedHRP and cachedHRP.Parent then
                 if cfg.requiresBall then
-                    local ball =
-                        cachedHRP.Parent:
-                        FindFirstChild("Ball")
-
-                    if not ball then
-                        continue
-                    end
+                    local ball = cachedHRP.Parent:FindFirstChild("Ball")
+                    if not ball or not ball:IsA("MeshPart") then continue end
                 end
                 startDash(cachedHRP, cfg, track, directionName)
             end
@@ -3293,67 +3004,21 @@ d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
     Distances.divingDist = v
 end)
 
-d:Slider(
-    "Wild Instincts Distance",
-    0,
-    0,
-    250,
-    1,
-    function(v)
-        Distances.wildInstinctDist = v
-    end
-)
+d:Slider("Wild Instincts Distance", 0, 0, 200, 1, function(v)
+    Distances.wildInstinctsDist = v
+end)
 
-d:Slider(
-    "Scorpion Distance",
-    0,
-    0,
-    250,
-    1,
-    function(v)
-        Distances.scorpionDist = v
-    end
-)
+d:Slider("Scorpion Distance", 0, 0, 200, 1, function(v)
+    Distances.scorpionDist = v
+end)
 
-d:Button(
-    "Learn Wild Instincts Animation",
-    "Press this, then use Wild Instincts once. The real AnimationId is learned automatically.",
-    function()
-        beginGagamaruCapture(
-            "WildInstincts"
-        )
-    end
-)
+d:Button("Set Wild Instincts", "Capture animation.", function()
+    gagamaruCapture = "WildInstincts"
+end)
 
-d:Button(
-    "Learn Scorpion Animation",
-    "Press this, then use Scorpion once. The real AnimationId is learned automatically.",
-    function()
-        beginGagamaruCapture(
-            "Scorpion"
-        )
-    end
-)
-
-d:Button(
-    "Show Learned Gagamaru IDs",
-    "Shows the learned AnimationIds for the two new move buffs.",
-    function()
-        moveBuffNotify(
-            "Gagamaru IDs",
-            "Wild Instincts: "
-            .. tostring(
-                DashConfigs.WildInstincts.animId
-                or "not learned"
-            )
-            .. " | Scorpion: "
-            .. tostring(
-                DashConfigs.Scorpion.animId
-                or "not learned"
-            )
-        )
-    end
-)
+d:Button("Set Scorpion", "Capture animation.", function()
+    gagamaruCapture = "Scorpion"
+end)
 
 d:Label("Aiku Movement Buffs.")
 d:Slider("Reflex Tackle Distance", 0, 0, 125, 1, function(v)
@@ -5044,382 +4709,94 @@ othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 
 local qteState = {
     enabled = false,
-    processing = false,
-    delay = 0.863,
-    lastButton = nil,
+    connection = nil,
+    processing = false
 }
 
-local function qteNotify(status)
-    if autoSkillState
-        and autoSkillState.suppressNotifs then
+local QTE_DELAY = 0.863
+
+local function clickTargetButton(btn)
+    if firesignal then
+        pcall(firesignal, btn.Activated)
+        pcall(firesignal, btn.MouseButton1Click)
         return
     end
 
-    pcall(function()
-        StarterGui:
-            SetCore(
-                "SendNotification",
-                {
-                    Title = "QuickTimeEvent",
-                    Text = status,
-                    Duration = 1,
-                }
-            )
-    end)
+    if getconnections then
+        for _, signal in ipairs({btn.Activated, btn.MouseButton1Click}) do
+            for _, conn in ipairs(getconnections(signal)) do
+                conn:Fire()
+            end
+        end
+    end
 end
 
-local function clickQTEButton(btn)
-    if not btn
-        or not btn.Parent then
-        return false
+local function checkQTE()
+    if not qteState.enabled or qteState.processing then return end
+
+    local player = game:GetService("Players").LocalPlayer
+    local playerGui = player and player:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+
+    local qteGui = playerGui:FindFirstChild("Qte") or playerGui:FindFirstChild("QTE")
+    if not qteGui then return end
+
+    if qteGui:IsA("ScreenGui") and not qteGui.Enabled then
+        return
     end
 
-    local fired = false
+    local qteGroup = qteGui:FindFirstChild("QTE") or qteGui:FindFirstChild("CanvasGroup")
+    local targetButton = qteGroup and qteGroup:FindFirstChild("Button")
 
-    if type(firesignal) == "function" then
-        local ok1 =
-            pcall(
-                firesignal,
-                btn.Activated
-            )
-
-        local ok2 =
-            pcall(
-                firesignal,
-                btn.MouseButton1Click
-            )
-
-        fired = ok1 or ok2
-    end
-
-    if not fired
-        and type(getconnections) == "function" then
-
-        for _, signal in ipairs({
-            btn.Activated,
-            btn.MouseButton1Click,
-        }) do
-            local okList, list =
-                pcall(
-                    getconnections,
-                    signal
-                )
-
-            if okList
-                and type(list) == "table" then
-
-                for _, conn in ipairs(list) do
-                    local okFire =
-                        pcall(function()
-                            if type(conn.Fire) == "function" then
-                                conn:Fire()
-                            elseif type(conn.Function) == "function" then
-                                conn.Function()
-                            end
-                        end)
-
-                    fired = fired or okFire
-                end
+    if not targetButton then
+        for _, v in ipairs(qteGui:GetDescendants()) do
+            if v:IsA("TextButton") and v.Name == "Button" then
+                targetButton = v
+                break
             end
         end
     end
 
-    return fired
-end
+    if targetButton then
+        qteState.processing = true
 
-local function findQTEGui()
-    local playerGui =
-        Players.LocalPlayer:
-        FindFirstChild("PlayerGui")
+        task.spawn(function()
+            task.wait(QTE_DELAY)
 
-    if not playerGui then
-        return nil
-    end
+            if qteState.enabled and targetButton and targetButton.Parent then
+                clickTargetButton(targetButton)
+            end
 
-    return playerGui:
-        FindFirstChild("Qte")
-        or playerGui:
-        FindFirstChild("QTE")
-end
-
-local function findQTEButton(qteGui)
-    if not qteGui then
-        return nil
-    end
-
-    local qteGroup =
-        qteGui:
-        FindFirstChild("QTE")
-        or qteGui:
-        FindFirstChild("CanvasGroup")
-
-    if qteGroup then
-        local direct =
-            qteGroup:
-            FindFirstChild("Button")
-
-        if direct
-            and direct:IsA("GuiButton") then
-            return direct
-        end
-    end
-
-    for _, object in ipairs(
-        qteGui:GetDescendants()
-    ) do
-        if object:IsA("GuiButton")
-            and object.Name == "Button" then
-            return object
-        end
-    end
-
-    for _, object in ipairs(
-        qteGui:GetDescendants()
-    ) do
-        if object:IsA("GuiButton")
-            and object.Visible then
-            return object
-        end
-    end
-
-    return nil
-end
-
-local function convertNumberToKeyText(value)
-    local map = {
-        ["1"] = "One",
-        ["2"] = "Two",
-        ["3"] = "Three",
-        ["4"] = "Four",
-        ["5"] = "Five",
-        ["6"] = "Six",
-        ["7"] = "Seven",
-        ["8"] = "Eight",
-        ["9"] = "Nine",
-        ["0"] = "Zero",
-    }
-
-    return map[value] or value
-end
-
-local function isShadeOfGreen(color)
-    return color.G > color.R
-        and color.G > color.B
-end
-
-local function keyboardQTEFallback(qteGui)
-    if not qteGui then
-        return false
-    end
-
-    local group =
-        qteGui:
-        FindFirstChild("QTE")
-        or qteGui
-
-    local green = false
-
-    for _, object in ipairs(
-        group:GetDescendants()
-    ) do
-        if object:IsA("GuiObject")
-            and object.Visible
-            and isShadeOfGreen(
-                object.BackgroundColor3
-            ) then
-
-            green = true
-            break
-        end
-    end
-
-    if not green then
-        return false
-    end
-
-    local label =
-        group:
-        FindFirstChild(
-            "TextLabel",
-            true
-        )
-
-    if not label
-        or not label:IsA("TextLabel") then
-        return false
-    end
-
-    local keyName =
-        convertNumberToKeyText(
-            label.Text
-        )
-
-    local keyCode =
-        Enum.KeyCode[keyName]
-
-    if not keyCode then
-        return false
-    end
-
-    return pcall(function()
-        local vim =
-            game:GetService(
-                "VirtualInputManager"
-            )
-
-        vim:
-            SendKeyEvent(
-                true,
-                keyCode,
-                false,
-                game
-            )
-
-        task.wait()
-
-        vim:
-            SendKeyEvent(
-                false,
-                keyCode,
-                false,
-                game
-            )
-    end)
-end
-
-local function checkQTE()
-    if not qteState.enabled
-        or qteState.processing then
-        return
-    end
-
-    local qteGui =
-        findQTEGui()
-
-    if not qteGui then
-        qteState.lastButton = nil
-        return
-    end
-
-    if qteGui:IsA("ScreenGui")
-        and not qteGui.Enabled then
-        qteState.lastButton = nil
-        return
-    end
-
-    local targetButton =
-        findQTEButton(qteGui)
-
-    if not targetButton then
-        return
-    end
-
-    if qteState.lastButton == targetButton then
-        return
-    end
-
-    qteState.lastButton = targetButton
-    qteState.processing = true
-
-    task.spawn(function()
-        task.wait(qteState.delay)
-
-        if not qteState.enabled then
+            task.wait(0.5)
             qteState.processing = false
-            return
-        end
-
-        local directWorked =
-            clickQTEButton(
-                targetButton
-            )
-
-        if not directWorked then
-            keyboardQTEFallback(
-                qteGui
-            )
-        end
-
-        task.wait(0.35)
-
-        qteState.processing = false
-
-        if not targetButton.Parent
-            or not targetButton.Visible then
-
-            qteState.lastButton = nil
-        else
-            task.delay(
-                0.35,
-                function()
-                    if qteState.lastButton
-                        == targetButton then
-
-                        qteState.lastButton =
-                            nil
-                    end
-                end
-            )
-        end
-    end)
+        end)
+    end
 end
 
-RunService.RenderStepped:
-    Connect(checkQTE)
+othersil:Toggle("Auto QuickTimeEvent", "Automatically Does QuickTimeEvents, How Else Can I Explain It?", function()
+    qteState.enabled = not qteState.enabled
 
-othersil:Toggle(
-    "Auto QuickTimeEvent",
-    "Mobile-ready Auto QTE. Directly activates the QTE button after the reaction delay, with keyboard fallback.",
-    function(value)
-        if type(value) == "boolean" then
-            qteState.enabled = value
-        else
-            qteState.enabled =
-                not qteState.enabled
+    if qteState.enabled then
+        if not qteState.connection then
+            qteState.connection = game:GetService("RunService").RenderStepped:Connect(checkQTE)
+        end
+    else
+        if qteState.connection then
+            qteState.connection:Disconnect()
+            qteState.connection = nil
         end
 
         qteState.processing = false
-        qteState.lastButton = nil
-
-        qteNotify(
-            qteState.enabled
-            and "Enabled - mobile direct-button mode."
-            or "Disabled."
-        )
     end
-)
 
-othersil:Slider(
-    "Auto QTE Delay",
-    0.863,
-    0.05,
-    1.5,
-    0.01,
-    function(value)
-        qteState.delay = value
+    if not autoSkillState.suppressNotifs then
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "QuickTimeEvent",
+            Text = qteState.enabled and "Enabled." or "Disabled.",
+            Duration = 1
+        })
     end
-)
-
-othersil:Button(
-    "Test / Scan Auto QTE",
-    "Reports whether the current QTE button can be found.",
-    function()
-        local button =
-            findQTEButton(
-                findQTEGui()
-            )
-
-        qteNotify(
-            button
-            and (
-                "Found: "
-                .. button:GetFullName()
-            )
-            or "No QTE button is visible right now."
-        )
-    end
-)
-
+end)
 
 local teamHighlightActive = false
 local highlightFolder = nil
@@ -6217,7 +5594,7 @@ funtab:Button("Goku Moveset (Req. Isagi)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/goku%20moveset%20(azl)", "Goku Moveset", false, true)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/goku%20moveset%20(azl)",true))()
 end)
 
 funtab:Button("Aizen Moveset (Req. Isagi)", "Click F4 To Disable.", function()
@@ -6228,7 +5605,7 @@ funtab:Button("Aizen Moveset (Req. Isagi)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/aizen%20moveset", "Aizen Moveset", false, true)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/aizen%20moveset",true))()
 end)
 
 funtab:Button("Loki Moveset (V2) (Req. Isagi.)", "Click F4 To Disable, Rejoin To Fix Isagi Music.", function()
@@ -6239,11 +5616,11 @@ funtab:Button("Loki Moveset (V2) (Req. Isagi.)", "Click F4 To Disable, Rejoin To
         Duration = 5,
         Button1 = "OK",
     })
-    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/loki%20v2", "Loki Moveset V2", false)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/loki%20v2"))()
 end)
 
 funtab:Button("Ronaldo Moveset (V3) (Req. Shidou)", "Click F4 To Disable.", function()
-    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ronaldov3", "Ronaldo Moveset V3", false)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ronaldov3"))()
 end)
 
 funtab:Label("Daffy's Movesets.")
@@ -6256,7 +5633,7 @@ funtab:Button("Gojo Moveset (Req. Isagi.)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    safeLoadUrl("https://pastebin.com/raw/TH8xDy9X", "Gojo Moveset", false)
+    loadstring(game:HttpGet("https://pastebin.com/raw/TH8xDy9X"))()
 end)
 
 funtab:Button("Hugo Moveset (Early Access.) (Req. Kunigami)", "Click F4 To Disable, Rejoin To Fix Kunigami Music.", function()
@@ -6267,7 +5644,7 @@ funtab:Button("Hugo Moveset (Early Access.) (Req. Kunigami)", "Click F4 To Disab
         Duration = 5,
         Button1 = "OK",
     })
-safeLoadUrl("https://pastebin.com/raw/ND6yrPyk", "Hugo Moveset", false)
+loadstring(game:HttpGet("https://pastebin.com/raw/ND6yrPyk"))()
 end)
 
 funtab:Button("Naoya Moveset (Req. Sae)", "Click F4 To Disable.", function()
@@ -6278,11 +5655,11 @@ funtab:Button("Naoya Moveset (Req. Sae)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    safeLoadUrl("https://pastebin.com/raw/PDwm0ZcF", "Naoya Moveset", false)
+    loadstring(game:HttpGet("https://pastebin.com/raw/PDwm0ZcF"))()
 end)
 
 misctab:Button("Infinite Yield", function()
-    safeLoadUrl("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source", "Infinite Yield", false)
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
 end)
 
 teleporttab:Button("Middle Field", function()
@@ -6860,6 +6237,18 @@ exploittab:Textbox("Goal Target", "Enter A Number Of Goals To Stop Farming At.",
     end
 end)
 
-safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep", "Celeron legacy extension", false, true)
-safeLoadUrl("https://pastebin.com/raw/rQMS2B9R", "Celeron optional extension", false, true)
-safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users", "Owner anti-abuse", false)
+pcall(function()
+    local f = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep",true))
+    if f then f() end
+end)
+
+pcall(function()
+    local f = loadstring(game:HttpGet("https://pastebin.com/raw/rQMS2B9R",true))
+    if f then f() end
+end)
+
+pcall(function()
+    local f = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users"))
+    if f then f() end
+end)
+end
