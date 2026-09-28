@@ -14,18 +14,7 @@ if game.PlaceId == 139609232261520 then
     f()
 else
 
-local uiSource = game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui")
-local uiChunk, uiError = loadstring(uiSource)
-
-if not uiChunk then
-    warn(uiError)
-    return
-end
-
-local ui = uiChunk()
-if not ui then
-    return
-end
+local ui = (assert(loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui"))))()
 
 local win = ui:Create({
     Name = "Celeron's GUI (Azure Latch)",
@@ -55,25 +44,27 @@ exploittab:Label("This Tab Comes With Useful Features.")
 --- IGNORE THESE
 local buffers = {}
 
-local bufferSource = game:HttpGet("https://pastebin.com/raw/8XJh7dzh")
-local bufferChunk, bufferError = loadstring(bufferSource)
+do
+    local source = game:HttpGet("https://pastebin.com/raw/8XJh7dzh")
+    local f, err = loadstring(source)
 
-if bufferChunk then
-    bufferChunk()
-else
-    warn(bufferError)
+    if not f then
+        warn(err)
+        return
+    end
+
+    f()
 end
 
-local bufferFolder = game.Lighting:WaitForChild("BUFFERSTRINGS", 10)
-if not bufferFolder then
-    return
-end
+repeat
+    task.wait()
+until game.Lighting:FindFirstChild("BUFFERSTRINGS")
 
-for _, val in ipairs(bufferFolder:GetChildren()) do
+for _, val in ipairs(game.Lighting:FindFirstChild("BUFFERSTRINGS"):GetChildren()) do
     buffers[val.Name] = val.Value
 end
 
-bufferFolder:Destroy()
+game.Lighting:FindFirstChild("BUFFERSTRINGS"):Destroy()
 
 local role = game:GetService("ReplicatedStorage")
     :WaitForChild("BytenetStorage")
@@ -2774,8 +2765,6 @@ for _, cfg in pairs(DashConfigs) do
     Distances[cfg.sliderVar] = 0
 end
 
-local gagamaruCapture = nil
-
 local ActiveDashes = {}
 local cachedHRP = nil
 local renderConn = nil
@@ -2899,11 +2888,11 @@ local function onAnimationPlayed(track)
     if not track.Animation then return end
     local id = track.Animation.AnimationId
 
-    if gagamaruCapture and DashConfigs[gagamaruCapture] then
-        DashConfigs[gagamaruCapture].animId = id
+    if Distances.__gagamaruCapture and DashConfigs[Distances.__gagamaruCapture] then
+        DashConfigs[Distances.__gagamaruCapture].animId = id
 
-        local moveName = gagamaruCapture == "WildInstincts" and "Wild Instincts" or "Scorpion"
-        gagamaruCapture = nil
+        local moveName = Distances.__gagamaruCapture == "WildInstincts" and "Wild Instincts" or "Scorpion"
+        Distances.__gagamaruCapture = nil
 
         pcall(function()
             game.StarterGui:SetCore("SendNotification", {
@@ -3013,11 +3002,11 @@ d:Slider("Scorpion Distance", 0, 0, 200, 1, function(v)
 end)
 
 d:Button("Set Wild Instincts", "Capture animation.", function()
-    gagamaruCapture = "WildInstincts"
+    Distances.__gagamaruCapture = "WildInstincts"
 end)
 
 d:Button("Set Scorpion", "Capture animation.", function()
-    gagamaruCapture = "Scorpion"
+    Distances.__gagamaruCapture = "Scorpion"
 end)
 
 d:Label("Aiku Movement Buffs.")
@@ -4707,6 +4696,7 @@ end)
 local othersil = maintab2:Folder("Other Features.", Color3.fromRGB(24, 255, 228), true)
 othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 
+do
 local qteState = {
     enabled = false,
     connection = nil,
@@ -4797,6 +4787,8 @@ othersil:Toggle("Auto QuickTimeEvent", "Automatically Does QuickTimeEvents, How 
         })
     end
 end)
+
+end
 
 local teamHighlightActive = false
 local highlightFolder = nil
