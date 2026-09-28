@@ -111,6 +111,7 @@ helptab:Label("Main Scripter: Celeron.")
 helptab:Label("Custom UI + Some Features: Daffy.")
 helptab:Label("GK Anywhere Feature: Ashura.")
 helptab:Label("Auto Config: Serlicia.")
+helptab:Label("Additional Help: Nuvem.")
 
 if math.random(1,50) == 1 then
     hometab:Banner("17327779381", 385)
@@ -2550,19 +2551,22 @@ local DashConfigs = {
         wait = 0.05
     },
     WildInstincts = {
-        animId = nil,
+        animId = "rbxassetid://136359194332511",
         sliderVar = "wildInstinctsDist",
-        duration = 0.4,
+        duration = 1.25,
         cooldown = 0.15,
-        wait = 0.05,
-        useMoveDirection = true
+        wait = 0,
+        scaleNaturalMotion = true,
+        moveName = "WildInstincts"
     },
     Scorpion = {
-        animId = nil,
+        animId = "rbxassetid://136359194332511",
         sliderVar = "scorpionDist",
-        duration = 0.35,
+        duration = 1.0,
         cooldown = 0.15,
-        wait = 0.05
+        wait = 0,
+        scaleNaturalMotion = true,
+        moveName = "Scorpion"
     },
     ReflexTackle = {
         animId = "rbxassetid://113088324958896",
@@ -2765,6 +2769,26 @@ for _, cfg in pairs(DashConfigs) do
     Distances[cfg.sliderVar] = 0
 end
 
+Distances.__cooldowns = {}
+
+for _, cfg in pairs(DashConfigs) do
+    if cfg.animId then
+        cfg._animId = tostring(cfg.animId):match("%d+")
+    end
+
+    if cfg.animIds then
+        cfg._animIds = {}
+
+        for rawId, value in pairs(cfg.animIds) do
+            local normalized = tostring(rawId):match("%d+")
+
+            if normalized then
+                cfg._animIds[normalized] = value
+            end
+        end
+    end
+end
+
 local ActiveDashes = {}
 local cachedHRP = nil
 local renderConn = nil
@@ -2784,41 +2808,130 @@ local DirectionOffsets = {
 }
 
 local function updateDashes(dt)
+    local safeDt = math.min(dt, 1 / 30)
+
     for i = #ActiveDashes, 1, -1 do
         local dash = ActiveDashes[i]
         local hrp = dash.hrp
-        if not hrp or not hrp.Parent then
+
+        if not hrp or not hrp.Parent or dash.cancelled then
             table.remove(ActiveDashes, i)
             continue
         end
 
-        local step = dash.cfg.isUnlimited and (dash.speed * dt) or math.min(dash.speed * dt, dash.remaining)
+        if dash.expiresAt and os.clock() >= dash.expiresAt then
+            table.remove(ActiveDashes, i)
+            continue
+        end
+
+        if dash.scaleNaturalMotion then
+            local currentPos = hrp.Position
+            local rawDelta = Vector3.new(
+                currentPos.X - dash.lastPosition.X,
+                0,
+                currentPos.Z - dash.lastPosition.Z
+            )
+
+            local rawMag = rawDelta.Magnitude
+
+            if rawMag > 0.001 then
+                if rawMag > 8 then
+                    rawDelta = rawDelta.Unit * 8
+                    rawMag = 8
+                end
+
+                local extra = rawDelta * dash.multiplier
+                local extraCap = math.min(
+                    3,
+                    math.max(1.25, rawMag * 1.5)
+                )
+
+                if extra.Magnitude > extraCap then
+                    extra = extra.Unit * extraCap
+                end
+
+                if extra.Magnitude > 0.001 then
+                    hrp.CFrame = hrp.CFrame + extra
+                end
+            end
+
+            dash.lastPosition = hrp.Position
+            continue
+        end
+
+        local step
+
+        if dash.cfg.isUnlimited then
+            step = dash.speed * safeDt
+        else
+            step = math.min(
+                dash.speed * safeDt,
+                dash.remaining
+            )
+        end
+
         local moveDir
 
         if dash.moveDir then
             moveDir = dash.moveDir
         elseif dash.isDirectional then
             local baseLook = hrp.CFrame.LookVector
-            local right = baseLook:Cross(Vector3.new(0,1,0))
+            local right = baseLook:Cross(Vector3.new(0, 1, 0))
             local offset = dash.offset
-            moveDir = (right * -offset.X + baseLook * offset.Z).Unit
+            local rawDir =
+                right * -offset.X
+                + baseLook * offset.Z
+
+            local flatDir =
+                Vector3.new(
+                    rawDir.X,
+                    0,
+                    rawDir.Z
+                )
+
+            moveDir =
+                flatDir.Magnitude > 0.01
+                and flatDir.Unit
+                or DEFAULT_DIR
         else
             local look = hrp.CFrame.LookVector
-            moveDir = Vector3.new(look.X, 0, look.Z).Unit
-            if moveDir.Magnitude < 0.01 then
-                moveDir = DEFAULT_DIR
+            local flatLook =
+                Vector3.new(
+                    look.X,
+                    0,
+                    look.Z
+                )
+
+            moveDir =
+                flatLook.Magnitude > 0.01
+                and flatLook.Unit
+                or DEFAULT_DIR
+        end
+
+        local newPos =
+            hrp.Position
+            + moveDir * step
+
+        hrp.CFrame =
+            CFrame.new(
+                newPos.X,
+                hrp.Position.Y,
+                newPos.Z
+            )
+            * CFrame.new(
+                ZERO,
+                moveDir
+            )
+
+        if not dash.cfg.isUnlimited then
+            dash.remaining -= step
+
+            if dash.remaining <= 0.001 then
+                table.remove(ActiveDashes, i)
             end
         end
-
-        local newPos = hrp.Position + moveDir * step
-        hrp.CFrame = CFrame.new(newPos.X, hrp.Position.Y, newPos.Z) * CFrame.new(ZERO, moveDir)
-
-        dash.remaining = dash.remaining - step
-        if dash.remaining <= 0 then
-            table.remove(ActiveDashes, i)
-        end
     end
-    
+
     if #ActiveDashes == 0 and renderConn then
         renderConn:Disconnect()
         renderConn = nil
@@ -2827,58 +2940,124 @@ end
 
 local function startUpdateIfNeeded()
     if not renderConn and #ActiveDashes > 0 then
-        renderConn = game:GetService("RunService").RenderStepped:Connect(updateDashes)
+        renderConn = game:GetService("RunService").Heartbeat:Connect(updateDashes)
     end
 end
 
 local function startDash(hrp, cfg, track, directionName)
     local dist = Distances[cfg.sliderVar]
-    if dist <= 0 then return end
-    
+    if not dist or dist <= 0 then return end
+
+    local now = os.clock()
+    local last = Distances.__cooldowns[cfg.sliderVar] or 0
+
+    if now - last < (cfg.cooldown or 0) then
+        return
+    end
+
+    Distances.__cooldowns[cfg.sliderVar] = now
+
+    if cfg.scaleNaturalMotion then
+        for _, active in ipairs(ActiveDashes) do
+            if active.cfg == cfg then
+                active.cancelled = true
+            end
+        end
+
+        local duration = cfg.duration or 1
+
+        if track and track.Length and track.Length > 0.1 then
+            duration = math.clamp(
+                track.Length + 0.15,
+                0.5,
+                3
+            )
+        end
+
+        local dash = {
+            hrp = hrp,
+            cfg = cfg,
+            scaleNaturalMotion = true,
+            multiplier = math.clamp(dist / 100, 0, 2),
+            lastPosition = hrp.Position,
+            expiresAt = os.clock() + duration,
+            cancelled = false
+        }
+
+        if track then
+            local stoppedConn
+
+            stoppedConn = track.Stopped:Connect(function()
+                dash.cancelled = true
+
+                if stoppedConn then
+                    stoppedConn:Disconnect()
+                    stoppedConn = nil
+                end
+            end)
+        end
+
+        table.insert(ActiveDashes, dash)
+        startUpdateIfNeeded()
+        return
+    end
+
     task.delay(cfg.wait or 0, function()
         if not hrp or not hrp.Parent then return end
-        
+
+        if track
+            and (cfg.wait or 0) > 0
+            and track.IsPlaying == false then
+            return
+        end
+
         local dash = {
             hrp = hrp,
             remaining = dist,
             cfg = cfg,
-            isDirectional = cfg.isDirectional == true
+            isDirectional = cfg.isDirectional == true,
+            expiresAt =
+                os.clock()
+                + math.max(
+                    (cfg.duration or 0.5) * 4 + 1,
+                    2
+                )
         }
 
-        if cfg.useMoveDirection then
-            local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
-            local dir = hum and hum.MoveDirection or Vector3.new()
-
-            if dir.Magnitude > 0.01 then
-                dash.moveDir = Vector3.new(dir.X, 0, dir.Z).Unit
-            else
-                local vel = hrp.AssemblyLinearVelocity
-                local flatVel = Vector3.new(vel.X, 0, vel.Z)
-
-                if flatVel.Magnitude > 0.01 then
-                    dash.moveDir = flatVel.Unit
-                end
-            end
-        end
-        
         if dash.isDirectional and directionName then
-            dash.offset = DirectionOffsets[directionName] or Vector3.new(0,0,1)
+            dash.offset =
+                DirectionOffsets[directionName]
+                or Vector3.new(0, 0, 1)
         end
 
         if cfg.isUnlimited then
             dash.remaining = math.huge
-            dash.speed = cfg.speed
+            dash.speed = cfg.speed or 150
+            dash.expiresAt = os.clock() + 15
+
             if track then
                 local stoppedConn
+
                 stoppedConn = track.Stopped:Connect(function()
-                    dash.remaining = 0
-                    if stoppedConn then stoppedConn:Disconnect() end
+                    dash.cancelled = true
+
+                    if stoppedConn then
+                        stoppedConn:Disconnect()
+                        stoppedConn = nil
+                    end
                 end)
             end
         else
-            dash.speed = dist / cfg.duration
+            local duration =
+                math.max(
+                    cfg.duration or 0.4,
+                    0.05
+                )
+
+            dash.speed =
+                dist / duration
         end
-        
+
         table.insert(ActiveDashes, dash)
         startUpdateIfNeeded()
     end)
@@ -2886,46 +3065,78 @@ end
 
 local function onAnimationPlayed(track)
     if not track.Animation then return end
-    local id = track.Animation.AnimationId
 
-    if Distances.__gagamaruCapture and DashConfigs[Distances.__gagamaruCapture] then
-        DashConfigs[Distances.__gagamaruCapture].animId = id
+    local id =
+        tostring(
+            track.Animation.AnimationId
+        ):match("%d+")
 
-        local moveName = Distances.__gagamaruCapture == "WildInstincts" and "Wild Instincts" or "Scorpion"
-        Distances.__gagamaruCapture = nil
+    if not id then return end
 
-        pcall(function()
-            game.StarterGui:SetCore("SendNotification", {
-                Title = moveName,
-                Text = id,
-                Duration = 5
-            })
-        end)
-    end
-    
     for _, cfg in pairs(DashConfigs) do
         local match = false
         local directionName = nil
-        
-        if cfg.animId and id == cfg.animId then
+
+        if cfg._animId and id == cfg._animId then
             match = true
-        elseif cfg.animIds then
+
+        elseif cfg._animIds then
             if cfg.isDirectional then
-                directionName = cfg.animIds[id]
-                if directionName then match = true end
-            elseif cfg.animIds[id] then
+                directionName =
+                    cfg._animIds[id]
+
+                if directionName then
+                    match = true
+                end
+            elseif cfg._animIds[id] then
                 match = true
             end
         end
-        
-        if match then
-            if cachedHRP and cachedHRP.Parent then
-                if cfg.requiresBall then
-                    local ball = cachedHRP.Parent:FindFirstChild("Ball")
-                    if not ball or not ball:IsA("MeshPart") then continue end
+
+        if match and cfg.moveName then
+            local wildActive =
+                (Distances.wildInstinctsDist or 0) > 0
+
+            local scorpionActive =
+                (Distances.scorpionDist or 0) > 0
+
+            if wildActive and scorpionActive then
+                local hintAge =
+                    os.clock()
+                    - (
+                        Distances.__gagamaruHintAt
+                        or 0
+                    )
+
+                if hintAge > 2
+                    or Distances.__gagamaruHint
+                        ~= cfg.moveName then
+
+                    match = false
                 end
-                startDash(cachedHRP, cfg, track, directionName)
             end
+        end
+
+        if match
+            and cachedHRP
+            and cachedHRP.Parent then
+
+            if cfg.requiresBall then
+                local ball =
+                    cachedHRP.Parent:
+                    FindFirstChild("Ball")
+
+                if not ball then
+                    continue
+                end
+            end
+
+            startDash(
+                cachedHRP,
+                cfg,
+                track,
+                directionName
+            )
         end
     end
 end
@@ -2944,6 +3155,104 @@ if player.Character then
     setupCharacter(player.Character)
 end
 player.CharacterAdded:Connect(setupCharacter)
+
+do
+    UserInputService.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.One then
+            Distances.__gagamaruHint = "Scorpion"
+            Distances.__gagamaruHintAt = os.clock()
+
+        elseif input.KeyCode == Enum.KeyCode.Three then
+            Distances.__gagamaruHint = "WildInstincts"
+            Distances.__gagamaruHintAt = os.clock()
+        end
+    end)
+
+    local playerGui =
+        player:
+        WaitForChild("PlayerGui")
+
+    local function hookButton(button)
+        if not button:IsA("GuiButton")
+            or button:
+                GetAttribute(
+                    "CeleronGagamaruHooked"
+                ) then
+            return
+        end
+
+        local label = ""
+
+        if button:IsA("TextButton") then
+            label = button.Text
+        end
+
+        for _, child in ipairs(
+            button:GetDescendants()
+        ) do
+            if child:IsA("TextLabel") then
+                label ..=
+                    " "
+                    .. child.Text
+            end
+        end
+
+        local lower =
+            string.lower(label)
+
+        local moveName = nil
+
+        if string.find(
+            lower,
+            "scorpion",
+            1,
+            true
+        ) then
+            moveName = "Scorpion"
+
+        elseif string.find(
+            lower,
+            "wild instincts",
+            1,
+            true
+        ) then
+            moveName = "WildInstincts"
+        end
+
+        if not moveName then
+            return
+        end
+
+        button:
+            SetAttribute(
+                "CeleronGagamaruHooked",
+                true
+            )
+
+        button.Activated:Connect(function()
+            Distances.__gagamaruHint =
+                moveName
+
+            Distances.__gagamaruHintAt =
+                os.clock()
+        end)
+    end
+
+    for _, object in ipairs(
+        playerGui:GetDescendants()
+    ) do
+        hookButton(object)
+    end
+
+    playerGui.DescendantAdded:
+        Connect(function(object)
+            task.defer(
+                hookButton,
+                object
+            )
+        end)
+end
+
 
 d:Label("Universal Movement Buffs.")
 d:Slider("Tackle Distance", 0, 0, 75, 1, function(v)
@@ -2993,20 +3302,12 @@ d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
     Distances.divingDist = v
 end)
 
-d:Slider("Wild Instincts Distance", 0, 0, 200, 1, function(v)
+d:Slider("Wild Instincts Distance Increase (%)", 0, 0, 200, 5, function(v)
     Distances.wildInstinctsDist = v
 end)
 
-d:Slider("Scorpion Distance", 0, 0, 200, 1, function(v)
+d:Slider("Scorpion Distance Increase (%)", 0, 0, 200, 5, function(v)
     Distances.scorpionDist = v
-end)
-
-d:Button("Set Wild Instincts", "Capture animation.", function()
-    Distances.__gagamaruCapture = "WildInstincts"
-end)
-
-d:Button("Set Scorpion", "Capture animation.", function()
-    Distances.__gagamaruCapture = "Scorpion"
 end)
 
 d:Label("Aiku Movement Buffs.")
@@ -4697,97 +4998,296 @@ local othersil = maintab2:Folder("Other Features.", Color3.fromRGB(24, 255, 228)
 othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 
 do
-local qteState = {
-    enabled = false,
-    connection = nil,
-    processing = false
-}
+    local qteState = {
+        enabled = false,
+        connection = nil,
+        waiting = false,
+        handled = false
+    }
 
-local QTE_DELAY = 0.863
+    local QTE_DELAY = 0.863
 
-local function clickTargetButton(btn)
-    if firesignal then
-        pcall(firesignal, btn.Activated)
-        pcall(firesignal, btn.MouseButton1Click)
-        return
+    local function isTouchInput()
+        local lastInput =
+            UserInputService:
+            GetLastInputType()
+
+        return lastInput
+            == Enum.UserInputType.Touch
+            or (
+                UserInputService.TouchEnabled
+                and not UserInputService.KeyboardEnabled
+            )
     end
 
-    if getconnections then
-        for _, signal in ipairs({btn.Activated, btn.MouseButton1Click}) do
-            for _, conn in ipairs(getconnections(signal)) do
-                conn:Fire()
+    local function findQTE()
+        local playerGui =
+            Players.LocalPlayer:
+            FindFirstChild("PlayerGui")
+
+        if not playerGui then
+            return nil, nil
+        end
+
+        local qteGui =
+            playerGui:
+            FindFirstChild("Qte")
+            or playerGui:
+            FindFirstChild("QTE")
+
+        if not qteGui then
+            return nil, nil
+        end
+
+        if qteGui:IsA("ScreenGui")
+            and not qteGui.Enabled then
+            return nil, nil
+        end
+
+        local group =
+            qteGui:
+            FindFirstChild("QTE")
+            or qteGui:
+            FindFirstChild("CanvasGroup")
+            or qteGui
+
+        local button =
+            group:
+            FindFirstChild("Button")
+
+        if not button
+            or not button:IsA("GuiButton") then
+
+            for _, object in ipairs(
+                qteGui:GetDescendants()
+            ) do
+                if object:IsA("GuiButton")
+                    and object.Name == "Button"
+                    and object.Visible then
+
+                    button = object
+                    break
+                end
             end
         end
-    end
-end
 
-local function checkQTE()
-    if not qteState.enabled or qteState.processing then return end
-
-    local player = game:GetService("Players").LocalPlayer
-    local playerGui = player and player:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-
-    local qteGui = playerGui:FindFirstChild("Qte") or playerGui:FindFirstChild("QTE")
-    if not qteGui then return end
-
-    if qteGui:IsA("ScreenGui") and not qteGui.Enabled then
-        return
+        return qteGui, button
     end
 
-    local qteGroup = qteGui:FindFirstChild("QTE") or qteGui:FindFirstChild("CanvasGroup")
-    local targetButton = qteGroup and qteGroup:FindFirstChild("Button")
+    local function clickMobile(button)
+        local fired = false
 
-    if not targetButton then
-        for _, v in ipairs(qteGui:GetDescendants()) do
-            if v:IsA("TextButton") and v.Name == "Button" then
-                targetButton = v
-                break
+        if type(firesignal) == "function" then
+            fired =
+                pcall(
+                    firesignal,
+                    button.Activated
+                )
+                or fired
+
+            fired =
+                pcall(
+                    firesignal,
+                    button.MouseButton1Click
+                )
+                or fired
+        end
+
+        if not fired
+            and type(getconnections)
+                == "function" then
+
+            for _, signal in ipairs({
+                button.Activated,
+                button.MouseButton1Click
+            }) do
+                local ok, list =
+                    pcall(
+                        getconnections,
+                        signal
+                    )
+
+                if ok
+                    and type(list)
+                        == "table" then
+
+                    for _, conn in ipairs(list) do
+                        pcall(function()
+                            if type(conn.Fire)
+                                == "function" then
+
+                                conn:Fire()
+
+                            elseif type(
+                                conn.Function
+                            ) == "function" then
+
+                                conn.Function()
+                            end
+                        end)
+
+                        fired = true
+                    end
+                end
             end
         end
+
+        return fired
     end
 
-    if targetButton then
-        qteState.processing = true
+    local function pressPC(qteGui)
+        local group =
+            qteGui:
+            FindFirstChild("QTE")
+            or qteGui
+
+        local label =
+            group:
+            FindFirstChild(
+                "TextLabel",
+                true
+            )
+
+        if not label
+            or not label:IsA("TextLabel") then
+            return false
+        end
+
+        local names = {
+            ["0"] = "Zero",
+            ["1"] = "One",
+            ["2"] = "Two",
+            ["3"] = "Three",
+            ["4"] = "Four",
+            ["5"] = "Five",
+            ["6"] = "Six",
+            ["7"] = "Seven",
+            ["8"] = "Eight",
+            ["9"] = "Nine"
+        }
+
+        local keyName =
+            names[label.Text]
+            or label.Text:
+                gsub("%s+", "")
+
+        local keyCode =
+            Enum.KeyCode[keyName]
+
+        if not keyCode then
+            return false
+        end
+
+        return pcall(function()
+            local vim =
+                game:GetService(
+                    "VirtualInputManager"
+                )
+
+            vim:
+                SendKeyEvent(
+                    true,
+                    keyCode,
+                    false,
+                    game
+                )
+
+            task.wait()
+
+            vim:
+                SendKeyEvent(
+                    false,
+                    keyCode,
+                    false,
+                    game
+                )
+        end)
+    end
+
+    local function checkQTE()
+        if not qteState.enabled then
+            return
+        end
+
+        local qteGui, button =
+            findQTE()
+
+        if not qteGui or not button then
+            qteState.waiting = false
+            qteState.handled = false
+            return
+        end
+
+        if qteState.waiting
+            or qteState.handled then
+            return
+        end
+
+        qteState.waiting = true
 
         task.spawn(function()
             task.wait(QTE_DELAY)
 
-            if qteState.enabled and targetButton and targetButton.Parent then
-                clickTargetButton(targetButton)
+            if not qteState.enabled
+                or not button.Parent then
+
+                qteState.waiting = false
+                return
             end
 
-            task.wait(0.5)
-            qteState.processing = false
+            if isTouchInput() then
+                clickMobile(button)
+            else
+                if not pressPC(qteGui) then
+                    clickMobile(button)
+                end
+            end
+
+            qteState.handled = true
+            qteState.waiting = false
+
+            task.spawn(function()
+                local started =
+                    os.clock()
+
+                while qteState.enabled
+                    and button.Parent
+                    and button.Visible
+                    and os.clock() - started < 2 do
+
+                    task.wait(0.05)
+                end
+
+                qteState.handled = false
+            end)
         end)
     end
-end
 
-othersil:Toggle("Auto QuickTimeEvent", "Automatically Does QuickTimeEvents, How Else Can I Explain It?", function()
-    qteState.enabled = not qteState.enabled
+    othersil:Toggle(
+        "Auto QuickTimeEvent",
+        "Automatically Does QuickTimeEvents, How Else Can I Explain It?",
+        function()
+            qteState.enabled =
+                not qteState.enabled
 
-    if qteState.enabled then
-        if not qteState.connection then
-            qteState.connection = game:GetService("RunService").RenderStepped:Connect(checkQTE)
+            qteState.waiting = false
+            qteState.handled = false
+
+            if qteState.enabled then
+                if not qteState.connection then
+                    qteState.connection =
+                        RunService.RenderStepped:
+                        Connect(checkQTE)
+                end
+
+            elseif qteState.connection then
+                qteState.connection:
+                    Disconnect()
+
+                qteState.connection = nil
+            end
         end
-    else
-        if qteState.connection then
-            qteState.connection:Disconnect()
-            qteState.connection = nil
-        end
-
-        qteState.processing = false
-    end
-
-    if not autoSkillState.suppressNotifs then
-        game.StarterGui:SetCore("SendNotification", {
-            Title = "QuickTimeEvent",
-            Text = qteState.enabled and "Enabled." or "Disabled.",
-            Duration = 1
-        })
-    end
-end)
-
+    )
 end
 
 local teamHighlightActive = false
