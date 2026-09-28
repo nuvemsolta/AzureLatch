@@ -1,8 +1,98 @@
--- NUVEM PATCH: Azure Latch MobileQTE + MoveBuff V2
--- Legacy PlaceId redirect removed. This build now runs the main GUI directly
--- on PlaceId 139609232261520 instead of loading the old Pastebin-based legacy UI.
+--========================================================
+-- SAFE EXTERNAL LOADER
+--========================================================
 
-local ui = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui"))() -- yo ts ui :rofl:
+local function safeLoadUrl(url, label, required, bypassCache)
+    label = label or url
+
+    local okHttp, source =
+        pcall(function()
+            return game:HttpGet(
+                url,
+                bypassCache == true
+            )
+        end)
+
+    if not okHttp
+        or type(source) ~= "string"
+        or source == "" then
+
+        local message =
+            "[Azure Latch] HTTP load failed for "
+            .. tostring(label)
+            .. ": "
+            .. tostring(source)
+
+        warn(message)
+
+        if required then
+            error(message, 0)
+        end
+
+        return nil
+    end
+
+    if type(loadstring) ~= "function" then
+        local message =
+            "[Azure Latch] loadstring is unavailable in this environment."
+
+        warn(message)
+
+        if required then
+            error(message, 0)
+        end
+
+        return nil
+    end
+
+    local chunk, compileError =
+        loadstring(source)
+
+    if not chunk then
+        local message =
+            "[Azure Latch] Compile failed for "
+            .. tostring(label)
+            .. ": "
+            .. tostring(compileError)
+
+        warn(message)
+
+        if required then
+            error(message, 0)
+        end
+
+        return nil
+    end
+
+    local okRun, result =
+        pcall(chunk)
+
+    if not okRun then
+        local message =
+            "[Azure Latch] Runtime failed for "
+            .. tostring(label)
+            .. ": "
+            .. tostring(result)
+
+        warn(message)
+
+        if required then
+            error(message, 0)
+        end
+
+        return nil
+    end
+
+    return result
+end
+
+local ui =
+    safeLoadUrl(
+        "https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui",
+        "Celeron UI",
+        true
+    )
+
 
 local win = ui:Create({
     Name = "Celeron's GUI (Azure Latch)",
@@ -24,31 +114,91 @@ local helptab = win:Tab("Info")
 
 hometab:Label("Script Made By Celeron! Check Info For Additional Credits.")
 hometab:Label("Join The Discord Server In Info For Updates / Suggestions.")
-hometab:Label("Update: Mobile AutoQTE + Movement Buff Engine V2 + Custom Move Capture.")
+hometab:Label("Patch: Mobile AutoQTE + Gagamaru Wild Instincts / Scorpion buffs.")
 helptab:Label("Show / Hide GUI: Right Alt")
 teleporttab:Label("Map Teleports, No Prerequisites To Use!")
 misctab:Label("Miscellaneous Features, They Give No Advantages In-Game!")
 exploittab:Label("This Tab Comes With Useful Features.")
 
---- IGNORE THESE
+--- NETWORK BOOTSTRAP
 local buffers = {}
-loadstring(game:HttpGet("https://pastebin.com/raw/8XJh7dzh"))()
-repeat
-    task.wait()
-until game.Lighting:FindFirstChild("BUFFERSTRINGS")
-for _, val in ipairs(game.Lighting:FindFirstChild("BUFFERSTRINGS"):GetChildren()) do
-    buffers[val.Name] = val.Value
+
+safeLoadUrl(
+    "https://pastebin.com/raw/8XJh7dzh",
+    "ByteNet buffer bootstrap",
+    false
+)
+
+local bufferFolder =
+    game.Lighting:
+    FindFirstChild("BUFFERSTRINGS")
+
+if not bufferFolder then
+    bufferFolder =
+        game.Lighting:
+        WaitForChild(
+            "BUFFERSTRINGS",
+            8
+        )
 end
-game.Lighting:FindFirstChild("BUFFERSTRINGS"):Destroy()
 
-local role = game:GetService("ReplicatedStorage")
-    :WaitForChild("BytenetStorage")
-    :WaitForChild("Networking").Value
-    :match('"bytenet_selectRole"%s*:%s*(%d+)')
+if bufferFolder then
+    for _, val in ipairs(
+        bufferFolder:GetChildren()
+    ) do
+        if val:IsA("StringValue") then
+            buffers[val.Name] = val.Value
+        end
+    end
 
-role = role and tonumber(role)
+    bufferFolder:Destroy()
+else
+    warn(
+        "[Azure Latch] BUFFERSTRINGS was not created. "
+        .. "Remote-dependent features may be unavailable."
+    )
+end
 
-local pick = string.char(role)
+buffers.base = buffers.base or ""
+buffers.grabball = buffers.grabball or ""
+
+local bytenetStorage =
+    game:GetService("ReplicatedStorage"):
+    WaitForChild(
+        "BytenetStorage",
+        15
+    )
+
+local networking =
+    bytenetStorage
+    and bytenetStorage:
+        FindFirstChild("Networking")
+
+local role = nil
+
+if networking then
+    role =
+        tostring(networking.Value):
+        match(
+            '"bytenet_selectRole"%s*:%s*(%d+)'
+        )
+
+    role = role
+        and tonumber(role)
+        or nil
+end
+
+local pick =
+    role
+    and string.char(role)
+    or ""
+
+if not role then
+    warn(
+        "[Azure Latch] Could not resolve bytenet_selectRole. "
+        .. "Position-selection features may be unavailable."
+    )
+end
 ---
 
 local Players = game:GetService("Players")
@@ -118,11 +268,11 @@ local meta = maintab:Folder("Metavision Features.", Color3.fromRGB(24, 255, 228)
 meta:Label("Metavision Features.")
 
 meta:Button("Metavision V1", "This Feature Emulates Having Isagi's Metavision From The Show.", function()
-    loadstring(game:HttpGet("https://pastebin.com/raw/FVgs7bQw"))()
+    safeLoadUrl("https://pastebin.com/raw/FVgs7bQw", "Metavision V1", false)
 end)
 
 meta:Button("Metavision V2", "Similar To V1, Only Can Be Used Below 1:30 On Clock, Click Puzzle Piece To Activate.", function()
-    loadstring(game:HttpGet("https://pastebin.com/raw/HfpQBAsF"))()
+    safeLoadUrl("https://pastebin.com/raw/HfpQBAsF", "Metavision V2", false)
 end)
 
 local ballfolder = maintab:Folder("Ball Features.", Color3.fromRGB(24, 255, 228), true)
@@ -1959,7 +2109,7 @@ add:Toggle("Kick Like Kaiser", "Makes You Kick Like Kaiser!1!11!", function(stat
 end)
 
 add:Button("Shachoko GK Catch (Req. GK Position.)", "Makes It Almost Impossible To Be Scored On As GK And Does Shachoko Kick.", function()
-loadstring(game:HttpGet("https://pastebin.com/raw/Hr1HnK38"))()
+safeLoadUrl("https://pastebin.com/raw/Hr1HnK38", "Shachoko GK Catch", false)
 end)
 
 local oth = maintab:Folder("Other Blatant Features.", Color3.fromRGB(24, 255, 228), true)
@@ -2475,32 +2625,6 @@ local DashConfigs = {
         cooldown = 0.15,
         wait = 0.05
     },
-    SideDash = {
-        animIds = {
-            ["rbxassetid://114016332539655"] = "Right",
-            ["rbxassetid://100207093237932"] = "Left"
-        },
-        sliderVar = "sideDashDist",
-        duration = 0.30,
-        cooldown = 0.12,
-        wait = 0,
-        isDirectional = true
-    },
-    TrapMovement = {
-        animIds = {
-            ["rbxassetid://73387016994281"] = true,
-            ["rbxassetid://101043441232233"] = true,
-            ["rbxassetid://96593185131882"] = true,
-            ["rbxassetid://116422938520670"] = true,
-            ["rbxassetid://90734196141468"] = true,
-            ["rbxassetid://85349589701503"] = true,
-            ["rbxassetid://120351399679118"] = true
-        },
-        sliderVar = "trapMoveDist",
-        duration = 0.35,
-        cooldown = 0.15,
-        wait = 0.05
-    },
     Naruhaya = {
         animId = "rbxassetid://82240286756891",
         sliderVar = "naruhayaDist",
@@ -2549,6 +2673,26 @@ local DashConfigs = {
         duration = 0.35,
         cooldown = 0.15,
         wait = 0.05
+    },
+    WildInstincts = {
+        animId = nil,
+        sliderVar = "wildInstinctDist",
+        duration = 0.5,
+        cooldown = 0.15,
+        wait = 0,
+        useTrackLength = true,
+        minDuration = 0.20,
+        maxDuration = 1.50
+    },
+    Scorpion = {
+        animId = nil,
+        sliderVar = "scorpionDist",
+        duration = 0.45,
+        cooldown = 0.15,
+        wait = 0,
+        useTrackLength = true,
+        minDuration = 0.18,
+        maxDuration = 1.25
     },
     ReflexTackle = {
         animId = "rbxassetid://113088324958896",
@@ -2751,419 +2895,290 @@ for _, cfg in pairs(DashConfigs) do
     Distances[cfg.sliderVar] = 0
 end
 
-local MoveBuffState = {
-    enabled = true,
-    globalMultiplier = 1,
-    speedMultiplier = 1,
-    cancelOnAnimationStop = true,
-    preventDuplicateMove = true,
-    lastTriggered = {},
-    customCounter = 0,
-    characterConnection = nil,
-    captureNextAnimation = false,
-    lastCapturedAnimation = nil,
+local env =
+    type(getgenv) == "function"
+    and getgenv()
+    or _G
 
-    builder = {
-        animationId = "",
-        distance = 50,
-        duration = 0.45,
-        delay = 0,
-        cooldown = 0.15,
-        direction = "Forward",
-        requiresBall = false,
-    },
+env.AzureLatchGagamaruAnimations =
+    env.AzureLatchGagamaruAnimations
+    or {}
+
+local gagamaruCaptureState = {
+    pending = nil,
+    expiresAt = 0,
 }
 
-local function normalizeAnimationId(value)
-    value =
-        tostring(value or "")
-
-    local digits =
-        value:
-        match("(%d+)")
-
-    if not digits then
-        return nil
-    end
-
-    return "rbxassetid://" .. digits
+local function moveBuffNotify(title, message)
+    pcall(function()
+        StarterGui:
+            SetCore(
+                "SendNotification",
+                {
+                    Title = title,
+                    Text = message,
+                    Duration = 4,
+                }
+            )
+    end)
 end
 
-local function moveBuffNotify(title, message)
-    if suppressNotifs then
+local function applySavedGagamaruAnimations()
+    local saved =
+        env.AzureLatchGagamaruAnimations
+
+    if type(saved.WildInstincts) == "string"
+        and saved.WildInstincts ~= "" then
+
+        DashConfigs.WildInstincts.animId =
+            saved.WildInstincts
+    end
+
+    if type(saved.Scorpion) == "string"
+        and saved.Scorpion ~= "" then
+
+        DashConfigs.Scorpion.animId =
+            saved.Scorpion
+    end
+end
+
+applySavedGagamaruAnimations()
+
+local function beginGagamaruCapture(name)
+    if not DashConfigs[name] then
         return
     end
 
-    pcall(function()
-        StarterGui:SetCore(
-            "SendNotification",
-            {
-                Title = title,
-                Text = message,
-                Duration = 3,
-            }
+    gagamaruCaptureState.pending =
+        name
+
+    gagamaruCaptureState.expiresAt =
+        os.clock() + 10
+
+    moveBuffNotify(
+        "Gagamaru Move Learner",
+        "Use "
+        .. (
+            name == "WildInstincts"
+            and "Wild Instincts"
+            or "Scorpion"
         )
-    end)
+        .. " now."
+    )
+end
+
+local function tryCaptureGagamaruMove(track)
+    local name =
+        gagamaruCaptureState.pending
+
+    if not name then
+        return false
+    end
+
+    if os.clock()
+        > gagamaruCaptureState.expiresAt then
+
+        gagamaruCaptureState.pending =
+            nil
+
+        moveBuffNotify(
+            "Gagamaru Move Learner",
+            "Capture timed out. Press Learn again."
+        )
+
+        return false
+    end
+
+    if not track
+        or not track.Animation then
+        return false
+    end
+
+    local id =
+        track.Animation.AnimationId
+
+    if type(id) ~= "string"
+        or id == ""
+        or id == "rbxassetid://0" then
+        return false
+    end
+
+    DashConfigs[name].animId =
+        id
+
+    env.AzureLatchGagamaruAnimations[name] =
+        id
+
+    gagamaruCaptureState.pending =
+        nil
+
+    moveBuffNotify(
+        "Gagamaru Move Learned",
+        (
+            name == "WildInstincts"
+            and "Wild Instincts: "
+            or "Scorpion: "
+        )
+        .. id
+    )
+
+    return true
 end
 
 local ActiveDashes = {}
 local cachedHRP = nil
 local renderConn = nil
+local MoveCooldowns = {}
 
-local DEFAULT_DIR =
-    Vector3.new(0, 0, -1)
+local ZERO = Vector3.new()
+local DEFAULT_DIR = Vector3.new(0,0,1)
 
 local DirectionOffsets = {
-    Forward = Vector3.new(0, 0, 1),
-    Backward = Vector3.new(0, 0, -1),
-    Left = Vector3.new(-1, 0, 0),
-    Right = Vector3.new(1, 0, 0),
-
     Front = Vector3.new(0, 0, 1),
     Back = Vector3.new(0, 0, -1),
-    FrontLeft =
-        Vector3.new(-1, 0, 1).Unit,
-    FrontRight =
-        Vector3.new(1, 0, 1).Unit,
-    LeftBack =
-        Vector3.new(-1, 0, -1).Unit,
-    RightBack =
-        Vector3.new(1, 0, -1).Unit,
+    Left = Vector3.new(-1, 0, 0),
+    Right = Vector3.new(1, 0, 0),
+    FrontLeft = Vector3.new(-1, 0, 1).Unit,
+    FrontRight = Vector3.new(1, 0, 1).Unit,
+    LeftBack = Vector3.new(-1, 0, -1).Unit,
+    RightBack = Vector3.new(1, 0, -1).Unit,
 }
-
-local function stopAllMoveBuffs()
-    for _, dash in ipairs(
-        ActiveDashes
-    ) do
-        dash.remaining = 0
-
-        if dash.stopConnection then
-            dash.stopConnection:
-                Disconnect()
-
-            dash.stopConnection = nil
-        end
-    end
-
-    table.clear(ActiveDashes)
-
-    if renderConn then
-        renderConn:Disconnect()
-        renderConn = nil
-    end
-end
-
-local function getFlatLook(hrp)
-    local look =
-        hrp.CFrame.LookVector
-
-    local flat =
-        Vector3.new(
-            look.X,
-            0,
-            look.Z
-        )
-
-    if flat.Magnitude < 0.001 then
-        return DEFAULT_DIR
-    end
-
-    return flat.Unit
-end
-
-local function getMoveDirection(
-    hrp,
-    dash
-)
-    local cfg = dash.cfg
-
-    if cfg.directionMode == "Camera" then
-        local camera =
-            workspace.CurrentCamera
-
-        if camera then
-            local look =
-                camera.CFrame.LookVector
-
-            local flat =
-                Vector3.new(
-                    look.X,
-                    0,
-                    look.Z
-                )
-
-            if flat.Magnitude > 0.001 then
-                return flat.Unit
-            end
-        end
-    end
-
-    local forward =
-        getFlatLook(hrp)
-
-    local right =
-        Vector3.new(
-            forward.Z,
-            0,
-            -forward.X
-        )
-
-    local directionName =
-        dash.directionName
-        or cfg.fixedDirection
-
-    if directionName then
-        local offset =
-            DirectionOffsets[
-                directionName
-            ]
-
-        if offset then
-            local result =
-                right * offset.X
-                + forward * offset.Z
-
-            if result.Magnitude > 0.001 then
-                return result.Unit
-            end
-        end
-    end
-
-    return forward
-end
 
 local function updateDashes(dt)
     for i = #ActiveDashes, 1, -1 do
-        local dash =
-            ActiveDashes[i]
-
-        local hrp =
-            dash.hrp
-
-        if not MoveBuffState.enabled
-            or not hrp
-            or not hrp.Parent
-            or dash.remaining <= 0 then
-
-            if dash.stopConnection then
-                dash.stopConnection:
-                    Disconnect()
-
-                dash.stopConnection = nil
-            end
-
-            table.remove(
-                ActiveDashes,
-                i
-            )
-
+        local dash = ActiveDashes[i]
+        local hrp = dash.hrp
+        if not hrp or not hrp.Parent then
+            table.remove(ActiveDashes, i)
             continue
         end
 
-        local moveDir =
-            getMoveDirection(
-                hrp,
-                dash
-            )
+        local step = dash.cfg.isUnlimited and (dash.speed * dt) or math.min(dash.speed * dt, dash.remaining)
+        local moveDir
 
-        local speed =
-            dash.speed
-            * MoveBuffState.speedMultiplier
-
-        local step =
-            dash.cfg.isUnlimited
-            and speed * dt
-            or math.min(
-                speed * dt,
-                dash.remaining
-            )
-
-        local current =
-            hrp.Position
-
-        local newPos =
-            current
-            + moveDir * step
-
-        -- Preserve vertical position. CFrame.lookAt avoids the old
-        -- zero-vector/Unit NaN issue and keeps rotation stable.
-        hrp.CFrame =
-            CFrame.lookAt(
-                Vector3.new(
-                    newPos.X,
-                    current.Y,
-                    newPos.Z
-                ),
-                Vector3.new(
-                    newPos.X,
-                    current.Y,
-                    newPos.Z
-                ) + moveDir
-            )
-
-        if not dash.cfg.isUnlimited then
-            dash.remaining -= step
+        if dash.isDirectional then
+            local baseLook = hrp.CFrame.LookVector
+            local right = baseLook:Cross(Vector3.new(0,1,0))
+            local offset = dash.offset
+            moveDir = (right * -offset.X + baseLook * offset.Z).Unit
+        else
+            local look = hrp.CFrame.LookVector
+            moveDir = Vector3.new(look.X, 0, look.Z).Unit
+            if moveDir.Magnitude < 0.01 then
+                moveDir = DEFAULT_DIR
+            end
         end
 
+        local newPos = hrp.Position + moveDir * step
+        hrp.CFrame = CFrame.new(newPos.X, hrp.Position.Y, newPos.Z) * CFrame.new(ZERO, moveDir)
+
+        dash.remaining = dash.remaining - step
         if dash.remaining <= 0 then
-            if dash.stopConnection then
-                dash.stopConnection:
-                    Disconnect()
-
-                dash.stopConnection = nil
-            end
-
-            table.remove(
-                ActiveDashes,
-                i
-            )
+            table.remove(ActiveDashes, i)
         end
     end
-
-    if #ActiveDashes == 0
-        and renderConn then
-
+    
+    if #ActiveDashes == 0 and renderConn then
         renderConn:Disconnect()
         renderConn = nil
     end
 end
 
 local function startUpdateIfNeeded()
-    if not renderConn
-        and #ActiveDashes > 0 then
-
-        renderConn =
-            RunService.RenderStepped:
-                Connect(updateDashes)
+    if not renderConn and #ActiveDashes > 0 then
+        renderConn = game:GetService("RunService").RenderStepped:Connect(updateDashes)
     end
 end
 
-local function canTriggerConfig(cfg)
-    local key =
-        cfg.runtimeKey
-        or cfg.sliderVar
-        or tostring(cfg)
-
-    local now =
-        os.clock()
-
-    local cooldown =
-        tonumber(cfg.cooldown)
-        or 0
-
-    local previous =
-        MoveBuffState.lastTriggered[key]
-        or -math.huge
-
-    if now - previous < cooldown then
-        return false
-    end
-
-    MoveBuffState.lastTriggered[key] =
-        now
-
-    return true
-end
-
-local function startDash(
-    hrp,
-    cfg,
-    track,
-    directionName
-)
-    if not MoveBuffState.enabled
-        or not hrp
-        or not hrp.Parent then
-        return
-    end
-
-    local configuredDistance =
+local function startDash(hrp, cfg, track, directionName)
+    local dist =
         Distances[cfg.sliderVar]
-        or cfg.distance
-        or 0
 
-    local distance =
-        configuredDistance
-        * MoveBuffState.globalMultiplier
-
-    if distance <= 0 then
+    if not dist
+        or dist <= 0 then
         return
     end
 
-    if not canTriggerConfig(cfg) then
+    local now = os.clock()
+    local last =
+        MoveCooldowns[cfg]
+
+    if last
+        and now - last
+            < (cfg.cooldown or 0) then
         return
     end
+
+    MoveCooldowns[cfg] = now
 
     task.delay(
         cfg.wait or 0,
         function()
-            if not MoveBuffState.enabled
-                or not hrp
+            if not hrp
                 or not hrp.Parent then
                 return
             end
 
-            if cfg.requiresBall then
-                local ball =
-                    hrp.Parent:
-                    FindFirstChild("Ball")
-
-                if not ball then
-                    return
-                end
-            end
-
-            if MoveBuffState.preventDuplicateMove then
-                for _, active in ipairs(
-                    ActiveDashes
-                ) do
-                    if active.cfg == cfg then
-                        active.remaining = 0
-                    end
-                end
-            end
-
-            local duration =
-                math.max(
-                    tonumber(cfg.duration)
-                    or 0.4,
-                    0.03
-                )
-
             local dash = {
                 hrp = hrp,
-                remaining = distance,
+                remaining = dist,
                 cfg = cfg,
-                directionName =
-                    directionName,
-                speed =
-                    cfg.isUnlimited
-                    and (
-                        (cfg.speed or 150)
-                        * MoveBuffState.globalMultiplier
-                    )
-                    or (
-                        distance / duration
-                    ),
-                stopConnection = nil,
+                isDirectional =
+                    cfg.isDirectional == true,
             }
 
-            if cfg.isUnlimited then
-                dash.remaining =
-                    math.huge
+            if dash.isDirectional
+                and directionName then
+
+                dash.offset =
+                    DirectionOffsets[directionName]
+                    or Vector3.new(0, 0, 1)
             end
 
-            if track
-                and (
-                    MoveBuffState.cancelOnAnimationStop
-                    or cfg.isUnlimited
-                ) then
+            if cfg.isUnlimited then
+                dash.remaining = math.huge
+                dash.speed =
+                    cfg.speed or 150
+            else
+                local duration =
+                    cfg.duration or 0.4
 
-                dash.stopConnection =
+                if cfg.useTrackLength
+                    and track
+                    and track.Length
+                    and track.Length > 0.05 then
+
+                    duration =
+                        math.clamp(
+                            track.Length,
+                            cfg.minDuration or 0.15,
+                            cfg.maxDuration or 2
+                        )
+                end
+
+                dash.speed =
+                    dist
+                    / math.max(
+                        duration,
+                        0.05
+                    )
+            end
+
+            if track then
+                local stoppedConn = nil
+
+                stoppedConn =
                     track.Stopped:
-                        Connect(function()
-                            dash.remaining = 0
-                        end)
+                    Connect(function()
+                        dash.remaining = 0
+
+                        if stoppedConn then
+                            stoppedConn:
+                                Disconnect()
+
+                            stoppedConn = nil
+                        end
+                    end)
             end
 
             table.insert(
@@ -3176,480 +3191,59 @@ local function startDash(
     )
 end
 
-local function registerCustomMove(
-    animationId,
-    distance,
-    duration,
-    delay,
-    direction,
-    requiresBall
-)
-    animationId =
-        normalizeAnimationId(
-            animationId
-        )
-
-    if not animationId then
-        return nil,
-            "Invalid animation ID."
-    end
-
-    MoveBuffState.customCounter += 1
-
-    local key =
-        "CustomMove_"
-        .. tostring(
-            MoveBuffState.customCounter
-        )
-
-    local sliderVar =
-        "customMoveDist_"
-        .. tostring(
-            MoveBuffState.customCounter
-        )
-
-    local cfg = {
-        runtimeKey = key,
-        animId = animationId,
-        sliderVar = sliderVar,
-        duration =
-            math.max(
-                tonumber(duration)
-                or 0.45,
-                0.03
-            ),
-        cooldown =
-            math.max(
-                tonumber(
-                    MoveBuffState
-                        .builder
-                        .cooldown
-                )
-                or 0.15,
-                0
-            ),
-        wait =
-            math.max(
-                tonumber(delay)
-                or 0,
-                0
-            ),
-        fixedDirection =
-            direction
-            or "Forward",
-        directionMode =
-            direction == "Camera"
-            and "Camera"
-            or nil,
-        requiresBall =
-            requiresBall == true,
-        custom = true,
-    }
-
-    DashConfigs[key] = cfg
-    Distances[sliderVar] =
-        tonumber(distance)
-        or 50
-
-    return cfg
-end
-
 local function onAnimationPlayed(track)
-    if not track
-        or not track.Animation then
-        return
-    end
+    if not track.Animation then return end
 
-    local id =
-        normalizeAnimationId(
-            track.Animation.AnimationId
-        )
+    tryCaptureGagamaruMove(track)
 
-    if not id then
-        return
-    end
-
-    if MoveBuffState.captureNextAnimation then
-        MoveBuffState.captureNextAnimation =
-            false
-
-        MoveBuffState.lastCapturedAnimation =
-            id
-
-        MoveBuffState.builder.animationId =
-            id
-
-        if setclipboard then
-            pcall(
-                setclipboard,
-                id
-            )
-        end
-
-        moveBuffNotify(
-            "Move Buff Capture",
-            "Captured "
-            .. id
-            .. ". It is ready for Custom Move registration."
-        )
-    end
-
-    for _, cfg in pairs(
-        DashConfigs
-    ) do
+    local id = track.Animation.AnimationId
+    
+    for _, cfg in pairs(DashConfigs) do
         local match = false
         local directionName = nil
-
-        if cfg.animId
-            and normalizeAnimationId(
-                cfg.animId
-            ) == id then
-
+        
+        if cfg.animId and id == cfg.animId then
             match = true
-
         elseif cfg.animIds then
             if cfg.isDirectional then
-                directionName =
-                    cfg.animIds[id]
-
-                if directionName then
-                    match = true
-                end
+                directionName = cfg.animIds[id]
+                if directionName then match = true end
             elseif cfg.animIds[id] then
                 match = true
             end
         end
+        
+        if match then
+            if cachedHRP and cachedHRP.Parent then
+                if cfg.requiresBall then
+                    local ball =
+                        cachedHRP.Parent:
+                        FindFirstChild("Ball")
 
-        if match
-            and cachedHRP
-            and cachedHRP.Parent then
-
-            startDash(
-                cachedHRP,
-                cfg,
-                track,
-                directionName
-            )
+                    if not ball then
+                        continue
+                    end
+                end
+                startDash(cachedHRP, cfg, track, directionName)
+            end
         end
     end
 end
 
 local function setupCharacter(char)
-    stopAllMoveBuffs()
-
-    cachedHRP = nil
-
-    if MoveBuffState.characterConnection then
-        MoveBuffState.characterConnection:
-            Disconnect()
-
-        MoveBuffState.characterConnection = nil
-    end
-
-    local hum =
-        char:WaitForChild(
-            "Humanoid",
-            5
-        )
-
-    if not hum then
-        return
-    end
-
-    local animator =
-        hum:
-        FindFirstChildOfClass(
-            "Animator"
-        )
-        or hum:
-            WaitForChild(
-                "Animator",
-                5
-            )
-
-    if not animator then
-        return
-    end
-
-    cachedHRP =
-        char:WaitForChild(
-            "HumanoidRootPart",
-            5
-        )
-
-    if not cachedHRP then
-        return
-    end
-
-    MoveBuffState.characterConnection =
-        animator.AnimationPlayed:
-            Connect(onAnimationPlayed)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+    local animator = hum:WaitForChild("Animator", 5)
+    if not animator then return end
+    cachedHRP = char:WaitForChild("HumanoidRootPart", 5)
+    if not cachedHRP then return end
+    animator.AnimationPlayed:Connect(onAnimationPlayed)
 end
 
 if player.Character then
-    task.spawn(
-        setupCharacter,
-        player.Character
-    )
+    setupCharacter(player.Character)
 end
-
-player.CharacterAdded:
-    Connect(setupCharacter)
-
-d:Label("Movement Buff Engine V2.")
-
-d:Toggle(
-    "Pause All Movement Buffs",
-    "Temporarily pauses every distance/custom movement buff. Leave this OFF for normal operation.",
-    function(value)
-        MoveBuffState.enabled =
-            value ~= true
-
-        if not MoveBuffState.enabled then
-            stopAllMoveBuffs()
-        end
-    end
-)
-
-d:Slider(
-    "Global Distance Multiplier",
-    1,
-    0.25,
-    3,
-    0.05,
-    function(value)
-        MoveBuffState.globalMultiplier =
-            value
-    end
-)
-
-d:Slider(
-    "Global Speed Multiplier",
-    1,
-    0.25,
-    3,
-    0.05,
-    function(value)
-        MoveBuffState.speedMultiplier =
-            value
-    end
-)
-
-d:Toggle(
-    "Keep Buff After Animation Stops",
-    "Normally movement buffs stop with their animation. Enable this only if you want the old continuation behaviour.",
-    function(value)
-        MoveBuffState.cancelOnAnimationStop =
-            value ~= true
-    end
-)
-
-d:Toggle(
-    "Allow Duplicate Buff Stacking",
-    "Normally a second activation replaces the same active move. Enable this to allow stacking.",
-    function(value)
-        MoveBuffState.preventDuplicateMove =
-            value ~= true
-    end
-)
-
-d:Button(
-    "Stop Active Movement Buffs",
-    "Immediately cancels every active movement boost.",
-    function()
-        stopAllMoveBuffs()
-
-        moveBuffNotify(
-            "Movement Buffs",
-            "All active movement buffs stopped."
-        )
-    end
-)
-
-d:Label("New Character / Custom Move Builder.")
-
-d:Label(
-    "Use Capture Next Animation, perform the new character move once, then press Register Captured Move."
-)
-
-d:Button(
-    "Capture Next Animation",
-    "Captures the next animation played by your character and copies its ID when supported.",
-    function()
-        MoveBuffState.captureNextAnimation =
-            true
-
-        moveBuffNotify(
-            "Move Buff Capture",
-            "Waiting for your next character animation..."
-        )
-    end
-)
-
-d:Textbox(
-    "Custom Move Animation ID",
-    "Paste an animation ID, or use Capture Next Animation first.",
-    function(value)
-        local normalized =
-            normalizeAnimationId(value)
-
-        if normalized then
-            MoveBuffState.builder.animationId =
-                normalized
-        end
-    end
-)
-
-d:Slider(
-    "Custom Move Distance",
-    50,
-    0,
-    1000,
-    1,
-    function(value)
-        MoveBuffState.builder.distance =
-            value
-    end
-)
-
-d:Slider(
-    "Custom Move Duration",
-    0.45,
-    0.05,
-    4,
-    0.05,
-    function(value)
-        MoveBuffState.builder.duration =
-            value
-    end
-)
-
-d:Slider(
-    "Custom Move Delay",
-    0,
-    0,
-    3,
-    0.05,
-    function(value)
-        MoveBuffState.builder.delay =
-            value
-    end
-)
-
-d:Slider(
-    "Custom Move Cooldown",
-    0.15,
-    0,
-    3,
-    0.05,
-    function(value)
-        MoveBuffState.builder.cooldown =
-            value
-    end
-)
-
-d:Dropdown(
-    "Custom Move Direction",
-    {
-        "Forward",
-        "Backward",
-        "Left",
-        "Right",
-        "Camera",
-    },
-    function(value)
-        MoveBuffState.builder.direction =
-            value
-    end
-)
-
-d:Toggle(
-    "Custom Move Requires Ball",
-    "Only activates the custom movement buff while your character owns a Ball object.",
-    function(value)
-        MoveBuffState.builder.requiresBall =
-            value == true
-    end
-)
-
-local function registerBuilderMove()
-    local animationId =
-        MoveBuffState.builder.animationId
-
-    if animationId == ""
-        and MoveBuffState.lastCapturedAnimation then
-
-        animationId =
-            MoveBuffState.lastCapturedAnimation
-    end
-
-    local cfg, err =
-        registerCustomMove(
-            animationId,
-            MoveBuffState.builder.distance,
-            MoveBuffState.builder.duration,
-            MoveBuffState.builder.delay,
-            MoveBuffState.builder.direction,
-            MoveBuffState.builder.requiresBall
-        )
-
-    if not cfg then
-        moveBuffNotify(
-            "Custom Move Buff",
-            err or "Could not register move."
-        )
-
-        return
-    end
-
-    moveBuffNotify(
-        "Custom Move Buff",
-        "Registered "
-        .. cfg.animId
-        .. " at "
-        .. tostring(
-            Distances[
-                cfg.sliderVar
-            ]
-        )
-        .. " studs."
-    )
-end
-
-d:Button(
-    "Register Captured Move",
-    "Registers the captured/pasted animation with the custom distance settings above.",
-    registerBuilderMove
-)
-
-d:Button(
-    "Movement Buff Diagnostics",
-    "Shows active buffs, custom moves and the latest captured animation.",
-    function()
-        local custom = 0
-
-        for _, cfg in pairs(
-            DashConfigs
-        ) do
-            if cfg.custom then
-                custom += 1
-            end
-        end
-
-        moveBuffNotify(
-            "Movement Buff Diagnostics",
-            "Active: "
-            .. tostring(#ActiveDashes)
-            .. " | Custom: "
-            .. tostring(custom)
-            .. " | Last: "
-            .. tostring(
-                MoveBuffState.lastCapturedAnimation
-                or "none"
-            )
-        )
-    end
-)
+player.CharacterAdded:Connect(setupCharacter)
 
 d:Label("Universal Movement Buffs.")
 d:Slider("Tackle Distance", 0, 0, 75, 1, function(v)
@@ -3662,15 +3256,6 @@ end)
 
 d:Slider("GK Front Dive Distance", 0, 0, 75, 1, function(v)
     Distances.gkDist = v
-end)
-
-d:Label("Additional Universal Movement Buffs.")
-d:Slider("Side Dash Distance", 0, 0, 125, 1, function(v)
-    Distances.sideDashDist = v
-end)
-
-d:Slider("Trap Move Distance", 0, 0, 200, 1, function(v)
-    Distances.trapMoveDist = v
 end)
 
 d:Label("Isagi Movement Buffs.")
@@ -3707,6 +3292,68 @@ d:Label("Gagamaru Movement Buffs.")
 d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
     Distances.divingDist = v
 end)
+
+d:Slider(
+    "Wild Instincts Distance",
+    0,
+    0,
+    250,
+    1,
+    function(v)
+        Distances.wildInstinctDist = v
+    end
+)
+
+d:Slider(
+    "Scorpion Distance",
+    0,
+    0,
+    250,
+    1,
+    function(v)
+        Distances.scorpionDist = v
+    end
+)
+
+d:Button(
+    "Learn Wild Instincts Animation",
+    "Press this, then use Wild Instincts once. The real AnimationId is learned automatically.",
+    function()
+        beginGagamaruCapture(
+            "WildInstincts"
+        )
+    end
+)
+
+d:Button(
+    "Learn Scorpion Animation",
+    "Press this, then use Scorpion once. The real AnimationId is learned automatically.",
+    function()
+        beginGagamaruCapture(
+            "Scorpion"
+        )
+    end
+)
+
+d:Button(
+    "Show Learned Gagamaru IDs",
+    "Shows the learned AnimationIds for the two new move buffs.",
+    function()
+        moveBuffNotify(
+            "Gagamaru IDs",
+            "Wild Instincts: "
+            .. tostring(
+                DashConfigs.WildInstincts.animId
+                or "not learned"
+            )
+            .. " | Scorpion: "
+            .. tostring(
+                DashConfigs.Scorpion.animId
+                or "not learned"
+            )
+        )
+    end
+)
 
 d:Label("Aiku Movement Buffs.")
 d:Slider("Reflex Tackle Distance", 0, 0, 125, 1, function(v)
@@ -5398,95 +5045,121 @@ othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 local qteState = {
     enabled = false,
     processing = false,
-    connection = nil,
     delay = 0.863,
-    mode = "Auto",
-    lastTarget = nil,
-    lastTrigger = 0,
-    fallbackCooldown = 0.15,
+    lastButton = nil,
 }
 
-local function qteNotify(text)
+local function qteNotify(status)
     if autoSkillState
         and autoSkillState.suppressNotifs then
         return
     end
 
     pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = "Auto QuickTimeEvent",
-            Text = text,
-            Duration = 2
-        })
+        StarterGui:
+            SetCore(
+                "SendNotification",
+                {
+                    Title = "QuickTimeEvent",
+                    Text = status,
+                    Duration = 1,
+                }
+            )
     end)
 end
 
-local function qteConvertNumberToKeyText(text)
-    local numberMap = {
-        ["1"] = "One",
-        ["2"] = "Two",
-        ["3"] = "Three",
-        ["4"] = "Four",
-        ["5"] = "Five",
-        ["6"] = "Six",
-        ["7"] = "Seven",
-        ["8"] = "Eight",
-        ["9"] = "Nine",
-        ["0"] = "Zero",
-    }
+local function clickQTEButton(btn)
+    if not btn
+        or not btn.Parent then
+        return false
+    end
 
-    return numberMap[text] or text
+    local fired = false
+
+    if type(firesignal) == "function" then
+        local ok1 =
+            pcall(
+                firesignal,
+                btn.Activated
+            )
+
+        local ok2 =
+            pcall(
+                firesignal,
+                btn.MouseButton1Click
+            )
+
+        fired = ok1 or ok2
+    end
+
+    if not fired
+        and type(getconnections) == "function" then
+
+        for _, signal in ipairs({
+            btn.Activated,
+            btn.MouseButton1Click,
+        }) do
+            local okList, list =
+                pcall(
+                    getconnections,
+                    signal
+                )
+
+            if okList
+                and type(list) == "table" then
+
+                for _, conn in ipairs(list) do
+                    local okFire =
+                        pcall(function()
+                            if type(conn.Fire) == "function" then
+                                conn:Fire()
+                            elseif type(conn.Function) == "function" then
+                                conn.Function()
+                            end
+                        end)
+
+                    fired = fired or okFire
+                end
+            end
+        end
+    end
+
+    return fired
 end
 
-local function qteIsShadeOfGreen(color)
-    return color.G > color.R
-        and color.G > color.B
-end
-
-local function qteGetRootGui()
+local function findQTEGui()
     local playerGui =
-        Players.LocalPlayer
-        and Players.LocalPlayer:
-            FindFirstChild("PlayerGui")
+        Players.LocalPlayer:
+        FindFirstChild("PlayerGui")
 
     if not playerGui then
         return nil
     end
 
-    return playerGui:FindFirstChild("Qte")
-        or playerGui:FindFirstChild("QTE")
+    return playerGui:
+        FindFirstChild("Qte")
+        or playerGui:
+        FindFirstChild("QTE")
 end
 
-local function qteGuiIsActive(qteGui)
-    if not qteGui or not qteGui.Parent then
-        return false
-    end
-
-    if qteGui:IsA("ScreenGui") then
-        return qteGui.Enabled
-    end
-
-    if qteGui:IsA("GuiObject") then
-        return qteGui.Visible
-    end
-
-    return true
-end
-
-local function qteFindTargetButton(qteGui)
+local function findQTEButton(qteGui)
     if not qteGui then
         return nil
     end
 
     local qteGroup =
-        qteGui:FindFirstChild("QTE")
-        or qteGui:FindFirstChild("CanvasGroup")
+        qteGui:
+        FindFirstChild("QTE")
+        or qteGui:
+        FindFirstChild("CanvasGroup")
 
     if qteGroup then
         local direct =
-            qteGroup:FindFirstChild("Button")
+            qteGroup:
+            FindFirstChild("Button")
 
-        if direct and direct:IsA("GuiButton") then
+        if direct
+            and direct:IsA("GuiButton") then
             return direct
         end
     end
@@ -5500,344 +5173,226 @@ local function qteFindTargetButton(qteGui)
         end
     end
 
+    for _, object in ipairs(
+        qteGui:GetDescendants()
+    ) do
+        if object:IsA("GuiButton")
+            and object.Visible then
+            return object
+        end
+    end
+
     return nil
 end
 
--- This is the direct mobile method from the supplied AutoQTE file:
--- fire the actual QTE button signal instead of pretending the phone has
--- a physical keyboard. It also works on desktop when these APIs exist.
-local function qteClickTargetButton(button)
-    if not button
-        or not button.Parent then
-        return false
-    end
+local function convertNumberToKeyText(value)
+    local map = {
+        ["1"] = "One",
+        ["2"] = "Two",
+        ["3"] = "Three",
+        ["4"] = "Four",
+        ["5"] = "Five",
+        ["6"] = "Six",
+        ["7"] = "Seven",
+        ["8"] = "Eight",
+        ["9"] = "Nine",
+        ["0"] = "Zero",
+    }
 
-    if firesignal then
-        local ok1 =
-            pcall(
-                firesignal,
-                button.Activated
-            )
-
-        local ok2 =
-            pcall(
-                firesignal,
-                button.MouseButton1Click
-            )
-
-        if ok1 or ok2 then
-            return true
-        end
-    end
-
-    if getconnections then
-        local fired = false
-
-        for _, signal in ipairs({
-            button.Activated,
-            button.MouseButton1Click,
-        }) do
-            local ok, connections =
-                pcall(
-                    getconnections,
-                    signal
-                )
-
-            if ok and connections then
-                for _, connection in ipairs(
-                    connections
-                ) do
-                    local success =
-                        pcall(function()
-                            connection:Fire()
-                        end)
-
-                    fired =
-                        fired or success
-                end
-            end
-        end
-
-        if fired then
-            return true
-        end
-    end
-
-    -- GUI-position fallback for environments that expose VirtualInputManager
-    -- but not firesignal/getconnections.
-    local ok, result =
-        pcall(function()
-            local vim =
-                game:GetService(
-                    "VirtualInputManager"
-                )
-
-            local pos =
-                button.AbsolutePosition
-
-            local size =
-                button.AbsoluteSize
-
-            local x =
-                pos.X + size.X / 2
-
-            local y =
-                pos.Y + size.Y / 2
-
-            vim:SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                true,
-                game,
-                0
-            )
-
-            task.wait()
-
-            vim:SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                false,
-                game,
-                0
-            )
-
-            return true
-        end)
-
-    return ok and result == true
+    return map[value] or value
 end
 
-local function qteKeyboardFallback(qteGui)
-    local qteGroup =
-        qteGui
-        and (
-            qteGui:
-                FindFirstChild("QTE")
-            or qteGui:
-                FindFirstChild("CanvasGroup")
-        )
+local function isShadeOfGreen(color)
+    return color.G > color.R
+        and color.G > color.B
+end
 
-    if not qteGroup then
+local function keyboardQTEFallback(qteGui)
+    if not qteGui then
         return false
     end
 
-    local isReady = false
+    local group =
+        qteGui:
+        FindFirstChild("QTE")
+        or qteGui
 
-    for _, descendant in ipairs(
-        qteGroup:GetDescendants()
+    local green = false
+
+    for _, object in ipairs(
+        group:GetDescendants()
     ) do
-        if descendant:IsA("Frame")
-            or descendant:IsA("TextLabel") then
-
-            if qteIsShadeOfGreen(
-                descendant.BackgroundColor3
+        if object:IsA("GuiObject")
+            and object.Visible
+            and isShadeOfGreen(
+                object.BackgroundColor3
             ) then
-                isReady = true
-                break
-            end
+
+            green = true
+            break
         end
     end
 
-    if not isReady then
+    if not green then
         return false
     end
 
-    local textLabel =
-        qteGroup:
-        FindFirstChild("TextLabel")
+    local label =
+        group:
+        FindFirstChild(
+            "TextLabel",
+            true
+        )
 
-    if not textLabel
-        or not textLabel:IsA("TextLabel") then
+    if not label
+        or not label:IsA("TextLabel") then
         return false
     end
 
-    local keyText =
-        qteConvertNumberToKeyText(
-            textLabel.Text
+    local keyName =
+        convertNumberToKeyText(
+            label.Text
         )
 
     local keyCode =
-        Enum.KeyCode[keyText]
+        Enum.KeyCode[keyName]
 
     if not keyCode then
         return false
     end
 
-    local ok =
-        pcall(function()
-            local vim =
-                game:GetService(
-                    "VirtualInputManager"
-                )
+    return pcall(function()
+        local vim =
+            game:GetService(
+                "VirtualInputManager"
+            )
 
-            vim:SendKeyEvent(
+        vim:
+            SendKeyEvent(
                 true,
                 keyCode,
                 false,
                 game
             )
 
-            task.wait()
+        task.wait()
 
-            vim:SendKeyEvent(
+        vim:
+            SendKeyEvent(
                 false,
                 keyCode,
                 false,
                 game
             )
-        end)
-
-    return ok
-end
-
-local function qteRunTarget(button, qteGui)
-    if qteState.processing then
-        return
-    end
-
-    qteState.processing = true
-
-    task.spawn(function()
-        task.wait(qteState.delay)
-
-        if not qteState.enabled
-            or not qteGuiIsActive(qteGui) then
-            qteState.processing = false
-            return
-        end
-
-        local triggered = false
-
-        if qteState.mode ~= "Keyboard" then
-            triggered =
-                qteClickTargetButton(button)
-        end
-
-        if not triggered
-            and qteState.mode ~= "Direct Button" then
-            triggered =
-                qteKeyboardFallback(qteGui)
-        end
-
-        if triggered then
-            qteState.lastTrigger =
-                os.clock()
-        end
-
-        task.wait(
-            qteState.fallbackCooldown
-        )
-
-        qteState.processing = false
     end)
 end
 
-local function qteCheck()
+local function checkQTE()
     if not qteState.enabled
         or qteState.processing then
         return
     end
 
     local qteGui =
-        qteGetRootGui()
+        findQTEGui()
 
-    if not qteGuiIsActive(qteGui) then
-        qteState.lastTarget = nil
+    if not qteGui then
+        qteState.lastButton = nil
+        return
+    end
+
+    if qteGui:IsA("ScreenGui")
+        and not qteGui.Enabled then
+        qteState.lastButton = nil
         return
     end
 
     local targetButton =
-        qteFindTargetButton(qteGui)
+        findQTEButton(qteGui)
 
-    if targetButton then
-        if targetButton ~= qteState.lastTarget
-            or os.clock() - qteState.lastTrigger > 0.55 then
+    if not targetButton then
+        return
+    end
 
-            qteState.lastTarget =
+    if qteState.lastButton == targetButton then
+        return
+    end
+
+    qteState.lastButton = targetButton
+    qteState.processing = true
+
+    task.spawn(function()
+        task.wait(qteState.delay)
+
+        if not qteState.enabled then
+            qteState.processing = false
+            return
+        end
+
+        local directWorked =
+            clickQTEButton(
                 targetButton
+            )
 
-            qteRunTarget(
-                targetButton,
+        if not directWorked then
+            keyboardQTEFallback(
                 qteGui
             )
         end
 
-        return
-    end
-
-    -- Some desktop QTE versions expose only the green indicator + key text.
-    -- In Auto/Keyboard mode we preserve the old fallback behaviour.
-    if qteState.mode ~= "Direct Button"
-        and os.clock() - qteState.lastTrigger > 0.20 then
-
-        if qteKeyboardFallback(qteGui) then
-            qteState.lastTrigger =
-                os.clock()
-        end
-    end
-end
-
-local function qteSetEnabled(enabled)
-    qteState.enabled =
-        enabled == true
-
-    if qteState.enabled then
-        if qteState.connection then
-            qteState.connection:
-                Disconnect()
-        end
-
-        qteState.connection =
-            RunService.RenderStepped:
-                Connect(qteCheck)
-
-        qteNotify(
-            UserInputService.TouchEnabled
-            and "Enabled - mobile direct-button mode ready."
-            or "Enabled."
-        )
-    else
-        if qteState.connection then
-            qteState.connection:
-                Disconnect()
-
-            qteState.connection = nil
-        end
+        task.wait(0.35)
 
         qteState.processing = false
-        qteState.lastTarget = nil
 
-        qteNotify("Disabled.")
-    end
+        if not targetButton.Parent
+            or not targetButton.Visible then
+
+            qteState.lastButton = nil
+        else
+            task.delay(
+                0.35,
+                function()
+                    if qteState.lastButton
+                        == targetButton then
+
+                        qteState.lastButton =
+                            nil
+                    end
+                end
+            )
+        end
+    end)
 end
+
+RunService.RenderStepped:
+    Connect(checkQTE)
 
 othersil:Toggle(
     "Auto QuickTimeEvent",
-    "Automatically completes QTEs. Mobile clicks the real QTE button directly when possible.",
+    "Mobile-ready Auto QTE. Directly activates the QTE button after the reaction delay, with keyboard fallback.",
     function(value)
-        qteSetEnabled(value)
-    end
-)
+        if type(value) == "boolean" then
+            qteState.enabled = value
+        else
+            qteState.enabled =
+                not qteState.enabled
+        end
 
-othersil:Dropdown(
-    "Auto QTE Method",
-    {
-        "Auto",
-        "Direct Button",
-        "Keyboard"
-    },
-    function(value)
-        qteState.mode = value
+        qteState.processing = false
+        qteState.lastButton = nil
+
+        qteNotify(
+            qteState.enabled
+            and "Enabled - mobile direct-button mode."
+            or "Disabled."
+        )
     end
 )
 
 othersil:Slider(
     "Auto QTE Delay",
     0.863,
-    0,
+    0.05,
     1.5,
     0.01,
     function(value)
@@ -5846,18 +5401,25 @@ othersil:Slider(
 )
 
 othersil:Button(
-    "Test / Scan QTE",
-    "Runs one QTE scan immediately.",
+    "Test / Scan Auto QTE",
+    "Reports whether the current QTE button can be found.",
     function()
-        qteCheck()
+        local button =
+            findQTEButton(
+                findQTEGui()
+            )
 
         qteNotify(
-            qteGetRootGui()
-            and "QTE GUI detected."
-            or "No active QTE GUI detected."
+            button
+            and (
+                "Found: "
+                .. button:GetFullName()
+            )
+            or "No QTE button is visible right now."
         )
     end
 )
+
 
 local teamHighlightActive = false
 local highlightFolder = nil
@@ -6655,7 +6217,7 @@ funtab:Button("Goku Moveset (Req. Isagi)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/goku%20moveset%20(azl)",true))()
+    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/goku%20moveset%20(azl)", "Goku Moveset", false, true)
 end)
 
 funtab:Button("Aizen Moveset (Req. Isagi)", "Click F4 To Disable.", function()
@@ -6666,7 +6228,7 @@ funtab:Button("Aizen Moveset (Req. Isagi)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/aizen%20moveset",true))()
+    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/aizen%20moveset", "Aizen Moveset", false, true)
 end)
 
 funtab:Button("Loki Moveset (V2) (Req. Isagi.)", "Click F4 To Disable, Rejoin To Fix Isagi Music.", function()
@@ -6677,11 +6239,11 @@ funtab:Button("Loki Moveset (V2) (Req. Isagi.)", "Click F4 To Disable, Rejoin To
         Duration = 5,
         Button1 = "OK",
     })
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/loki%20v2"))()
+    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/loki%20v2", "Loki Moveset V2", false)
 end)
 
 funtab:Button("Ronaldo Moveset (V3) (Req. Shidou)", "Click F4 To Disable.", function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ronaldov3"))()
+    safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ronaldov3", "Ronaldo Moveset V3", false)
 end)
 
 funtab:Label("Daffy's Movesets.")
@@ -6694,7 +6256,7 @@ funtab:Button("Gojo Moveset (Req. Isagi.)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    loadstring(game:HttpGet("https://pastebin.com/raw/TH8xDy9X"))()
+    safeLoadUrl("https://pastebin.com/raw/TH8xDy9X", "Gojo Moveset", false)
 end)
 
 funtab:Button("Hugo Moveset (Early Access.) (Req. Kunigami)", "Click F4 To Disable, Rejoin To Fix Kunigami Music.", function()
@@ -6705,7 +6267,7 @@ funtab:Button("Hugo Moveset (Early Access.) (Req. Kunigami)", "Click F4 To Disab
         Duration = 5,
         Button1 = "OK",
     })
-loadstring(game:HttpGet("https://pastebin.com/raw/ND6yrPyk"))()
+safeLoadUrl("https://pastebin.com/raw/ND6yrPyk", "Hugo Moveset", false)
 end)
 
 funtab:Button("Naoya Moveset (Req. Sae)", "Click F4 To Disable.", function()
@@ -6716,11 +6278,11 @@ funtab:Button("Naoya Moveset (Req. Sae)", "Click F4 To Disable.", function()
         Duration = 5,
         Button1 = "OK",
     })
-    loadstring(game:HttpGet("https://pastebin.com/raw/PDwm0ZcF"))()
+    safeLoadUrl("https://pastebin.com/raw/PDwm0ZcF", "Naoya Moveset", false)
 end)
 
 misctab:Button("Infinite Yield", function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+    safeLoadUrl("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source", "Infinite Yield", false)
 end)
 
 teleporttab:Button("Middle Field", function()
@@ -7298,6 +6860,6 @@ exploittab:Textbox("Goal Target", "Enter A Number Of Goals To Stop Farming At.",
     end
 end)
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep",true))()
-loadstring(game:HttpGet("https://pastebin.com/raw/rQMS2B9R",true))()
-loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users"))()
+safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep", "Celeron legacy extension", false, true)
+safeLoadUrl("https://pastebin.com/raw/rQMS2B9R", "Celeron optional extension", false, true)
+safeLoadUrl("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users", "Owner anti-abuse", false)
