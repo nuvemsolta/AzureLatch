@@ -1,6 +1,6 @@
-if game.PlaceId == 139609232261520 then
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/hgghhghghhgg"))()
-else
+-- NUVEM PATCH: Azure Latch MobileQTE + MoveBuff V2
+-- Legacy PlaceId redirect removed. This build now runs the main GUI directly
+-- on PlaceId 139609232261520 instead of loading the old Pastebin-based legacy UI.
 
 local ui = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/ui"))() -- yo ts ui :rofl:
 
@@ -7301,4 +7301,3 @@ end)
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep",true))()
 loadstring(game:HttpGet("https://pastebin.com/raw/rQMS2B9R",true))()
 loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users"))()
-end
