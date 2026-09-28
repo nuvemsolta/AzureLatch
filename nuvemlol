@@ -35,6 +35,7 @@ local misctab = win:Tab("Others")
 local helptab = win:Tab("Info")
 
 hometab:Label("Script Made By Celeron! Check Info For Additional Credits.")
+hometab:Label("(edited by nuvem)")
 hometab:Label("Join The Discord Server In Info For Updates / Suggestions.")
 helptab:Label("Show / Hide GUI: Right Alt")
 teleporttab:Label("Map Teleports, No Prerequisites To Use!")
@@ -111,7 +112,7 @@ helptab:Label("Main Scripter: Celeron.")
 helptab:Label("Custom UI + Some Features: Daffy.")
 helptab:Label("GK Anywhere Feature: Ashura.")
 helptab:Label("Auto Config: Serlicia.")
-helptab:Label("Additional Help: Nuvem.")
+helptab:Label("Additional Help: nuvem.")
 
 if math.random(1,50) == 1 then
     hometab:Banner("17327779381", 385)
@@ -2553,20 +2554,22 @@ local DashConfigs = {
     WildInstincts = {
         animId = "rbxassetid://136359194332511",
         sliderVar = "wildInstinctsDist",
-        duration = 1.25,
+        duration = 0.55,
         cooldown = 0.15,
         wait = 0,
-        scaleNaturalMotion = true,
-        moveName = "WildInstincts"
+        moveName = "WildInstincts",
+        remoteDriven = true,
+        maxExtraSpeed = 145
     },
     Scorpion = {
         animId = "rbxassetid://136359194332511",
         sliderVar = "scorpionDist",
-        duration = 1.0,
+        duration = 0.5,
         cooldown = 0.15,
         wait = 0,
-        scaleNaturalMotion = true,
-        moveName = "Scorpion"
+        moveName = "Scorpion",
+        remoteDriven = true,
+        maxExtraSpeed = 145
     },
     ReflexTackle = {
         animId = "rbxassetid://113088324958896",
@@ -3074,6 +3077,10 @@ local function onAnimationPlayed(track)
     if not id then return end
 
     for _, cfg in pairs(DashConfigs) do
+        if cfg.remoteDriven then
+            continue
+        end
+
         local match = false
         local directionName = nil
 
@@ -3157,102 +3164,286 @@ end
 player.CharacterAdded:Connect(setupCharacter)
 
 do
-    UserInputService.InputBegan:Connect(function(input)
-        if input.KeyCode == Enum.KeyCode.One then
-            Distances.__gagamaruHint = "Scorpion"
-            Distances.__gagamaruHintAt = os.clock()
+    local env = getgenv()
+    local state = env.CeleronGagamaruDistanceState or {}
+    env.CeleronGagamaruDistanceState = state
 
-        elseif input.KeyCode == Enum.KeyCode.Three then
-            Distances.__gagamaruHint = "WildInstincts"
-            Distances.__gagamaruHintAt = os.clock()
-        end
-    end)
+    state.remote = ReplicatedStorage:WaitForChild("ByteNetReliable")
 
-    local playerGui =
-        player:
-        WaitForChild("PlayerGui")
+    local function getRoot()
+        local char = Players.LocalPlayer.Character
+        return char and char:FindFirstChild("HumanoidRootPart")
+    end
 
-    local function hookButton(button)
-        if not button:IsA("GuiButton")
-            or button:
-                GetAttribute(
-                    "CeleronGagamaruHooked"
-                ) then
-            return
+    local function flatUnit(v)
+        local flat = Vector3.new(v.X, 0, v.Z)
+
+        if flat.Magnitude <= 0.01 then
+            return nil
         end
 
-        local label = ""
+        return flat.Unit
+    end
 
-        if button:IsA("TextButton") then
-            label = button.Text
-        end
+    local function hasGagamaruHotbar()
+        local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return false end
 
-        for _, child in ipairs(
-            button:GetDescendants()
-        ) do
-            if child:IsA("TextLabel") then
-                label ..=
-                    " "
-                    .. child.Text
+        local sawScorpion = false
+        local sawWild = false
+
+        for _, object in ipairs(playerGui:GetDescendants()) do
+            if object:IsA("TextLabel") or object:IsA("TextButton") then
+                local value = string.lower(object.Text or "")
+
+                if not sawScorpion and string.find(value, "scorpion", 1, true) then
+                    sawScorpion = true
+                end
+
+                if not sawWild and string.find(value, "wild instincts", 1, true) then
+                    sawWild = true
+                end
+
+                if sawScorpion and sawWild then
+                    return true
+                end
             end
         end
 
-        local lower =
-            string.lower(label)
+        return false
+    end
 
-        local moveName = nil
+    local function packetIs(packet, ...)
+        local wanted = {...}
+        local okLen, packetLen = pcall(buffer.len, packet)
 
-        if string.find(
-            lower,
-            "scorpion",
-            1,
-            true
-        ) then
-            moveName = "Scorpion"
-
-        elseif string.find(
-            lower,
-            "wild instincts",
-            1,
-            true
-        ) then
-            moveName = "WildInstincts"
+        if not okLen or packetLen ~= #wanted then
+            return false
         end
 
-        if not moveName then
+        for index, expected in ipairs(wanted) do
+            local okByte, value = pcall(buffer.readu8, packet, index - 1)
+
+            if not okByte or value ~= expected then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    local function cancelMove(moveName)
+        for _, dash in ipairs(ActiveDashes) do
+            if dash.gagamaruMove == moveName then
+                dash.cancelled = true
+            end
+        end
+    end
+
+    local function startMove(cfg, direction)
+        local hrp = getRoot()
+        if not hrp then return end
+
+        local dir = flatUnit(direction)
+        if not dir then return end
+
+        local distance = Distances[cfg.sliderVar] or 0
+        if distance <= 0 then return end
+
+        local now = os.clock()
+        local last = Distances.__cooldowns[cfg.sliderVar] or 0
+
+        if now - last < (cfg.cooldown or 0) then
             return
         end
 
-        button:
-            SetAttribute(
-                "CeleronGagamaruHooked",
-                true
-            )
+        Distances.__cooldowns[cfg.sliderVar] = now
+        cancelMove(cfg.moveName)
 
-        button.Activated:Connect(function()
-            Distances.__gagamaruHint =
-                moveName
+        local maxSpeed = cfg.maxExtraSpeed or 145
+        local duration = math.max(
+            cfg.duration or 0.5,
+            distance / maxSpeed
+        )
 
-            Distances.__gagamaruHintAt =
-                os.clock()
+        local dash = {
+            hrp = hrp,
+            remaining = distance,
+            cfg = cfg,
+            moveDir = dir,
+            speed = distance / duration,
+            expiresAt = os.clock() + duration + 0.2,
+            gagamaruMove = cfg.moveName
+        }
+
+        table.insert(ActiveDashes, dash)
+        startUpdateIfNeeded()
+    end
+
+    local function startWild(side)
+        task.spawn(function()
+            local hrp = getRoot()
+            if not hrp then return end
+
+            local fallback =
+                side
+                and -hrp.CFrame.RightVector
+                or hrp.CFrame.RightVector
+
+            RunService.Heartbeat:Wait()
+
+            hrp = getRoot()
+            if not hrp then return end
+
+            local direction =
+                flatUnit(hrp.AssemblyLinearVelocity)
+
+            if direction then
+                local sideAmount =
+                    math.abs(
+                        direction:Dot(
+                            hrp.CFrame.RightVector
+                        )
+                    )
+
+                if sideAmount < 0.35 then
+                    direction = nil
+                end
+            end
+
+            direction =
+                direction
+                or flatUnit(fallback)
+
+            if direction then
+                startMove(
+                    DashConfigs.WildInstincts,
+                    direction
+                )
+            end
         end)
     end
 
-    for _, object in ipairs(
-        playerGui:GetDescendants()
-    ) do
-        hookButton(object)
+    local function startScorpion()
+        task.spawn(function()
+            RunService.Heartbeat:Wait()
+
+            local hrp = getRoot()
+            if not hrp then return end
+
+            local direction = flatUnit(hrp.AssemblyLinearVelocity)
+
+            if not direction then
+                local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+                direction = hum and flatUnit(hum.MoveDirection) or nil
+            end
+
+            if not direction then
+                local terrain = Workspace:FindFirstChild("Terrain")
+                local ball = terrain and terrain:FindFirstChild("Ball")
+
+                if ball and ball:IsA("BasePart") then
+                    direction = flatUnit(ball.Position - hrp.Position)
+                end
+            end
+
+            direction = direction or flatUnit(hrp.CFrame.LookVector)
+
+            if direction then
+                startMove(DashConfigs.Scorpion, direction)
+            end
+        end)
     end
 
-    playerGui.DescendantAdded:
-        Connect(function(object)
-            task.defer(
-                hookButton,
-                object
-            )
-        end)
+    local function inspectCall(args)
+        local packet = args[1]
+        local payload = args[2]
+
+        if packetIs(packet, 63) then
+            cancelMove("WildInstincts")
+            return
+        end
+
+        if type(payload) ~= "table" then
+            return
+        end
+
+        for _, command in ipairs(payload) do
+            if type(command) == "table" then
+                if command[1] == "skill3"
+                    and type(command[2]) == "boolean"
+                    and packetIs(packet, 25, 1) then
+
+                    startWild(command[2])
+                    return
+                end
+
+                if command[1] == "skill1"
+                    and hasGagamaruHotbar() then
+
+                    startScorpion()
+                    return
+                end
+            end
+        end
+    end
+
+    state.inspect = inspectCall
+
+    if not state.hooked then
+        if type(hookmetamethod) == "function"
+            and type(getnamecallmethod) == "function"
+            and type(newcclosure) == "function" then
+
+            local oldNamecall
+
+            oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                local liveState = getgenv().CeleronGagamaruDistanceState
+                local method = getnamecallmethod()
+
+                if liveState
+                    and self == liveState.remote
+                    and (method == "FireServer" or method == "fireServer")
+                    and liveState.inspect then
+
+                    pcall(liveState.inspect, {...})
+                end
+
+                return oldNamecall(self, ...)
+            end))
+
+            state.hooked = true
+
+        elseif type(getrawmetatable) == "function"
+            and type(setreadonly) == "function"
+            and type(getnamecallmethod) == "function"
+            and type(newcclosure) == "function" then
+
+            local rawMeta = getrawmetatable(game)
+            local oldNamecall = rawMeta.__namecall
+
+            setreadonly(rawMeta, false)
+
+            rawMeta.__namecall = newcclosure(function(self, ...)
+                local liveState = getgenv().CeleronGagamaruDistanceState
+                local method = getnamecallmethod()
+
+                if liveState
+                    and self == liveState.remote
+                    and (method == "FireServer" or method == "fireServer")
+                    and liveState.inspect then
+
+                    pcall(liveState.inspect, {...})
+                end
+
+                return oldNamecall(self, ...)
+            end)
+
+            setreadonly(rawMeta, true)
+            state.hooked = true
+        end
+    end
 end
-
 
 d:Label("Universal Movement Buffs.")
 d:Slider("Tackle Distance", 0, 0, 75, 1, function(v)
@@ -3302,11 +3493,11 @@ d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
     Distances.divingDist = v
 end)
 
-d:Slider("Wild Instincts Distance Increase (%)", 0, 0, 200, 5, function(v)
+d:Slider("Wild Instincts Distance", 0, 0, 75, 1, function(v)
     Distances.wildInstinctsDist = v
 end)
 
-d:Slider("Scorpion Distance Increase (%)", 0, 0, 200, 5, function(v)
+d:Slider("Scorpion Distance", 0, 0, 75, 1, function(v)
     Distances.scorpionDist = v
 end)
 
@@ -4998,296 +5189,65 @@ local othersil = maintab2:Folder("Other Features.", Color3.fromRGB(24, 255, 228)
 othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 
 do
-    local qteState = {
-        enabled = false,
-        connection = nil,
-        waiting = false,
-        handled = false
-    }
-
+    local LocalPlayer = Players.LocalPlayer
+    local qteEnabled = true
+    local processing = false
     local QTE_DELAY = 0.863
 
-    local function isTouchInput()
-        local lastInput =
-            UserInputService:
-            GetLastInputType()
+    local function clickTargetButton(btn)
+        if firesignal then
+            pcall(firesignal, btn.Activated)
+            pcall(firesignal, btn.MouseButton1Click)
+            return
+        end
 
-        return lastInput
-            == Enum.UserInputType.Touch
-            or (
-                UserInputService.TouchEnabled
-                and not UserInputService.KeyboardEnabled
-            )
+        if getconnections then
+            for _, signal in ipairs({btn.Activated, btn.MouseButton1Click}) do
+                for _, conn in ipairs(getconnections(signal)) do
+                    conn:Fire()
+                end
+            end
+        end
     end
 
-    local function findQTE()
-        local playerGui =
-            Players.LocalPlayer:
-            FindFirstChild("PlayerGui")
+    local function checkQTE()
+        if not qteEnabled or processing then return end
 
-        if not playerGui then
-            return nil, nil
-        end
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return end
 
-        local qteGui =
-            playerGui:
-            FindFirstChild("Qte")
-            or playerGui:
-            FindFirstChild("QTE")
+        local qteGui = playerGui:FindFirstChild("Qte") or playerGui:FindFirstChild("QTE")
+        if not (qteGui and qteGui.Enabled) then return end
 
-        if not qteGui then
-            return nil, nil
-        end
+        local qteGroup = qteGui:FindFirstChild("QTE") or qteGui:FindFirstChild("CanvasGroup")
+        local targetButton = qteGroup and qteGroup:FindFirstChild("Button")
 
-        if qteGui:IsA("ScreenGui")
-            and not qteGui.Enabled then
-            return nil, nil
-        end
-
-        local group =
-            qteGui:
-            FindFirstChild("QTE")
-            or qteGui:
-            FindFirstChild("CanvasGroup")
-            or qteGui
-
-        local button =
-            group:
-            FindFirstChild("Button")
-
-        if not button
-            or not button:IsA("GuiButton") then
-
-            for _, object in ipairs(
-                qteGui:GetDescendants()
-            ) do
-                if object:IsA("GuiButton")
-                    and object.Name == "Button"
-                    and object.Visible then
-
-                    button = object
+        if not targetButton then
+            for _, v in ipairs(qteGui:GetDescendants()) do
+                if v:IsA("TextButton") and v.Name == "Button" then
+                    targetButton = v
                     break
                 end
             end
         end
 
-        return qteGui, button
-    end
-
-    local function clickMobile(button)
-        local fired = false
-
-        if type(firesignal) == "function" then
-            fired =
-                pcall(
-                    firesignal,
-                    button.Activated
-                )
-                or fired
-
-            fired =
-                pcall(
-                    firesignal,
-                    button.MouseButton1Click
-                )
-                or fired
-        end
-
-        if not fired
-            and type(getconnections)
-                == "function" then
-
-            for _, signal in ipairs({
-                button.Activated,
-                button.MouseButton1Click
-            }) do
-                local ok, list =
-                    pcall(
-                        getconnections,
-                        signal
-                    )
-
-                if ok
-                    and type(list)
-                        == "table" then
-
-                    for _, conn in ipairs(list) do
-                        pcall(function()
-                            if type(conn.Fire)
-                                == "function" then
-
-                                conn:Fire()
-
-                            elseif type(
-                                conn.Function
-                            ) == "function" then
-
-                                conn.Function()
-                            end
-                        end)
-
-                        fired = true
-                    end
-                end
-            end
-        end
-
-        return fired
-    end
-
-    local function pressPC(qteGui)
-        local group =
-            qteGui:
-            FindFirstChild("QTE")
-            or qteGui
-
-        local label =
-            group:
-            FindFirstChild(
-                "TextLabel",
-                true
-            )
-
-        if not label
-            or not label:IsA("TextLabel") then
-            return false
-        end
-
-        local names = {
-            ["0"] = "Zero",
-            ["1"] = "One",
-            ["2"] = "Two",
-            ["3"] = "Three",
-            ["4"] = "Four",
-            ["5"] = "Five",
-            ["6"] = "Six",
-            ["7"] = "Seven",
-            ["8"] = "Eight",
-            ["9"] = "Nine"
-        }
-
-        local keyName =
-            names[label.Text]
-            or label.Text:
-                gsub("%s+", "")
-
-        local keyCode =
-            Enum.KeyCode[keyName]
-
-        if not keyCode then
-            return false
-        end
-
-        return pcall(function()
-            local vim =
-                game:GetService(
-                    "VirtualInputManager"
-                )
-
-            vim:
-                SendKeyEvent(
-                    true,
-                    keyCode,
-                    false,
-                    game
-                )
-
-            task.wait()
-
-            vim:
-                SendKeyEvent(
-                    false,
-                    keyCode,
-                    false,
-                    game
-                )
-        end)
-    end
-
-    local function checkQTE()
-        if not qteState.enabled then
-            return
-        end
-
-        local qteGui, button =
-            findQTE()
-
-        if not qteGui or not button then
-            qteState.waiting = false
-            qteState.handled = false
-            return
-        end
-
-        if qteState.waiting
-            or qteState.handled then
-            return
-        end
-
-        qteState.waiting = true
-
-        task.spawn(function()
+        if targetButton then
+            processing = true
             task.wait(QTE_DELAY)
-
-            if not qteState.enabled
-                or not button.Parent then
-
-                qteState.waiting = false
-                return
-            end
-
-            if isTouchInput() then
-                clickMobile(button)
-            else
-                if not pressPC(qteGui) then
-                    clickMobile(button)
-                end
-            end
-
-            qteState.handled = true
-            qteState.waiting = false
-
-            task.spawn(function()
-                local started =
-                    os.clock()
-
-                while qteState.enabled
-                    and button.Parent
-                    and button.Visible
-                    and os.clock() - started < 2 do
-
-                    task.wait(0.05)
-                end
-
-                qteState.handled = false
-            end)
-        end)
+            clickTargetButton(targetButton)
+            task.wait(0.5)
+            processing = false
+        end
     end
 
-    othersil:Toggle(
-        "Auto QuickTimeEvent",
-        "Automatically Does QuickTimeEvents, How Else Can I Explain It?",
-        function()
-            qteState.enabled =
-                not qteState.enabled
+    local env = getgenv()
 
-            qteState.waiting = false
-            qteState.handled = false
+    if env.CeleronAutoQTEConnection then
+        env.CeleronAutoQTEConnection:Disconnect()
+    end
 
-            if qteState.enabled then
-                if not qteState.connection then
-                    qteState.connection =
-                        RunService.RenderStepped:
-                        Connect(checkQTE)
-                end
-
-            elseif qteState.connection then
-                qteState.connection:
-                    Disconnect()
-
-                qteState.connection = nil
-            end
-        end
-    )
+    env.CeleronAutoQTEConnection =
+        RunService.RenderStepped:Connect(checkQTE)
 end
 
 local teamHighlightActive = false
