@@ -2601,7 +2601,7 @@ local DashConfigs = {
         wait = 0.05
     },
     WildInstincts = {
-        animId = "rbxassetid://136359194332511",
+        animId = "rbxassetid://127218859810420",
         sliderVar = "wildInstinctsDist",
         duration = 0.58,
         cooldown = 0.15,
@@ -3238,16 +3238,17 @@ end
 player.CharacterAdded:Connect(setupCharacter)
 
 do
-    local WILD_ANIMATION_ID = "136359194332511"
+    local WILD_ANIMATION_ID = "127218859810420"
     local SCORPION_ANIMATION_ID = "126121761510176"
 
     local animatorConnection = nil
     local wildSlot = nil
     local wildSlotConnections = {}
-    local hotbarWatchConnection = nil
-    local lastWildTrigger = 0
     local lastWildCooldownVisible = false
-    local wildActivationSerial = 0
+
+    local pendingWildSide = nil
+    local pendingWildAt = 0
+    local lastWildAnimationAt = 0
     local generation = 0
 
     local function flatUnit(vector)
@@ -3266,7 +3267,9 @@ do
 
     local function getCharacter()
         local char = Players.LocalPlayer.Character
-        if not char then return nil end
+        if not char then
+            return nil
+        end
 
         local humanoid = char:FindFirstChildOfClass("Humanoid")
         local root = char:FindFirstChild("HumanoidRootPart")
@@ -3309,14 +3312,19 @@ do
         track
     )
         local _, _, root = getCharacter()
-        if not root then return end
+
+        if not root then
+            return
+        end
 
         local distance = Distances[cfg.sliderVar] or 0
+
         if distance <= 0 then
             return
         end
 
         local moveDir = flatUnit(direction)
+
         if not moveDir then
             return
         end
@@ -3364,30 +3372,74 @@ do
         startUpdateIfNeeded()
     end
 
-    local function chooseWildDirection(
-        humanoid,
-        root,
-        token,
-        capturedSide
-    )
+    local function captureWildSide()
+        local _, humanoid, root = getCharacter()
+
+        if not humanoid or not root then
+            return nil
+        end
+
         local right = flatUnit(root.CFrame.RightVector)
+
         if not right then
             return nil
         end
 
-        if capturedSide == 1 or capturedSide == -1 then
-            return right * capturedSide
+        local dot = humanoid.MoveDirection:Dot(right)
+
+        if math.abs(dot) >= 0.06 then
+            return dot > 0 and 1 or -1
         end
 
-        local moveDot = humanoid.MoveDirection:Dot(right)
+        if UserInputService:IsKeyDown(Enum.KeyCode.A)
+            or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
 
-        if math.abs(moveDot) >= 0.08 then
-            return right * (moveDot > 0 and 1 or -1)
+            return -1
+        end
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.D)
+            or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+
+            return 1
+        end
+
+        return nil
+    end
+
+    local function rememberWildIntent(side)
+        if side ~= 1 and side ~= -1 then
+            side = captureWildSide()
+        end
+
+        pendingWildSide = side
+        pendingWildAt = os.clock()
+    end
+
+    local function chooseWildDirection(
+        humanoid,
+        root,
+        token,
+        intentSide
+    )
+        local right = flatUnit(root.CFrame.RightVector)
+
+        if not right then
+            return nil
+        end
+
+        if intentSide == 1 or intentSide == -1 then
+            return right * intentSide
+        end
+
+        local currentDot = humanoid.MoveDirection:Dot(right)
+
+        if math.abs(currentDot) >= 0.06 then
+            return right * (currentDot > 0 and 1 or -1)
         end
 
         local startPosition = root.Position
 
-        for _ = 1, 6 do
+        for _ = 1, 5 do
             RunService.PostSimulation:Wait()
 
             if token ~= generation or not root.Parent then
@@ -3396,7 +3448,7 @@ do
 
             local liveDot = humanoid.MoveDirection:Dot(right)
 
-            if math.abs(liveDot) >= 0.08 then
+            if math.abs(liveDot) >= 0.06 then
                 return right * (liveDot > 0 and 1 or -1)
             end
 
@@ -3408,7 +3460,7 @@ do
 
             local lateral = delta:Dot(right)
 
-            if math.abs(lateral) >= 0.025 then
+            if math.abs(lateral) >= 0.02 then
                 return right * (lateral > 0 and 1 or -1)
             end
         end
@@ -3418,7 +3470,7 @@ do
         if velocity then
             local velocityDot = velocity:Dot(right)
 
-            if math.abs(velocityDot) >= 0.12 then
+            if math.abs(velocityDot) >= 0.10 then
                 return right * (velocityDot > 0 and 1 or -1)
             end
         end
@@ -3490,199 +3542,54 @@ do
         return flatUnit(root.CFrame.LookVector)
     end
 
-    local function captureWildSide()
-        local _, humanoid, root = getCharacter()
-
-        if not humanoid or not root then
-            return nil
-        end
-
-        local right = flatUnit(root.CFrame.RightVector)
-
-        if not right then
-            return nil
-        end
-
-        local dot = humanoid.MoveDirection:Dot(right)
-
-        if math.abs(dot) >= 0.08 then
-            return dot > 0 and 1 or -1
-        end
-
-        if UserInputService:IsKeyDown(Enum.KeyCode.A)
-            or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
-
-            return -1
-        end
-
-        if UserInputService:IsKeyDown(Enum.KeyCode.D)
-            or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
-
-            return 1
-        end
-
-        return nil
-    end
-
-    local function triggerWild(capturedSide)
-        local distance =
-            Distances.wildInstinctsDist
-            or 0
-
-        if distance <= 0 then
+    local function onWildAnimation(track)
+        if (Distances.wildInstinctsDist or 0) <= 0 then
+            pendingWildSide = nil
             return
         end
 
         local now = os.clock()
 
-        if now - lastWildTrigger < 0.16 then
+        if now - lastWildAnimationAt < 0.18 then
             return
         end
 
-        lastWildTrigger = now
-        wildActivationSerial += 1
+        lastWildAnimationAt = now
+        generation += 1
 
-        local activationSerial =
-            wildActivationSerial
+        local token = generation
+        local intentSide = nil
 
-        local _, humanoid, root =
-            getCharacter()
-
-        if not humanoid or not root then
-            return
+        if now - pendingWildAt <= 1.0 then
+            intentSide = pendingWildSide
         end
 
-        local capturedRight =
-            flatUnit(
-                root.CFrame.RightVector
-            )
-
-        if not capturedRight then
-            return
-        end
-
-        local initialMoveDot =
-            humanoid.MoveDirection:
-            Dot(capturedRight)
-
-        local initialPosition =
-            root.Position
+        pendingWildSide = nil
+        pendingWildAt = 0
 
         task.spawn(function()
-            local side =
-                capturedSide
+            local _, humanoid, root = getCharacter()
 
-            if side ~= 1 and side ~= -1 then
-                if math.abs(initialMoveDot) >= 0.06 then
-                    side =
-                        initialMoveDot > 0
-                        and 1
-                        or -1
-                end
-            end
-
-            if side ~= 1 and side ~= -1 then
-                for _ = 1, 5 do
-                    RunService.PostSimulation:
-                        Wait()
-
-                    if activationSerial
-                        ~= wildActivationSerial
-                        or not root.Parent then
-                        return
-                    end
-
-                    local liveDot =
-                        humanoid.MoveDirection:
-                        Dot(capturedRight)
-
-                    if math.abs(liveDot) >= 0.06 then
-                        side =
-                            liveDot > 0
-                            and 1
-                            or -1
-
-                        break
-                    end
-
-                    local delta =
-                        Vector3.new(
-                            root.Position.X
-                                - initialPosition.X,
-                            0,
-                            root.Position.Z
-                                - initialPosition.Z
-                        )
-
-                    local lateral =
-                        delta:
-                        Dot(capturedRight)
-
-                    if math.abs(lateral) >= 0.02 then
-                        side =
-                            lateral > 0
-                            and 1
-                            or -1
-
-                        break
-                    end
-                end
-            end
-
-            if side ~= 1 and side ~= -1 then
-                local velocity =
-                    flatUnit(
-                        root.AssemblyLinearVelocity
-                    )
-
-                if velocity then
-                    local velocityDot =
-                        velocity:
-                        Dot(capturedRight)
-
-                    if math.abs(velocityDot) >= 0.10 then
-                        side =
-                            velocityDot > 0
-                            and 1
-                            or -1
-                    end
-                end
-            end
-
-            if side ~= 1 and side ~= -1 then
-                local ball =
-                    getBall()
-
-                if ball then
-                    local ballSide =
-                        (
-                            ball.Position
-                            - root.Position
-                        ):
-                        Dot(capturedRight)
-
-                    if math.abs(ballSide) >= 0.05 then
-                        side =
-                            ballSide > 0
-                            and 1
-                            or -1
-                    end
-                end
-            end
-
-            if side ~= 1 and side ~= -1 then
-                side = 1
-            end
-
-            if activationSerial
-                ~= wildActivationSerial
-                or not root.Parent then
+            if not humanoid or not root then
                 return
             end
 
+            local direction = chooseWildDirection(
+                humanoid,
+                root,
+                token,
+                intentSide
+            )
+
+            if token ~= generation or not direction then
+                return
+            end
+
+            -- The animation is the only thing that starts Wild's boost.
+            -- UI/cooldown/packet detection only records the intended side.
             startBoost(
                 DashConfigs.WildInstincts,
-                capturedRight * side,
+                direction,
                 nil
             )
         end)
@@ -3735,7 +3642,10 @@ do
 
     local function getSkill3()
         local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
-        if not playerGui then return nil end
+
+        if not playerGui then
+            return nil
+        end
 
         local hotbar = playerGui:FindFirstChild("Hotbar")
         local backpack = hotbar and hotbar:FindFirstChild("Backpack")
@@ -3743,13 +3653,6 @@ do
 
         if innerHotbar then
             return innerHotbar:FindFirstChild("skill3")
-        end
-
-        for _, object in ipairs(playerGui:GetDescendants()) do
-            if object.Name == "skill3"
-                and object:IsA("GuiObject") then
-                return object
-            end
         end
 
         return nil
@@ -3768,8 +3671,8 @@ do
 
         wildSlot = slot
 
-        local function onPressed()
-            triggerWild(
+        local function recordSide()
+            rememberWildIntent(
                 captureWildSide()
             )
         end
@@ -3781,7 +3684,7 @@ do
                     if input.UserInputType == Enum.UserInputType.Touch
                         or input.UserInputType == Enum.UserInputType.MouseButton1 then
 
-                        onPressed()
+                        recordSide()
                     end
                 end)
             )
@@ -3791,7 +3694,7 @@ do
             if object:IsA("GuiButton") then
                 table.insert(
                     wildSlotConnections,
-                    object.Activated:Connect(onPressed)
+                    object.Activated:Connect(recordSide)
                 )
 
                 table.insert(
@@ -3800,7 +3703,7 @@ do
                         if input.UserInputType == Enum.UserInputType.Touch
                             or input.UserInputType == Enum.UserInputType.MouseButton1 then
 
-                            onPressed()
+                            recordSide()
                         end
                     end)
                 )
@@ -3818,9 +3721,7 @@ do
                     local visible = cooldown.Visible
 
                     if visible and not lastWildCooldownVisible then
-                        triggerWild(
-                            captureWildSide()
-                        )
+                        recordSide()
                     end
 
                     lastWildCooldownVisible = visible
@@ -3858,15 +3759,11 @@ do
                 track.Animation.AnimationId
             ):match("%d+")
 
-            if animationId == SCORPION_ANIMATION_ID then
-                onScorpionAnimation(track)
+            if animationId == WILD_ANIMATION_ID then
+                onWildAnimation(track)
 
-            elseif animationId == WILD_ANIMATION_ID then
-                -- Animation remains only a fallback.
-                -- Direct skill3 input/cooldown detection is primary.
-                triggerWild(
-                    captureWildSide()
-                )
+            elseif animationId == SCORPION_ANIMATION_ID then
+                onScorpionAnimation(track)
             end
         end)
     end
@@ -3877,7 +3774,7 @@ do
         end
 
         if input.KeyCode == Enum.KeyCode.Three then
-            triggerWild(
+            rememberWildIntent(
                 captureWildSide()
             )
         end
@@ -3886,68 +3783,54 @@ do
     do
         local remote =
             ReplicatedStorage:
-            FindFirstChild(
-                "ByteNetReliable"
-            )
+            FindFirstChild("ByteNetReliable")
 
         if remote
-            and type(hookmetamethod)
-                == "function"
-            and type(getnamecallmethod)
-                == "function" then
+            and type(hookmetamethod) == "function"
+            and type(getnamecallmethod) == "function" then
 
             local oldNamecall
 
             local replacement =
                 function(self, ...)
-                    local method =
-                        getnamecallmethod()
+                    local method = getnamecallmethod()
 
                     if self == remote
                         and method == "FireServer" then
 
-                        local args =
-                            table.pack(...)
+                        local args = table.pack(...)
 
-                        local results =
-                            table.pack(
-                                oldNamecall(
-                                    self,
-                                    ...
-                                )
+                        local results = table.pack(
+                            oldNamecall(
+                                self,
+                                ...
                             )
+                        )
 
                         task.defer(function()
-                            local packet =
-                                args[1]
+                            local packet = args[1]
+                            local payload = args[2]
 
-                            local payload =
-                                args[2]
+                            local okLength, length = pcall(
+                                buffer.len,
+                                packet
+                            )
 
-                            local okLength, length =
-                                pcall(
-                                    buffer.len,
-                                    packet
-                                )
-
-                            if not okLength
-                                or length ~= 2 then
+                            if not okLength or length ~= 2 then
                                 return
                             end
 
-                            local okA, byteA =
-                                pcall(
-                                    buffer.readu8,
-                                    packet,
-                                    0
-                                )
+                            local okA, byteA = pcall(
+                                buffer.readu8,
+                                packet,
+                                0
+                            )
 
-                            local okB, byteB =
-                                pcall(
-                                    buffer.readu8,
-                                    packet,
-                                    1
-                                )
+                            local okB, byteB = pcall(
+                                buffer.readu8,
+                                packet,
+                                1
+                            )
 
                             if not okA
                                 or not okB
@@ -3957,8 +3840,7 @@ do
                             end
 
                             local move =
-                                type(payload)
-                                    == "table"
+                                type(payload) == "table"
                                 and payload[1]
                                 or nil
 
@@ -3968,13 +3850,8 @@ do
                                 return
                             end
 
-                            local packetSide =
-                                move[2]
-                                and -1
-                                or 1
-
-                            triggerWild(
-                                packetSide
+                            rememberWildIntent(
+                                move[2] and -1 or 1
                             )
                         end)
 
@@ -3991,31 +3868,24 @@ do
                     )
                 end
 
-            if type(newcclosure)
-                == "function" then
-
-                replacement =
-                    newcclosure(
-                        replacement
-                    )
+            if type(newcclosure) == "function" then
+                replacement = newcclosure(replacement)
             end
 
-            local okHook, original =
-                pcall(
-                    hookmetamethod,
-                    game,
-                    "__namecall",
-                    replacement
-                )
+            local okHook, original = pcall(
+                hookmetamethod,
+                game,
+                "__namecall",
+                replacement
+            )
 
             if okHook and original then
-                oldNamecall =
-                    original
+                oldNamecall = original
             end
         end
     end
 
-    hotbarWatchConnection = RunService.Heartbeat:Connect(function()
+    RunService.Heartbeat:Connect(function()
         local current = getSkill3()
 
         if current ~= wildSlot then
@@ -4023,13 +3893,22 @@ do
         end
 
         if wildSlot and wildSlot.Parent then
-            local cooldown = wildSlot:FindFirstChild("Cooldown", true)
+            local cooldown =
+                wildSlot:
+                FindFirstChild(
+                    "Cooldown",
+                    true
+                )
 
-            if cooldown and cooldown:IsA("GuiObject") then
+            if cooldown
+                and cooldown:IsA("GuiObject") then
+
                 local visible = cooldown.Visible
 
-                if visible and not lastWildCooldownVisible then
-                    triggerWild(
+                if visible
+                    and not lastWildCooldownVisible then
+
+                    rememberWildIntent(
                         captureWildSide()
                     )
                 end
@@ -4040,11 +3919,15 @@ do
     end)
 
     if Players.LocalPlayer.Character then
-        hookAnimator(Players.LocalPlayer.Character)
+        hookAnimator(
+            Players.LocalPlayer.Character
+        )
     end
 
     Players.LocalPlayer.CharacterAdded:Connect(function(char)
         generation += 1
+        pendingWildSide = nil
+        pendingWildAt = 0
 
         cancelBoost(
             DashConfigs.WildInstincts
