@@ -273,62 +273,220 @@ do
     local heroicClashSize = 0
     local heroicClashUntil = 0
     local heroicAnimationConnection = nil
-    local printed = {}
+    local activeBoxes = setmetatable({}, {
+        __mode = "k"
+    })
 
     local HEROIC_CLASH_ANIMATION =
         "101568232677122"
 
-    local function fmtVector(vector)
-        return string.format(
-            "%.2f x %.2f x %.2f",
-            vector.X,
-            vector.Y,
-            vector.Z
-        )
+    local function closeTo(value, target)
+        return math.abs(
+            value - target
+        ) <= 0.15
     end
 
-    local function callerName()
-        if type(getcallingscript) ~= "function" then
-            return "?"
-        end
+    local function isFortyCube(part)
+        local size = part.Size
 
-        local ok, scriptObject =
-            pcall(
-                getcallingscript
-            )
-
-        if not ok or not scriptObject then
-            return "?"
-        end
-
-        local okName, fullName =
-            pcall(
-                scriptObject.GetFullName,
-                scriptObject
-            )
-
-        if okName then
-            return fullName
-        end
-
-        return tostring(
-            scriptObject.Name
-        )
+        return closeTo(size.X, 40)
+            and closeTo(size.Y, 40)
+            and closeTo(size.Z, 40)
     end
 
-    local function once(key, message)
-        if printed[key] then
+    local function fullName(part)
+        local ok, value = pcall(
+            part.GetFullName,
+            part
+        )
+
+        if ok and value then
+            return value
+        end
+
+        return tostring(part.Name)
+    end
+
+    local function rootPart()
+        local character =
+            Players.LocalPlayer.Character
+
+        return character
+            and character:
+                FindFirstChild(
+                    "HumanoidRootPart"
+                )
+            or nil
+    end
+
+    local function stopBox(part, restore)
+        local data =
+            activeBoxes[part]
+
+        if not data then
             return
         end
 
-        printed[key] = true
-        print(message)
+        if data.preSimulation then
+            data.preSimulation:
+                Disconnect()
+        end
+
+        if data.destroying then
+            data.destroying:
+                Disconnect()
+        end
+
+        activeBoxes[part] = nil
+
+        if restore
+            and part
+            and part.Parent then
+
+            pcall(function()
+                part.Size =
+                    data.originalSize
+            end)
+        end
     end
 
-    local function armed()
-        return heroicClashSize > 0
-            and os.clock()
-                <= heroicClashUntil
+    local function resizeBox(part)
+        if heroicClashSize <= 0
+            or os.clock() > heroicClashUntil
+            or activeBoxes[part]
+            or not part.Parent
+            or not isFortyCube(part) then
+
+            return
+        end
+
+        local root =
+            rootPart()
+
+        if not root then
+            return
+        end
+
+        local distance =
+            (
+                part.Position
+                - root.Position
+            ).Magnitude
+
+        if distance > 20 then
+            return
+        end
+
+        local data = {
+            originalSize = part.Size
+        }
+
+        activeBoxes[part] =
+            data
+
+        print(
+            "Heroic Clash box found: "
+            .. fullName(part)
+            .. " | normal: "
+            .. string.format(
+                "%.2f x %.2f x %.2f",
+                part.Size.X,
+                part.Size.Y,
+                part.Size.Z
+            )
+            .. " | distance: "
+            .. string.format(
+                "%.2f",
+                distance
+            )
+        )
+
+        local function apply()
+            if not part.Parent then
+                return
+            end
+
+            part.Size =
+                Vector3.new(
+                    heroicClashSize,
+                    heroicClashSize,
+                    heroicClashSize
+                )
+
+            part.CanCollide = false
+            part.CanQuery = true
+            part.CanTouch = true
+        end
+
+        pcall(apply)
+
+        data.destroying =
+            part.Destroying:
+            Connect(function()
+                stopBox(
+                    part,
+                    false
+                )
+            end)
+
+        data.preSimulation =
+            RunService.PreSimulation:
+            Connect(function()
+                if heroicClashSize <= 0
+                    or os.clock()
+                        > heroicClashUntil then
+
+                    stopBox(
+                        part,
+                        true
+                    )
+
+                    return
+                end
+
+                if not part.Parent then
+                    stopBox(
+                        part,
+                        false
+                    )
+
+                    return
+                end
+
+                pcall(apply)
+            end)
+    end
+
+    local function scan()
+        if heroicClashSize <= 0
+            or os.clock() > heroicClashUntil then
+
+            return
+        end
+
+        local root =
+            rootPart()
+
+        if not root then
+            return
+        end
+
+        for _, object in ipairs(
+            Workspace:GetDescendants()
+        ) do
+            if object:IsA("BasePart")
+                and not activeBoxes[object]
+                and isFortyCube(object)
+                and (
+                    object.Position
+                    - root.Position
+                ).Magnitude <= 20 then
+
+                resizeBox(
+                    object
+                )
+            end
+        end
     end
 
     local function armHeroicClash(source)
@@ -339,14 +497,12 @@ do
         heroicClashUntil =
             os.clock() + 1.5
 
-        table.clear(
-            printed
-        )
-
         print(
             "Heroic Clash: "
             .. tostring(source)
         )
+
+        task.defer(scan)
     end
 
     local function hookAnimator(character)
@@ -426,50 +582,22 @@ do
 
     Workspace.DescendantAdded:
     Connect(function(object)
-        if not armed()
+        if heroicClashSize <= 0
+            or os.clock() > heroicClashUntil
             or not object:IsA("BasePart") then
 
             return
         end
 
-        local character =
-            Players.LocalPlayer.Character
+        task.defer(function()
+            if object.Parent
+                and isFortyCube(object) then
 
-        local root =
-            character
-            and character:
-                FindFirstChild(
-                    "HumanoidRootPart"
+                resizeBox(
+                    object
                 )
-
-        if not root
-            or (
-                object.Position
-                - root.Position
-            ).Magnitude > 35 then
-
-            return
-        end
-
-        local name =
-            string.lower(
-                object.Name
-            )
-
-        if name == "whiff" then
-            once(
-                "whiff:"
-                    .. fmtVector(
-                        object.Size
-                    ),
-                "Heroic Clash whiff: "
-                    .. fmtVector(
-                        object.Size
-                    )
-                    .. " | script: "
-                    .. callerName()
-            )
-        end
+            end
+        end)
     end)
 
     do
@@ -551,44 +679,6 @@ do
                                 )
                             end
                         end
-
-                        if armed()
-                            and okLength then
-
-                            local bytes = {}
-
-                            for i = 0, math.min(
-                                length - 1,
-                                7
-                            ) do
-                                local okByte, value =
-                                    pcall(
-                                        buffer.readu8,
-                                        packet,
-                                        i
-                                    )
-
-                                if okByte then
-                                    bytes[#bytes + 1] =
-                                        tostring(value)
-                                end
-                            end
-
-                            once(
-                                "remote:"
-                                    .. table.concat(
-                                        bytes,
-                                        ","
-                                    ),
-                                "Heroic Clash remote: {"
-                                    .. table.concat(
-                                        bytes,
-                                        ", "
-                                    )
-                                    .. "} | script: "
-                                    .. callerName()
-                            )
-                        end
                     end
 
                     return oldNamecall(
@@ -623,382 +713,6 @@ do
         end
     end
 
-    if type(hookfunction) == "function" then
-        do
-            local old
-
-            local ok, original =
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.GetPartBoundsInBox,
-                        function(self, boxCFrame, boxSize, overlapParams)
-                            if self == Workspace
-                                and armed()
-                                and typeof(boxSize) == "Vector3" then
-
-                                local scriptName =
-                                    callerName()
-
-                                once(
-                                    "box:"
-                                        .. fmtVector(
-                                            boxSize
-                                        )
-                                        .. ":"
-                                        .. scriptName,
-                                    "Heroic Clash box: "
-                                        .. fmtVector(
-                                            boxSize
-                                        )
-                                        .. " | script: "
-                                        .. scriptName
-                                )
-
-                                boxSize =
-                                    Vector3.new(
-                                        heroicClashSize,
-                                        heroicClashSize,
-                                        heroicClashSize
-                                    )
-                            end
-
-                            return old(
-                                self,
-                                boxCFrame,
-                                boxSize,
-                                overlapParams
-                            )
-                        end
-                    )
-
-                    return old
-                end)
-
-            if not ok
-                or not original then
-
-                print(
-                    "Heroic Clash box hook failed"
-                )
-            end
-        end
-
-        do
-            local old
-
-            local ok, original =
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.GetPartBoundsInRadius,
-                        function(self, position, radius, overlapParams)
-                            if self == Workspace
-                                and armed()
-                                and type(radius) == "number" then
-
-                                local scriptName =
-                                    callerName()
-
-                                once(
-                                    "radius:"
-                                        .. tostring(radius)
-                                        .. ":"
-                                        .. scriptName,
-                                    "Heroic Clash radius: "
-                                        .. string.format(
-                                            "%.2f",
-                                            radius
-                                        )
-                                        .. " | script: "
-                                        .. scriptName
-                                )
-
-                                radius =
-                                    heroicClashSize
-                            end
-
-                            return old(
-                                self,
-                                position,
-                                radius,
-                                overlapParams
-                            )
-                        end
-                    )
-
-                    return old
-                end)
-
-            if not ok
-                or not original then
-
-                print(
-                    "Heroic Clash radius hook failed"
-                )
-            end
-        end
-
-        do
-            local old
-
-            local ok, original =
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.GetPartsInPart,
-                        function(self, part, overlapParams)
-                            if self == Workspace
-                                and armed()
-                                and typeof(part) == "Instance"
-                                and part:IsA("BasePart") then
-
-                                local originalSize =
-                                    part.Size
-
-                                local scriptName =
-                                    callerName()
-
-                                once(
-                                    "part:"
-                                        .. part.Name
-                                        .. ":"
-                                        .. fmtVector(
-                                            originalSize
-                                        )
-                                        .. ":"
-                                        .. scriptName,
-                                    "Heroic Clash part query: "
-                                        .. part.Name
-                                        .. " | "
-                                        .. fmtVector(
-                                            originalSize
-                                        )
-                                        .. " | script: "
-                                        .. scriptName
-                                )
-
-                                local changed =
-                                    pcall(function()
-                                        part.Size =
-                                            Vector3.new(
-                                                heroicClashSize,
-                                                heroicClashSize,
-                                                heroicClashSize
-                                            )
-                                    end)
-
-                                local results =
-                                    table.pack(
-                                        old(
-                                            self,
-                                            part,
-                                            overlapParams
-                                        )
-                                    )
-
-                                if changed
-                                    and part.Parent then
-
-                                    pcall(function()
-                                        part.Size =
-                                            originalSize
-                                    end)
-                                end
-
-                                return table.unpack(
-                                    results,
-                                    1,
-                                    results.n
-                                )
-                            end
-
-                            return old(
-                                self,
-                                part,
-                                overlapParams
-                            )
-                        end
-                    )
-
-                    return old
-                end)
-
-            if not ok
-                or not original then
-
-                print(
-                    "Heroic Clash part hook failed"
-                )
-            end
-        end
-
-        do
-            local old
-
-            local ok, original =
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.Raycast,
-                        function(self, origin, direction, raycastParams)
-                            if self == Workspace
-                                and armed()
-                                and typeof(direction) == "Vector3" then
-
-                                local character =
-                                    Players.LocalPlayer.Character
-
-                                local root =
-                                    character
-                                    and character:
-                                        FindFirstChild(
-                                            "HumanoidRootPart"
-                                        )
-
-                                if root
-                                    and (
-                                        origin
-                                        - root.Position
-                                    ).Magnitude <= 20 then
-
-                                    local scriptName =
-                                        callerName()
-
-                                    once(
-                                        "ray:"
-                                            .. string.format(
-                                                "%.2f",
-                                                direction.Magnitude
-                                            )
-                                            .. ":"
-                                            .. scriptName,
-                                        "Heroic Clash ray: "
-                                            .. string.format(
-                                                "%.2f",
-                                                direction.Magnitude
-                                            )
-                                            .. " studs | script: "
-                                            .. scriptName
-                                    )
-                                end
-                            end
-
-                            return old(
-                                self,
-                                origin,
-                                direction,
-                                raycastParams
-                            )
-                        end
-                    )
-
-                    return old
-                end)
-
-            if not ok
-                or not original then
-
-                print(
-                    "Heroic Clash ray hook failed"
-                )
-            end
-        end
-
-        if Workspace.Blockcast then
-            do
-                local old
-
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.Blockcast,
-                        function(self, boxCFrame, boxSize, direction, raycastParams)
-                            if self == Workspace
-                                and armed()
-                                and typeof(boxSize) == "Vector3" then
-
-                                local scriptName =
-                                    callerName()
-
-                                once(
-                                    "blockcast:"
-                                        .. fmtVector(
-                                            boxSize
-                                        )
-                                        .. ":"
-                                        .. scriptName,
-                                    "Heroic Clash blockcast: "
-                                        .. fmtVector(
-                                            boxSize
-                                        )
-                                        .. " | script: "
-                                        .. scriptName
-                                )
-
-                                boxSize =
-                                    Vector3.new(
-                                        heroicClashSize,
-                                        heroicClashSize,
-                                        heroicClashSize
-                                    )
-                            end
-
-                            return old(
-                                self,
-                                boxCFrame,
-                                boxSize,
-                                direction,
-                                raycastParams
-                            )
-                        end
-                    )
-                end)
-            end
-        end
-
-        if Workspace.Spherecast then
-            do
-                local old
-
-                pcall(function()
-                    old = hookfunction(
-                        Workspace.Spherecast,
-                        function(self, position, radius, direction, raycastParams)
-                            if self == Workspace
-                                and armed()
-                                and type(radius) == "number" then
-
-                                local scriptName =
-                                    callerName()
-
-                                once(
-                                    "spherecast:"
-                                        .. tostring(radius)
-                                        .. ":"
-                                        .. scriptName,
-                                    "Heroic Clash spherecast: "
-                                        .. string.format(
-                                            "%.2f",
-                                            radius
-                                        )
-                                        .. " | script: "
-                                        .. scriptName
-                                )
-
-                                radius =
-                                    heroicClashSize
-                            end
-
-                            return old(
-                                self,
-                                position,
-                                radius,
-                                direction,
-                                raycastParams
-                            )
-                        end
-                    )
-                end)
-            end
-        end
-    end
-
     kunigamiTests:Slider(
         "Heroic Clash Hitbox Increase",
         0,
@@ -1013,6 +727,19 @@ do
                     0,
                     500
                 )
+
+            if heroicClashSize <= 0 then
+                heroicClashUntil = 0
+
+                for part in pairs(
+                    activeBoxes
+                ) do
+                    stopBox(
+                        part,
+                        true
+                    )
+                end
+            end
         end
     )
 end
