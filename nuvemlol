@@ -2799,9 +2799,12 @@ do
         eligibleBall = nil,
         eligibleUntil = 0,
         releaseSource = nil,
+        releaseKind = nil,
         learnedStyle = nil,
         jumpHeld = false,
         jumpHoldToken = 0,
+        enemyAnimationConnections = {},
+        enemyCharacterConnections = {},
         animatorConnection = nil,
         humanoidStateConnection = nil,
         rootVelocityConnection = nil,
@@ -2844,6 +2847,9 @@ do
         ["rbxassetid://73387016994281"] = "Nagi",
         ["rbxassetid://85349589701503"] = "Shidou"
     }
+
+    local SUPER_THROW_ANIMATION =
+        "rbxassetid://76979409962243"
 
     local function character()
         return lp.Character
@@ -2907,19 +2913,53 @@ do
         return player.Team ~= lp.Team
     end
 
+    local function isNeutralNPC(char)
+        if not char or char == character() then
+            return false
+        end
+
+        if playerFromCharacter(char) then
+            return false
+        end
+
+        return char:IsA("Model")
+            and char:FindFirstChildOfClass("Humanoid") ~= nil
+    end
+
+    local function isDefensivePassSource(char)
+        return isEnemyCharacter(char)
+            or isNeutralNPC(char)
+    end
+
+    local function isSuperThrowSource(char)
+        if not char or char == character() then
+            return false
+        end
+
+        local player = playerFromCharacter(char)
+
+        if player then
+            return player ~= lp
+        end
+
+        return isNeutralNPC(char)
+    end
+
     local function clearEligibleRelease()
         state.eligibleBall = nil
         state.eligibleUntil = 0
         state.releaseSource = nil
+        state.releaseKind = nil
     end
 
-    local function armEnemyRelease(char)
-        if not isEnemyCharacter(char) then
+    local function armDefensiveRelease(char)
+        if not isDefensivePassSource(char) then
             clearEligibleRelease()
             return false
         end
 
         state.releaseSource = char
+        state.releaseKind = "pass"
         state.eligibleBall = nil
         state.eligibleUntil = os.clock() + 3
         return true
@@ -2931,7 +2971,19 @@ do
             return false
         end
 
-        if not state.releaseSource or not isEnemyCharacter(state.releaseSource) then
+        local source = state.releaseSource
+
+        if not source then
+            clearEligibleRelease()
+            return false
+        end
+
+        if state.releaseKind == "superthrow" then
+            if not isSuperThrowSource(source) then
+                clearEligibleRelease()
+                return false
+            end
+        elseif not isDefensivePassSource(source) then
             clearEligibleRelease()
             return false
         end
@@ -2942,6 +2994,166 @@ do
 
         state.eligibleBall = ball
         return true
+    end
+
+    local evaluate
+
+    local function armSuperThrow(char)
+        if not state.enabled or not isSuperThrowSource(char) then
+            return
+        end
+
+        state.releaseSource = char
+        state.releaseKind = "superthrow"
+        state.eligibleBall = nil
+        state.eligibleUntil = os.clock() + 3.5
+
+        local ball = findBall()
+
+        if ball
+            and (
+                not ballHolder
+                or ballHolder.Value == nil
+                or ballHolder.Value == char
+            ) then
+
+            state.eligibleBall = ball
+            evaluate()
+        end
+    end
+
+    local function disconnectEnemyAnimation(player)
+        local connection =
+            state.enemyAnimationConnections[player]
+
+        if connection then
+            connection:Disconnect()
+            state.enemyAnimationConnections[player] = nil
+        end
+    end
+
+    local function hookEnemyAnimator(player, char)
+        if player == lp then
+            return
+        end
+
+        disconnectEnemyAnimation(player)
+
+        task.spawn(function()
+            if not char or not char.Parent then
+                return
+            end
+
+            local humanoid =
+                char:FindFirstChildOfClass("Humanoid")
+                or char:WaitForChild("Humanoid", 10)
+
+            if not humanoid then
+                return
+            end
+
+            local animator =
+                humanoid:FindFirstChildOfClass("Animator")
+                or humanoid:WaitForChild("Animator", 10)
+
+            if not animator or not char.Parent then
+                return
+            end
+
+            disconnectEnemyAnimation(player)
+
+            state.enemyAnimationConnections[player] =
+                animator.AnimationPlayed:Connect(function(track)
+                    if not state.enabled
+                        or not track.Animation
+                        or track.Animation.AnimationId
+                            ~= SUPER_THROW_ANIMATION then
+
+                        return
+                    end
+
+                    if not isSuperThrowSource(char) then
+                        return
+                    end
+
+                    armSuperThrow(char)
+                end)
+        end)
+    end
+
+    local function hookEnemyPlayer(player)
+        if player == lp then
+            return
+        end
+
+        if not state.enemyCharacterConnections[player] then
+            state.enemyCharacterConnections[player] =
+                player.CharacterAdded:Connect(function(char)
+                    hookEnemyAnimator(player, char)
+                end)
+        end
+
+        if player.Character then
+            hookEnemyAnimator(player, player.Character)
+        end
+    end
+
+    local function hookNPCAnimator(char)
+        if not isNeutralNPC(char) then
+            return
+        end
+
+        local key = char
+
+        if state.enemyAnimationConnections[key] then
+            return
+        end
+
+        task.spawn(function()
+            if not char.Parent or not isNeutralNPC(char) then
+                return
+            end
+
+            local humanoid =
+                char:FindFirstChildOfClass("Humanoid")
+
+            if not humanoid then
+                return
+            end
+
+            local animator =
+                humanoid:FindFirstChildOfClass("Animator")
+                or humanoid:WaitForChild("Animator", 10)
+
+            if not animator or not char.Parent then
+                return
+            end
+
+            if state.enemyAnimationConnections[key] then
+                return
+            end
+
+            state.enemyAnimationConnections[key] =
+                animator.AnimationPlayed:Connect(function(track)
+                    if not state.enabled
+                        or not track.Animation
+                        or track.Animation.AnimationId
+                            ~= SUPER_THROW_ANIMATION then
+
+                        return
+                    end
+
+                    if isSuperThrowSource(char) then
+                        armSuperThrow(char)
+                    end
+                end)
+
+            char.AncestryChanged:Connect(function(_, parent)
+                if parent == nil then
+                    disconnectEnemyAnimation(key)
+                end
+            end)
+        end)
     end
 
     local function releaseJump(expectedToken)
@@ -3275,7 +3487,7 @@ do
         return physicsVelocity
     end
 
-    local function trajectoryWillReach(ball, root)
+    local function trapCommitReady(ball, root)
         local velocity = velocityOf(ball)
 
         if velocity.Magnitude < 1.25 then
@@ -3284,13 +3496,15 @@ do
 
         local gravity = Vector3.new(0, -ws.Gravity, 0)
         local rootVelocity = root.AssemblyLinearVelocity
+        local rootBase = root.Position
         local catchOffset = Vector3.new(0, 2.25, 0)
-        local catchPosition = root.Position + catchOffset
+        local catchPosition = rootBase + catchOffset
         local relative = ball.Position - catchPosition
         local relativeVelocity = velocity - rootVelocity
         local relativeSpeedSq = relativeVelocity:Dot(relativeVelocity)
+        local ping = oneWayPing()
+        local lead = ping + (1 / 120)
 
-        local lead = oneWayPing() + (1 / 120)
         local timeToClosest = lead
 
         if relativeSpeedSq > 0.001 then
@@ -3306,55 +3520,94 @@ do
 
         local horizon = math.clamp(
             math.max(
-                timeToClosest + 0.28,
-                travelEstimate + 0.2
+                timeToClosest + 0.32,
+                travelEstimate + 0.24
             ),
-            0.35,
-            1.25
+            0.4,
+            1.35
         )
 
-        local bestDistance = math.huge
-        local highEnough = false
+        local latencyMargin =
+            math.clamp(
+                velocity.Magnitude * ping,
+                0,
+                4
+            )
 
-        for index = 0, 24 do
-            local t = lead + (horizon - lead) * (index / 24)
+        local enterTime = nil
+        local bestDistance = math.huge
+        local samples = 30
+
+        for index = 0, samples do
+            local t =
+                lead
+                + (horizon - lead)
+                * (index / samples)
 
             local ballPosition =
                 ball.Position
                 + velocity * t
                 + 0.5 * gravity * t * t
 
-            local rootPosition =
-                root.Position
-                + rootVelocity * t
-                + catchOffset
+            local predictedRootBase =
+                rootBase + rootVelocity * t
+
+            local rootCatch =
+                predictedRootBase + catchOffset
 
             local distance =
-                (ballPosition - rootPosition).Magnitude
+                (ballPosition - rootCatch).Magnitude
 
             if distance < bestDistance then
                 bestDistance = distance
             end
 
-            if ballPosition.Y > rootPosition.Y - 1.25 then
-                highEnough = true
+            local relativeHeight =
+                ballPosition.Y - predictedRootBase.Y
+
+            if not enterTime
+                and distance <= state.range + latencyMargin
+                and relativeHeight >= 1.15 then
+
+                enterTime = t
             end
+        end
+
+        if not enterTime then
+            return false
         end
 
         local approaching =
             relative:Dot(relativeVelocity) < 0
             or currentDistance <= state.range
 
-        local latencyMargin =
+        if not approaching then
+            return false
+        end
+
+        local speedLead =
             math.clamp(
-                velocity.Magnitude * oneWayPing(),
+                velocity.Magnitude / 450,
                 0,
-                4
+                0.1
             )
 
-        return highEnough
-            and approaching
-            and bestDistance <= state.range + latencyMargin
+        local activationLead =
+            math.clamp(
+                0.28 + ping * 1.35 + speedLead,
+                0.28,
+                0.46
+            )
+
+        local currentRelativeHeight =
+            ball.Position.Y - rootBase.Y
+
+        local alreadyCloseAndHigh =
+            currentDistance <= state.range + latencyMargin
+            and currentRelativeHeight >= 1.15
+
+        return alreadyCloseAndHigh
+            or enterTime <= activationLead
     end
 
     local function airborneReady(profile, humanoid, root)
@@ -3508,7 +3761,7 @@ do
         tryPending()
     end
 
-    local function evaluate()
+    evaluate = function()
         if not state.enabled or hasBall() then
             return
         end
@@ -3552,7 +3805,7 @@ do
             end
         end
 
-        if trajectoryWillReach(ball, root) then
+        if trapCommitReady(ball, root) then
             fireTrap(ball)
         end
     end
@@ -3700,8 +3953,18 @@ do
                     releaseJump()
                     stopLock()
 
-                elseif armEnemyRelease(previous) then
+                elseif state.releaseKind == "superthrow"
+                    and state.releaseSource == previous
+                    and os.clock() <= state.eligibleUntil
+                    and isSuperThrowSource(previous) then
+
                     state.ownReleaseUntil = 0
+                    resetAttempt()
+                    evaluate()
+
+                elseif isDefensivePassSource(previous) then
+                    state.ownReleaseUntil = 0
+                    armDefensiveRelease(previous)
                     resetAttempt()
                     evaluate()
 
@@ -3719,7 +3982,16 @@ do
                 stopLock()
 
             else
-                clearEligibleRelease()
+                local preserveSuperThrow =
+                    state.releaseKind == "superthrow"
+                    and state.releaseSource == current
+                    and os.clock() <= state.eligibleUntil
+                    and isSuperThrowSource(current)
+
+                if not preserveSuperThrow then
+                    clearEligibleRelease()
+                end
+
                 resetAttempt()
                 releaseJump()
 
@@ -3740,7 +4012,16 @@ do
         watchBall(child)
         resetAttempt()
 
-        if os.clock() <= state.eligibleUntil then
+        local validSource =
+            state.releaseKind == "superthrow"
+                and isSuperThrowSource(state.releaseSource)
+            or state.releaseKind == "pass"
+                and isDefensivePassSource(state.releaseSource)
+
+        if os.clock() <= state.eligibleUntil
+            and state.releaseSource
+            and validSource then
+
             state.eligibleBall = child
             evaluate()
         end
@@ -3767,6 +4048,55 @@ do
             elseif state.lockActive and not hasBall() then
                 stopLock()
             end
+        end
+    end)
+
+    for _, player in ipairs(ps:GetPlayers()) do
+        hookEnemyPlayer(player)
+    end
+
+    local charactersFolder = ws:FindFirstChild("characters")
+
+    if charactersFolder then
+        for _, char in ipairs(charactersFolder:GetChildren()) do
+            if char:IsA("Model") then
+                hookNPCAnimator(char)
+            end
+        end
+
+        charactersFolder.ChildAdded:Connect(function(char)
+            if char:IsA("Model") then
+                hookNPCAnimator(char)
+            end
+        end)
+    end
+
+    ws.DescendantAdded:Connect(function(object)
+        if not object:IsA("Animator") then
+            return
+        end
+
+        local humanoid = object.Parent
+        local char = humanoid and humanoid.Parent
+
+        if char and char:IsA("Model") then
+            hookNPCAnimator(char)
+        end
+    end)
+
+    ps.PlayerAdded:Connect(function(player)
+        hookEnemyPlayer(player)
+    end)
+
+    ps.PlayerRemoving:Connect(function(player)
+        disconnectEnemyAnimation(player)
+
+        local characterConnection =
+            state.enemyCharacterConnections[player]
+
+        if characterConnection then
+            characterConnection:Disconnect()
+            state.enemyCharacterConnections[player] = nil
         end
     end)
 
