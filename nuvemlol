@@ -2800,6 +2800,8 @@ do
         eligibleUntil = 0,
         releaseSource = nil,
         releaseKind = nil,
+        fastReleaseSource = nil,
+        fastReleaseUntil = 0,
         learnedStyle = nil,
         jumpHeld = false,
         jumpHoldToken = 0,
@@ -2818,7 +2820,9 @@ do
         lockStarted = 0,
         lockConfirmDeadline = 0,
         lockSeenAir = false,
-        lockLowSince = 0
+        lockLowSince = 0,
+        lockHumanoid = nil,
+        lockPreviousAutoRotate = nil
     }
 
     local ps = game:GetService("Players")
@@ -2854,6 +2858,9 @@ do
 
     local SUPER_THROW_ANIMATION =
         "rbxassetid://76979409962243"
+
+    local AIR_KICK_ANIMATION =
+        "rbxassetid://76587445975710"
 
     local function character()
         return lp.Character
@@ -2954,6 +2961,45 @@ do
         state.eligibleUntil = 0
         state.releaseSource = nil
         state.releaseKind = nil
+    end
+
+    local function markFastRelease(char)
+        if not isDefensivePassSource(char) then
+            return
+        end
+
+        state.fastReleaseSource = char
+        state.fastReleaseUntil = os.clock() + 1.25
+    end
+
+    local function fastReleaseActive()
+        return state.fastReleaseSource ~= nil
+            and state.fastReleaseSource == state.releaseSource
+            and os.clock() <= state.fastReleaseUntil
+    end
+
+    local function faceRootAt(root, targetPosition)
+        if not root or not targetPosition then
+            return
+        end
+
+        local rootPosition = root.Position
+
+        local flatTarget = Vector3.new(
+            targetPosition.X,
+            rootPosition.Y,
+            targetPosition.Z
+        )
+
+        if (flatTarget - rootPosition).Magnitude <= 0.01 then
+            return
+        end
+
+        root.CFrame = CFrame.lookAt(
+            rootPosition,
+            flatTarget,
+            Vector3.yAxis
+        )
     end
 
     local function armDefensiveRelease(char)
@@ -3069,18 +3115,36 @@ do
             state.enemyAnimationConnections[player] =
                 animator.AnimationPlayed:Connect(function(track)
                     if not state.enabled
-                        or not track.Animation
-                        or track.Animation.AnimationId
-                            ~= SUPER_THROW_ANIMATION then
+                        or not track.Animation then
 
                         return
                     end
 
-                    if not isSuperThrowSource(char) then
+                    local animationId =
+                        track.Animation.AnimationId
+
+                    if animationId == SUPER_THROW_ANIMATION
+                        and isSuperThrowSource(char) then
+
+                        markFastRelease(char)
+                        armSuperThrow(char)
                         return
                     end
 
-                    armSuperThrow(char)
+                    if ballHolder
+                        and ballHolder.Value == char
+                        and isEnemyCharacter(char) then
+
+                        local priorityValue =
+                            track.Priority.Value
+
+                        if animationId == AIR_KICK_ANIMATION
+                            or priorityValue
+                                >= Enum.AnimationPriority.Action.Value then
+
+                            markFastRelease(char)
+                        end
+                    end
                 end)
         end)
     end
@@ -3140,15 +3204,35 @@ do
             state.enemyAnimationConnections[key] =
                 animator.AnimationPlayed:Connect(function(track)
                     if not state.enabled
-                        or not track.Animation
-                        or track.Animation.AnimationId
-                            ~= SUPER_THROW_ANIMATION then
+                        or not track.Animation then
 
                         return
                     end
 
-                    if isSuperThrowSource(char) then
+                    local animationId =
+                        track.Animation.AnimationId
+
+                    if animationId == SUPER_THROW_ANIMATION
+                        and isSuperThrowSource(char) then
+
+                        markFastRelease(char)
                         armSuperThrow(char)
+                        return
+                    end
+
+                    if ballHolder
+                        and ballHolder.Value == char
+                        and isDefensivePassSource(char) then
+
+                        local priorityValue =
+                            track.Priority.Value
+
+                        if animationId == AIR_KICK_ANIMATION
+                            or priorityValue
+                                >= Enum.AnimationPriority.Action.Value then
+
+                            markFastRelease(char)
+                        end
                     end
                 end)
 
@@ -3300,6 +3384,20 @@ do
             run:UnbindFromRenderStep(lockName)
         end)
 
+        local humanoid = state.lockHumanoid
+
+        if humanoid and humanoid.Parent then
+            if state.lockPreviousAutoRotate ~= nil then
+                humanoid.AutoRotate =
+                    state.lockPreviousAutoRotate
+            end
+
+            humanoid:Move(
+                Vector3.zero,
+                false
+            )
+        end
+
         state.lockBall = nil
         state.lockTrack = nil
         state.lockConfirmed = false
@@ -3307,6 +3405,8 @@ do
         state.lockConfirmDeadline = 0
         state.lockSeenAir = false
         state.lockLowSince = 0
+        state.lockHumanoid = nil
+        state.lockPreviousAutoRotate = nil
     end
 
     local function lockTarget()
@@ -3345,6 +3445,27 @@ do
             run:UnbindFromRenderStep(lockName)
         end)
 
+        local char = character()
+        local humanoid =
+            char and char:FindFirstChildOfClass("Humanoid")
+        local root =
+            char and char:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then
+            return
+        end
+
+        if not state.lockActive then
+            state.lockPreviousAutoRotate =
+                humanoid.AutoRotate
+        end
+
+        state.lockHumanoid = humanoid
+        humanoid.AutoRotate = false
+
+        -- Face the ball BEFORE the trap request is sent.
+        faceRootAt(root, ball.Position)
+
         state.lockActive = true
         state.lockBall = ball
         state.lockTrack = track
@@ -3356,7 +3477,7 @@ do
 
         run:BindToRenderStep(
             lockName,
-            Enum.RenderPriority.Last.Value - 1,
+            Enum.RenderPriority.Last.Value,
             function()
                 if not state.enabled then
                     stopLock()
@@ -3382,47 +3503,103 @@ do
                     end
                 end
 
-                local char = character()
-                local root =
-                    char and char:FindFirstChild("HumanoidRootPart")
+                local currentChar = character()
+                local currentHumanoid =
+                    currentChar
+                    and currentChar:FindFirstChildOfClass("Humanoid")
+                local currentRoot =
+                    currentChar
+                    and currentChar:FindFirstChild("HumanoidRootPart")
 
-                if not root then
+                if not currentHumanoid or not currentRoot then
                     stopLock()
                     return
                 end
 
+                state.lockHumanoid = currentHumanoid
+                currentHumanoid.AutoRotate = false
+
                 local holder =
                     ballHolder and ballHolder.Value
 
-                if holder
-                    and holder ~= char
-                    and not target:IsDescendantOf(terrain) then
-
+                if holder and holder ~= currentChar then
                     stopLock()
                     return
                 end
 
                 local targetPosition = target.Position
-                local rootPosition = root.Position
+                local rootPosition = currentRoot.Position
                 local velocity = target.AssemblyLinearVelocity
-                local relativeHeight =
-                    targetPosition.Y - rootPosition.Y
 
-                local airborne =
-                    relativeHeight > 0.8
-                    or velocity.Y > 1.25
+                -- Hard body aim. Sideways/backwards movement cannot turn the
+                -- character away from the ball while the trap is active.
+                faceRootAt(
+                    currentRoot,
+                    targetPosition
+                )
 
-                if airborne then
+                -- Legit movement assist: normal Humanoid movement toward the
+                -- ball, no teleport or BodyVelocity.
+                local horizontalDelta = Vector3.new(
+                    targetPosition.X - rootPosition.X,
+                    0,
+                    targetPosition.Z - rootPosition.Z
+                )
+
+                local horizontalDistance =
+                    horizontalDelta.Magnitude
+
+                if horizontalDistance > 1.1
+                    and horizontalDistance <= state.range + 12 then
+
+                    currentHumanoid:Move(
+                        horizontalDelta.Unit,
+                        false
+                    )
+                else
+                    currentHumanoid:Move(
+                        Vector3.zero,
+                        false
+                    )
+                end
+
+                -- Lock remains through the whole flight. Only a real landed
+                -- ball can end it without possession changing.
+                local rayParams = RaycastParams.new()
+                rayParams.FilterType =
+                    Enum.RaycastFilterType.Exclude
+
+                rayParams.FilterDescendantsInstances = {
+                    currentChar,
+                    target
+                }
+
+                local groundHit = ws:Raycast(
+                    targetPosition,
+                    Vector3.new(0, -3.25, 0),
+                    rayParams
+                )
+
+                local groundDistance =
+                    groundHit
+                    and (targetPosition - groundHit.Position).Magnitude
+                    or math.huge
+
+                local clearlyAirborne =
+                    groundDistance > 1.35
+                    or velocity.Y > 1.1
+
+                if clearlyAirborne then
                     state.lockSeenAir = true
                     state.lockLowSince = 0
 
                 elseif state.lockSeenAir
-                    and velocity.Y <= 0.5 then
+                    and velocity.Y <= 0.4 then
 
                     if state.lockLowSince == 0 then
                         state.lockLowSince = os.clock()
 
-                    elseif os.clock() - state.lockLowSince >= 0.12 then
+                    elseif os.clock() - state.lockLowSince >= 0.16 then
                         stopLock()
                         return
                     end
@@ -3443,6 +3620,7 @@ do
                     return
                 end
 
+                -- Camera points at the REAL ball, not a predicted position.
                 camera.CFrame = CFrame.lookAt(
                     cameraPosition,
                     targetPosition,
@@ -3532,7 +3710,9 @@ do
         local catchPosition = rootBase + catchOffset
         local relative = ball.Position - catchPosition
         local relativeVelocity = velocity - rootVelocity
-        local relativeSpeedSq = relativeVelocity:Dot(relativeVelocity)
+        local relativeSpeedSq =
+            relativeVelocity:Dot(relativeVelocity)
+
         local ping = oneWayPing()
         local lead = ping + (1 / 120)
 
@@ -3541,32 +3721,39 @@ do
         if relativeSpeedSq > 0.001 then
             timeToClosest = math.max(
                 lead,
-                -relative:Dot(relativeVelocity) / relativeSpeedSq
+                -relative:Dot(relativeVelocity)
+                    / relativeSpeedSq
             )
         end
 
         local currentDistance = relative.Magnitude
+
         local travelEstimate =
-            currentDistance / math.max(relativeVelocity.Magnitude, 1)
+            currentDistance
+            / math.max(relativeVelocity.Magnitude, 1)
+
+        local fastPath = fastReleaseActive()
 
         local horizon = math.clamp(
             math.max(
-                timeToClosest + 0.4,
-                travelEstimate + 0.3
+                timeToClosest
+                    + (fastPath and 0.55 or 0.42),
+                travelEstimate
+                    + (fastPath and 0.4 or 0.3)
             ),
-            0.5,
-            1.5
+            fastPath and 0.65 or 0.5,
+            fastPath and 1.8 or 1.5
         )
 
         local latencyMargin =
             math.clamp(
                 velocity.Magnitude * ping,
                 0,
-                4.5
+                fastPath and 5.5 or 4.5
             )
 
         local enterTime = nil
-        local samples = 36
+        local samples = fastPath and 44 or 36
 
         for index = 0, samples do
             local t =
@@ -3593,7 +3780,7 @@ do
 
             if not enterTime
                 and distance <= state.range + latencyMargin
-                and relativeHeight >= 1.0 then
+                and relativeHeight >= 0.9 then
 
                 enterTime = t
             end
@@ -3613,23 +3800,34 @@ do
 
         local speedBonus =
             math.clamp(
-                velocity.Magnitude / 320,
+                velocity.Magnitude
+                    / (fastPath and 250 or 300),
                 0,
-                0.18
+                fastPath and 0.24 or 0.2
             )
 
-        local activationLead =
-            math.clamp(
-                0.48 + ping * 1.5 + speedBonus,
-                0.48,
-                0.72
+        local activationLead
+
+        if fastPath then
+            activationLead = math.clamp(
+                0.72 + ping * 1.7 + speedBonus,
+                0.72,
+                1.02
             )
+        else
+            activationLead = math.clamp(
+                0.58 + ping * 1.55 + speedBonus,
+                0.58,
+                0.84
+            )
+        end
 
         local jumpLead =
             math.clamp(
-                activationLead + 0.13,
-                0.61,
-                0.84
+                activationLead
+                    + (fastPath and 0.16 or 0.13),
+                fastPath and 0.88 or 0.71,
+                fastPath and 1.18 or 0.97
             )
 
         local currentRelativeHeight =
@@ -3637,12 +3835,14 @@ do
 
         local alreadyCloseAndHigh =
             currentDistance <= state.range + latencyMargin
-            and currentRelativeHeight >= 1.0
+            and currentRelativeHeight >= 0.9
 
         return {
-            enterTime = alreadyCloseAndHigh and 0 or enterTime,
+            enterTime =
+                alreadyCloseAndHigh and 0 or enterTime,
             activationLead = activationLead,
-            jumpLead = jumpLead
+            jumpLead = jumpLead,
+            fastPath = fastPath
         }
     end
 
@@ -4179,6 +4379,8 @@ do
                 if previous == character() then
                     state.ownReleaseUntil = os.clock() + 1.5
                     clearEligibleRelease()
+                    state.fastReleaseSource = nil
+                    state.fastReleaseUntil = 0
                     resetAttempt()
                     releaseJump()
                     stopLock()
@@ -4194,7 +4396,19 @@ do
 
                 elseif isDefensivePassSource(previous) then
                     state.ownReleaseUntil = 0
+
+                    local wasFast =
+                        state.fastReleaseSource == previous
+                        and os.clock() <= state.fastReleaseUntil
+
                     armDefensiveRelease(previous)
+
+                    if wasFast then
+                        state.fastReleaseSource = previous
+                        state.fastReleaseUntil =
+                            os.clock() + 1.35
+                    end
+
                     resetAttempt()
                     evaluate()
 
