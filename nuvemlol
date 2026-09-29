@@ -195,7 +195,7 @@ do
         credit.Position = UDim2.new(0.5, 0, 0.102, 0)
         credit.Size = UDim2.new(0.42, 0, 0, 14)
         credit.Font = Enum.Font.GothamMedium
-        credit.Text = "(edited by nuvem)"
+        credit.Text = "(edited by nuvem and zyren)"
         credit.TextColor3 = Color3.fromRGB(205, 205, 205)
         credit.TextSize = 10
         credit.TextTransparency = 0.08
@@ -425,6 +425,7 @@ helptab:Label("Custom UI + Some Features: Daffy.")
 helptab:Label("GK Anywhere Feature: Ashura.")
 helptab:Label("Auto Config: Serlicia.")
 helptab:Label("Additional Help: nuvem.")
+helptab:Label("The Goat: zyren."
 
 do
     hometab:Banner("13308582899", 385)
