@@ -1,8 +1,3 @@
--- [LISTN] Celeron UltraPerformance V3 - conservative optimization; features preserved
--- [LISTN] Celeron Azure Latch - CORE UltraPerformance V2
--- Aggressive performance pass: removes cosmetic/legacy overhead and reduces active polling.
--- Auto Trap Legit/Blatant preserved.
-
 if game.PlaceId == 139609232261520 then
     local source = game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/hgghhghghhgg")
     source = source:gsub(
@@ -193,7 +188,7 @@ do
         credit.BackgroundTransparency = 1
         credit.AnchorPoint = Vector2.new(0.5, 0)
         credit.Position = UDim2.new(0.5, 0, 0.102, 0)
-        credit.Size = UDim2.new(0.42, 0, 0, 14)
+        credit.Size = UDim2.new(0.58, 0, 0, 14)
         credit.Font = Enum.Font.GothamMedium
         credit.Text = "(edited by nuvem and zyren)"
         credit.TextColor3 = Color3.fromRGB(205, 205, 205)
@@ -2212,6 +2207,7 @@ end
 do
     local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
     at:Label("Auto Trap: Automatically Uses Trap On Air Balls.")
+    at:Label("Supported: Nagi, Shidou, Hiori, Don Lorenzo, Kiyora.")
 
     local PlayersService = game:GetService("Players")
     local ReplicatedStorageService = game:GetService("ReplicatedStorage")
@@ -2242,11 +2238,33 @@ do
     local profiles = {
         Nagi = {
             skill = "skill2",
-            words = {"control"}
+            words = {"control"},
+            jump = true,
+            lock = true
         },
         Shidou = {
             skill = "skill1",
-            words = {"formless", "draconic"}
+            words = {"formless", "draconic"},
+            jump = true,
+            lock = true
+        },
+        Hiori = {
+            skill = "skill2",
+            words = {"frost guard", "glacial cut", "link up", "hiori"},
+            jump = false,
+            lock = false
+        },
+        DonLorenzo = {
+            skill = "skill4",
+            words = {"horrific intercept", "defensive stance", "zombie dribble", "don lorenzo", "lorenzo"},
+            jump = false,
+            lock = false
+        },
+        Kiyora = {
+            skill = "skill3",
+            words = {"side trap", "windmill shot", "dance battle", "twister pass", "kiyora"},
+            jump = false,
+            lock = false
         }
     }
 
@@ -2571,7 +2589,9 @@ do
                         if string.find(text, word, 1, true) then
                             state.profile = {
                                 style = style,
-                                skill = "skill" .. index
+                                skill = profile.skill or ("skill" .. index),
+                                jump = profile.jump,
+                                lock = profile.lock
                             }
 
                             return state.profile
@@ -3373,6 +3393,51 @@ do
             return true
         end
 
+        if profile.style == "Hiori" then
+            remote:FireServer(
+                packet,
+                {
+                    {
+                        "skill2",
+                        Vector3.new(
+                            0.88363766670227051,
+                            -0.44731688499450684,
+                            -0.13817381858825684
+                        )
+                    }
+                }
+            )
+
+            return true
+        end
+
+        if profile.style == "DonLorenzo" then
+            remote:FireServer(
+                packet,
+                {
+                    {
+                        "skill4"
+                    }
+                }
+            )
+
+            return true
+        end
+
+        if profile.style == "Kiyora" then
+            remote:FireServer(
+                packet,
+                {
+                    {
+                        "skill3",
+                        "Right"
+                    }
+                }
+            )
+
+            return true
+        end
+
         return false
     end
 
@@ -3421,34 +3486,41 @@ do
             return
         end
 
-        if not pending.jumpStarted
-            and timing.enterTime <= timing.jumpLead then
+        local shouldJump = pending.profile.jump ~= false
 
-            pending.jumpStarted = true
-            humanoid.Jump = true
-            humanoid:ChangeState(
-                Enum.HumanoidStateType.Jumping
-            )
-        end
+        if shouldJump then
+            if not pending.jumpStarted
+                and timing.enterTime <= timing.jumpLead then
 
-        if pending.jumpStarted then
-            humanoid.Jump = true
+                pending.jumpStarted = true
+                humanoid.Jump = true
+                humanoid:ChangeState(
+                    Enum.HumanoidStateType.Jumping
+                )
+            end
+
+            if pending.jumpStarted then
+                humanoid.Jump = true
+            end
         end
 
         if timing.enterTime > timing.activationLead then
             return
         end
 
-        if not airborne(humanoid, root) then
+        if shouldJump and not airborne(humanoid, root) then
             return
         end
 
         state.pending = nil
         state.attemptedBall = ball
 
-        startLock(ball)
+        local shouldLock = pending.profile.lock ~= false
+        if shouldLock then
+            startLock(ball)
+        end
 
-        if not fireTrap(pending.profile) then
+        if not fireTrap(pending.profile) and shouldLock then
             stopLock()
         end
     end
@@ -3589,7 +3661,9 @@ do
 
                         state.profile = {
                             style = style,
-                            skill = profiles[style].skill
+                            skill = profiles[style].skill,
+                            jump = profiles[style].jump,
+                            lock = profiles[style].lock
                         }
                     end
 
@@ -6846,24 +6920,60 @@ do
     end)
 end
 
-task.defer(function()
-    pcall(function()
-        local f = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep", true))
-        if f then f() end
+local function runOptionalRemote(label, url, useCacheFlag)
+    local okHttp, source = pcall(function()
+        if useCacheFlag then
+            return game:HttpGet(url, true)
+        end
+        return game:HttpGet(url)
     end)
-end)
 
-task.defer(function()
-    pcall(function()
-        local f = loadstring(game:HttpGet("https://pastebin.com/raw/rQMS2B9R", true))
-        if f then f() end
-    end)
-end)
+    if not okHttp or type(source) ~= "string" or source == "" then
+        warn("[Celeron] Optional loader failed to download: " .. label)
+        return false
+    end
 
-task.defer(function()
-    pcall(function()
-        local f = loadstring(game:HttpGet("https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users"))
-        if f then f() end
-    end)
+    local chunk, compileError = loadstring(source)
+    if type(chunk) ~= "function" then
+        warn("[Celeron] Optional loader failed to compile: " .. label .. " | " .. tostring(compileError))
+        return false
+    end
+
+    local okRun, runtimeError = pcall(chunk)
+    if not okRun then
+        warn("[Celeron] Optional loader failed to run: " .. label .. " | " .. tostring(runtimeError))
+        return false
+    end
+
+    return true
+end
+
+task.spawn(function()
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+
+    -- Keep these sequential: both add legacy/external features and some executors
+    -- are unreliable when multiple dynamic chunks initialize on the same frame.
+    task.wait(1.25)
+    runOptionalRemote(
+        "Move Buffs / external feature pack",
+        "https://raw.githubusercontent.com/ghostofcelleron/Scripts/refs/heads/main/oldthingyep",
+        true
+    )
+
+    task.wait(0.5)
+    runOptionalRemote(
+        "legacy extra feature pack",
+        "https://pastebin.com/raw/rQMS2B9R",
+        true
+    )
+
+    task.wait(0.25)
+    runOptionalRemote(
+        "owner anti-abuse",
+        "https://raw.githubusercontent.com/ghostofcelleron/Celeron/refs/heads/main/owner_anti_abuse_from_users",
+        false
+    )
 end)
 end
