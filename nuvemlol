@@ -3242,7 +3242,12 @@ do
     local SCORPION_ANIMATION_ID = "126121761510176"
 
     local animatorConnection = nil
-    local characterConnection = nil
+    local wildSlot = nil
+    local wildSlotConnections = {}
+    local hotbarWatchConnection = nil
+    local lastWildTrigger = 0
+    local lastWildCooldownVisible = false
+    local wildActivationSerial = 0
     local generation = 0
 
     local function flatUnit(vector)
@@ -3301,8 +3306,7 @@ do
     local function startBoost(
         cfg,
         direction,
-        track,
-        stopOnBall
+        track
     )
         local _, _, root = getCharacter()
         if not root then return end
@@ -3328,7 +3332,7 @@ do
 
         duration = math.clamp(
             duration,
-            0.12,
+            0.14,
             1.35
         )
 
@@ -3339,7 +3343,6 @@ do
             moveDir = moveDir,
             preserveRotation = true,
             cancelled = false,
-            stopOnBall = stopOnBall == true,
             speed = distance / duration,
             expiresAt = os.clock() + duration + 0.30
         }
@@ -3364,36 +3367,37 @@ do
     local function chooseWildDirection(
         humanoid,
         root,
-        token
+        token,
+        capturedSide
     )
         local right = flatUnit(root.CFrame.RightVector)
         if not right then
             return nil
         end
 
-        local moveDot = humanoid.MoveDirection:Dot(right)
-
-        if math.abs(moveDot) >= 0.10 then
-            return right * (moveDot > 0 and 1 or -1)
+        if capturedSide == 1 or capturedSide == -1 then
+            return right * capturedSide
         end
 
-        local velocity = flatUnit(root.AssemblyLinearVelocity)
+        local moveDot = humanoid.MoveDirection:Dot(right)
 
-        if velocity then
-            local velocityDot = velocity:Dot(right)
-
-            if math.abs(velocityDot) >= 0.22 then
-                return right * (velocityDot > 0 and 1 or -1)
-            end
+        if math.abs(moveDot) >= 0.08 then
+            return right * (moveDot > 0 and 1 or -1)
         end
 
         local startPosition = root.Position
 
-        for _ = 1, 5 do
+        for _ = 1, 6 do
             RunService.PostSimulation:Wait()
 
             if token ~= generation or not root.Parent then
                 return nil
+            end
+
+            local liveDot = humanoid.MoveDirection:Dot(right)
+
+            if math.abs(liveDot) >= 0.08 then
+                return right * (liveDot > 0 and 1 or -1)
             end
 
             local delta = Vector3.new(
@@ -3404,14 +3408,18 @@ do
 
             local lateral = delta:Dot(right)
 
-            if math.abs(lateral) >= 0.035 then
+            if math.abs(lateral) >= 0.025 then
                 return right * (lateral > 0 and 1 or -1)
             end
+        end
 
-            local liveDot = humanoid.MoveDirection:Dot(right)
+        local velocity = flatUnit(root.AssemblyLinearVelocity)
 
-            if math.abs(liveDot) >= 0.10 then
-                return right * (liveDot > 0 and 1 or -1)
+        if velocity then
+            local velocityDot = velocity:Dot(right)
+
+            if math.abs(velocityDot) >= 0.12 then
+                return right * (velocityDot > 0 and 1 or -1)
             end
         end
 
@@ -3482,38 +3490,200 @@ do
         return flatUnit(root.CFrame.LookVector)
     end
 
-    local function onWildAnimation(track)
+    local function captureWildSide()
         local _, humanoid, root = getCharacter()
+
+        if not humanoid or not root then
+            return nil
+        end
+
+        local right = flatUnit(root.CFrame.RightVector)
+
+        if not right then
+            return nil
+        end
+
+        local dot = humanoid.MoveDirection:Dot(right)
+
+        if math.abs(dot) >= 0.08 then
+            return dot > 0 and 1 or -1
+        end
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.A)
+            or UserInputService:IsKeyDown(Enum.KeyCode.Left) then
+
+            return -1
+        end
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.D)
+            or UserInputService:IsKeyDown(Enum.KeyCode.Right) then
+
+            return 1
+        end
+
+        return nil
+    end
+
+    local function triggerWild(capturedSide)
+        local distance =
+            Distances.wildInstinctsDist
+            or 0
+
+        if distance <= 0 then
+            return
+        end
+
+        local now = os.clock()
+
+        if now - lastWildTrigger < 0.16 then
+            return
+        end
+
+        lastWildTrigger = now
+        wildActivationSerial += 1
+
+        local activationSerial =
+            wildActivationSerial
+
+        local _, humanoid, root =
+            getCharacter()
 
         if not humanoid or not root then
             return
         end
 
-        if (Distances.wildInstinctsDist or 0) <= 0 then
+        local capturedRight =
+            flatUnit(
+                root.CFrame.RightVector
+            )
+
+        if not capturedRight then
             return
         end
 
-        generation += 1
-        local token = generation
+        local initialMoveDot =
+            humanoid.MoveDirection:
+            Dot(capturedRight)
+
+        local initialPosition =
+            root.Position
 
         task.spawn(function()
-            local direction = chooseWildDirection(
-                humanoid,
-                root,
-                token
-            )
+            local side =
+                capturedSide
 
-            if token ~= generation
-                or not direction
-                or not track.IsPlaying then
+            if side ~= 1 and side ~= -1 then
+                if math.abs(initialMoveDot) >= 0.06 then
+                    side =
+                        initialMoveDot > 0
+                        and 1
+                        or -1
+                end
+            end
+
+            if side ~= 1 and side ~= -1 then
+                for _ = 1, 5 do
+                    RunService.PostSimulation:
+                        Wait()
+
+                    if activationSerial
+                        ~= wildActivationSerial
+                        or not root.Parent then
+                        return
+                    end
+
+                    local liveDot =
+                        humanoid.MoveDirection:
+                        Dot(capturedRight)
+
+                    if math.abs(liveDot) >= 0.06 then
+                        side =
+                            liveDot > 0
+                            and 1
+                            or -1
+
+                        break
+                    end
+
+                    local delta =
+                        Vector3.new(
+                            root.Position.X
+                                - initialPosition.X,
+                            0,
+                            root.Position.Z
+                                - initialPosition.Z
+                        )
+
+                    local lateral =
+                        delta:
+                        Dot(capturedRight)
+
+                    if math.abs(lateral) >= 0.02 then
+                        side =
+                            lateral > 0
+                            and 1
+                            or -1
+
+                        break
+                    end
+                end
+            end
+
+            if side ~= 1 and side ~= -1 then
+                local velocity =
+                    flatUnit(
+                        root.AssemblyLinearVelocity
+                    )
+
+                if velocity then
+                    local velocityDot =
+                        velocity:
+                        Dot(capturedRight)
+
+                    if math.abs(velocityDot) >= 0.10 then
+                        side =
+                            velocityDot > 0
+                            and 1
+                            or -1
+                    end
+                end
+            end
+
+            if side ~= 1 and side ~= -1 then
+                local ball =
+                    getBall()
+
+                if ball then
+                    local ballSide =
+                        (
+                            ball.Position
+                            - root.Position
+                        ):
+                        Dot(capturedRight)
+
+                    if math.abs(ballSide) >= 0.05 then
+                        side =
+                            ballSide > 0
+                            and 1
+                            or -1
+                    end
+                end
+            end
+
+            if side ~= 1 and side ~= -1 then
+                side = 1
+            end
+
+            if activationSerial
+                ~= wildActivationSerial
+                or not root.Parent then
                 return
             end
 
             startBoost(
                 DashConfigs.WildInstincts,
-                direction,
-                track,
-                true
+                capturedRight * side,
+                nil
             )
         end)
     end
@@ -3548,10 +3718,115 @@ do
             startBoost(
                 DashConfigs.Scorpion,
                 direction,
-                track,
-                false
+                track
             )
         end)
+    end
+
+    local function disconnectWildSlot()
+        for _, connection in ipairs(wildSlotConnections) do
+            connection:Disconnect()
+        end
+
+        table.clear(wildSlotConnections)
+        wildSlot = nil
+        lastWildCooldownVisible = false
+    end
+
+    local function getSkill3()
+        local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return nil end
+
+        local hotbar = playerGui:FindFirstChild("Hotbar")
+        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+        local innerHotbar = backpack and backpack:FindFirstChild("Hotbar")
+
+        if innerHotbar then
+            return innerHotbar:FindFirstChild("skill3")
+        end
+
+        for _, object in ipairs(playerGui:GetDescendants()) do
+            if object.Name == "skill3"
+                and object:IsA("GuiObject") then
+                return object
+            end
+        end
+
+        return nil
+    end
+
+    local function hookWildSlot(slot)
+        if slot == wildSlot then
+            return
+        end
+
+        disconnectWildSlot()
+
+        if not slot then
+            return
+        end
+
+        wildSlot = slot
+
+        local function onPressed()
+            triggerWild(
+                captureWildSide()
+            )
+        end
+
+        if slot:IsA("GuiObject") then
+            table.insert(
+                wildSlotConnections,
+                slot.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.Touch
+                        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+
+                        onPressed()
+                    end
+                end)
+            )
+        end
+
+        for _, object in ipairs(slot:GetDescendants()) do
+            if object:IsA("GuiButton") then
+                table.insert(
+                    wildSlotConnections,
+                    object.Activated:Connect(onPressed)
+                )
+
+                table.insert(
+                    wildSlotConnections,
+                    object.InputBegan:Connect(function(input)
+                        if input.UserInputType == Enum.UserInputType.Touch
+                            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+
+                            onPressed()
+                        end
+                    end)
+                )
+            end
+        end
+
+        local cooldown = slot:FindFirstChild("Cooldown", true)
+
+        if cooldown and cooldown:IsA("GuiObject") then
+            lastWildCooldownVisible = cooldown.Visible
+
+            table.insert(
+                wildSlotConnections,
+                cooldown:GetPropertyChangedSignal("Visible"):Connect(function()
+                    local visible = cooldown.Visible
+
+                    if visible and not lastWildCooldownVisible then
+                        triggerWild(
+                            captureWildSide()
+                        )
+                    end
+
+                    lastWildCooldownVisible = visible
+                end)
+            )
+        end
     end
 
     local function hookAnimator(char)
@@ -3561,6 +3836,7 @@ do
         end
 
         local humanoid = char:WaitForChild("Humanoid", 5)
+
         if not humanoid then
             return
         end
@@ -3582,37 +3858,215 @@ do
                 track.Animation.AnimationId
             ):match("%d+")
 
-            if animationId == WILD_ANIMATION_ID then
-                onWildAnimation(track)
-
-            elseif animationId == SCORPION_ANIMATION_ID then
+            if animationId == SCORPION_ANIMATION_ID then
                 onScorpionAnimation(track)
+
+            elseif animationId == WILD_ANIMATION_ID then
+                -- Animation remains only a fallback.
+                -- Direct skill3 input/cooldown detection is primary.
+                triggerWild(
+                    captureWildSide()
+                )
             end
         end)
     end
+
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then
+            return
+        end
+
+        if input.KeyCode == Enum.KeyCode.Three then
+            triggerWild(
+                captureWildSide()
+            )
+        end
+    end)
+
+    do
+        local remote =
+            ReplicatedStorage:
+            FindFirstChild(
+                "ByteNetReliable"
+            )
+
+        if remote
+            and type(hookmetamethod)
+                == "function"
+            and type(getnamecallmethod)
+                == "function" then
+
+            local oldNamecall
+
+            local replacement =
+                function(self, ...)
+                    local method =
+                        getnamecallmethod()
+
+                    if self == remote
+                        and method == "FireServer" then
+
+                        local args =
+                            table.pack(...)
+
+                        local results =
+                            table.pack(
+                                oldNamecall(
+                                    self,
+                                    ...
+                                )
+                            )
+
+                        task.defer(function()
+                            local packet =
+                                args[1]
+
+                            local payload =
+                                args[2]
+
+                            local okLength, length =
+                                pcall(
+                                    buffer.len,
+                                    packet
+                                )
+
+                            if not okLength
+                                or length ~= 2 then
+                                return
+                            end
+
+                            local okA, byteA =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    0
+                                )
+
+                            local okB, byteB =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    1
+                                )
+
+                            if not okA
+                                or not okB
+                                or byteA ~= 25
+                                or byteB ~= 1 then
+                                return
+                            end
+
+                            local move =
+                                type(payload)
+                                    == "table"
+                                and payload[1]
+                                or nil
+
+                            if type(move) ~= "table"
+                                or move[1] ~= "skill3"
+                                or type(move[2]) ~= "boolean" then
+                                return
+                            end
+
+                            local packetSide =
+                                move[2]
+                                and -1
+                                or 1
+
+                            triggerWild(
+                                packetSide
+                            )
+                        end)
+
+                        return table.unpack(
+                            results,
+                            1,
+                            results.n
+                        )
+                    end
+
+                    return oldNamecall(
+                        self,
+                        ...
+                    )
+                end
+
+            if type(newcclosure)
+                == "function" then
+
+                replacement =
+                    newcclosure(
+                        replacement
+                    )
+            end
+
+            local okHook, original =
+                pcall(
+                    hookmetamethod,
+                    game,
+                    "__namecall",
+                    replacement
+                )
+
+            if okHook and original then
+                oldNamecall =
+                    original
+            end
+        end
+    end
+
+    hotbarWatchConnection = RunService.Heartbeat:Connect(function()
+        local current = getSkill3()
+
+        if current ~= wildSlot then
+            hookWildSlot(current)
+        end
+
+        if wildSlot and wildSlot.Parent then
+            local cooldown = wildSlot:FindFirstChild("Cooldown", true)
+
+            if cooldown and cooldown:IsA("GuiObject") then
+                local visible = cooldown.Visible
+
+                if visible and not lastWildCooldownVisible then
+                    triggerWild(
+                        captureWildSide()
+                    )
+                end
+
+                lastWildCooldownVisible = visible
+            end
+        end
+    end)
 
     if Players.LocalPlayer.Character then
         hookAnimator(Players.LocalPlayer.Character)
     end
 
-    characterConnection =
-        Players.LocalPlayer.CharacterAdded:
-        Connect(function(char)
-            generation += 1
+    Players.LocalPlayer.CharacterAdded:Connect(function(char)
+        generation += 1
 
-            cancelBoost(
-                DashConfigs.WildInstincts
-            )
+        cancelBoost(
+            DashConfigs.WildInstincts
+        )
 
-            cancelBoost(
-                DashConfigs.Scorpion
-            )
+        cancelBoost(
+            DashConfigs.Scorpion
+        )
 
-            task.defer(
-                hookAnimator,
-                char
-            )
-        end)
+        disconnectWildSlot()
+
+        task.defer(
+            hookAnimator,
+            char
+        )
+    end)
+
+    task.defer(function()
+        hookWildSlot(
+            getSkill3()
+        )
+    end)
 end
 
 
@@ -5368,7 +5822,12 @@ do
     local promptToken = 0
     local lastButton = nil
 
-    local QTE_DELAY = 0.839
+    local qteDelays = {
+        Normal = 0.863,
+        Don = 0.365
+    }
+
+    local currentQteMode = "Normal"
 
     local function isVisibleThroughParents(object)
         local current = object
@@ -5564,7 +6023,13 @@ do
         local detectedAt = os.clock()
 
         task.spawn(function()
-            local targetTime = detectedAt + QTE_DELAY
+            local qteDelay =
+                qteDelays[currentQteMode]
+                or qteDelays.Normal
+
+            local targetTime =
+                detectedAt
+                + qteDelay
 
             while qteEnabled and myToken == promptToken do
                 local remaining = targetTime - os.clock()
@@ -5669,6 +6134,16 @@ do
 
         task.defer(probeQTE)
     end
+
+    othersil:Dropdown(
+        "Auto QuickTimeEvent Mode",
+        {"Normal", "Don"},
+        function(value)
+            if qteDelays[value] then
+                currentQteMode = value
+            end
+        end
+    )
 
     othersil:Toggle(
         "Auto QuickTimeEvent",
