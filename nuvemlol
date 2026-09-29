@@ -337,6 +337,11 @@ do
                 Disconnect()
         end
 
+        if data.ancestry then
+            data.ancestry:
+                Disconnect()
+        end
+
         activeBoxes[part] = nil
 
         if restore
@@ -384,22 +389,12 @@ do
         activeBoxes[part] =
             data
 
-        print(
-            "Heroic Clash box found: "
-            .. fullName(part)
-            .. " | normal: "
-            .. string.format(
-                "%.2f x %.2f x %.2f",
-                part.Size.X,
-                part.Size.Y,
-                part.Size.Z
+        local targetSize =
+            Vector3.new(
+                heroicClashSize,
+                heroicClashSize,
+                heroicClashSize
             )
-            .. " | distance: "
-            .. string.format(
-                "%.2f",
-                distance
-            )
-        )
 
         local function apply()
             if not part.Parent then
@@ -407,11 +402,7 @@ do
             end
 
             part.Size =
-                Vector3.new(
-                    heroicClashSize,
-                    heroicClashSize,
-                    heroicClashSize
-                )
+                targetSize
 
             part.CanCollide = false
             part.CanQuery = true
@@ -420,6 +411,25 @@ do
 
         pcall(apply)
 
+        print(
+            "Heroic Clash box found: "
+            .. fullName(part)
+            .. " | normal: "
+            .. string.format(
+                "%.2f x %.2f x %.2f",
+                data.originalSize.X,
+                data.originalSize.Y,
+                data.originalSize.Z
+            )
+            .. " | new: "
+            .. tostring(heroicClashSize)
+            .. " | distance: "
+            .. string.format(
+                "%.2f",
+                distance
+            )
+        )
+
         data.destroying =
             part.Destroying:
             Connect(function()
@@ -427,6 +437,26 @@ do
                     part,
                     false
                 )
+            end)
+
+        data.ancestry =
+            part.AncestryChanged:
+            Connect(function()
+                if part.Parent
+                    and not part:IsDescendantOf(
+                        Workspace
+                    ) then
+
+                    print(
+                        "Heroic Clash box left Workspace: "
+                        .. fullName(part)
+                    )
+
+                    stopBox(
+                        part,
+                        true
+                    )
+                end
             end)
 
         data.preSimulation =
@@ -448,6 +478,18 @@ do
                     stopBox(
                         part,
                         false
+                    )
+
+                    return
+                end
+
+                if not part:IsDescendantOf(
+                    Workspace
+                ) then
+
+                    stopBox(
+                        part,
+                        true
                     )
 
                     return
@@ -584,20 +626,16 @@ do
     Connect(function(object)
         if heroicClashSize <= 0
             or os.clock() > heroicClashUntil
-            or not object:IsA("BasePart") then
+            or not object:IsA("BasePart")
+            or not object.Parent
+            or not isFortyCube(object) then
 
             return
         end
 
-        task.defer(function()
-            if object.Parent
-                and isFortyCube(object) then
-
-                resizeBox(
-                    object
-                )
-            end
-        end)
+        resizeBox(
+            object
+        )
     end)
 
     do
