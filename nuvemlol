@@ -3487,11 +3487,11 @@ do
         return physicsVelocity
     end
 
-    local function trapCommitReady(ball, root)
+    local function trapTiming(ball, root)
         local velocity = velocityOf(ball)
 
         if velocity.Magnitude < 1.25 then
-            return false
+            return nil
         end
 
         local gravity = Vector3.new(0, -ws.Gravity, 0)
@@ -3520,23 +3520,22 @@ do
 
         local horizon = math.clamp(
             math.max(
-                timeToClosest + 0.32,
-                travelEstimate + 0.24
+                timeToClosest + 0.4,
+                travelEstimate + 0.3
             ),
-            0.4,
-            1.35
+            0.5,
+            1.5
         )
 
         local latencyMargin =
             math.clamp(
                 velocity.Magnitude * ping,
                 0,
-                4
+                4.5
             )
 
         local enterTime = nil
-        local bestDistance = math.huge
-        local samples = 30
+        local samples = 36
 
         for index = 0, samples do
             local t =
@@ -3558,23 +3557,19 @@ do
             local distance =
                 (ballPosition - rootCatch).Magnitude
 
-            if distance < bestDistance then
-                bestDistance = distance
-            end
-
             local relativeHeight =
                 ballPosition.Y - predictedRootBase.Y
 
             if not enterTime
                 and distance <= state.range + latencyMargin
-                and relativeHeight >= 1.15 then
+                and relativeHeight >= 1.0 then
 
                 enterTime = t
             end
         end
 
         if not enterTime then
-            return false
+            return nil
         end
 
         local approaching =
@@ -3582,21 +3577,28 @@ do
             or currentDistance <= state.range
 
         if not approaching then
-            return false
+            return nil
         end
 
-        local speedLead =
+        local speedBonus =
             math.clamp(
-                velocity.Magnitude / 450,
+                velocity.Magnitude / 320,
                 0,
-                0.1
+                0.18
             )
 
         local activationLead =
             math.clamp(
-                0.28 + ping * 1.35 + speedLead,
-                0.28,
-                0.46
+                0.48 + ping * 1.5 + speedBonus,
+                0.48,
+                0.72
+            )
+
+        local jumpLead =
+            math.clamp(
+                activationLead + 0.13,
+                0.61,
+                0.84
             )
 
         local currentRelativeHeight =
@@ -3604,22 +3606,45 @@ do
 
         local alreadyCloseAndHigh =
             currentDistance <= state.range + latencyMargin
-            and currentRelativeHeight >= 1.15
+            and currentRelativeHeight >= 1.0
 
-        return alreadyCloseAndHigh
-            or enterTime <= activationLead
+        return {
+            enterTime = alreadyCloseAndHigh and 0 or enterTime,
+            activationLead = activationLead,
+            jumpLead = jumpLead
+        }
     end
 
-    local function airborneReady(profile, humanoid, root)
-        local humanoidState = humanoid:GetState()
-
-        if profile.style == "Shidou" then
-            return root.AssemblyLinearVelocity.Y > 0.25
-                or (
-                    humanoid.FloorMaterial == Enum.Material.Air
-                    and humanoidState ~= Enum.HumanoidStateType.Landed
-                )
+    local function shidouLiftReady(pending, humanoid, root)
+        if not pending.jumpStartedAt then
+            return false
         end
+
+        local rise =
+            root.Position.Y
+            - (pending.jumpStartY or root.Position.Y)
+
+        local elapsed =
+            os.clock() - pending.jumpStartedAt
+
+        return rise >= 0.06
+            or root.AssemblyLinearVelocity.Y >= 3
+            or (
+                elapsed >= 0.045
+                and humanoid.FloorMaterial == Enum.Material.Air
+            )
+    end
+
+    local function airborneReady(profile, pending, humanoid, root)
+        if profile.style == "Shidou" then
+            return shidouLiftReady(
+                pending,
+                humanoid,
+                root
+            )
+        end
+
+        local humanoidState = humanoid:GetState()
 
         return humanoidState == Enum.HumanoidStateType.Jumping
             or humanoidState == Enum.HumanoidStateType.Freefall
@@ -3627,6 +3652,69 @@ do
             or root.AssemblyLinearVelocity.Y > 0.5
     end
 
+
+    local function hotbarButton(skillName)
+        local slots = getSlots()
+        local slot = slots and slots:FindFirstChild(skillName)
+
+        if not slot then
+            return nil
+        end
+
+        if slot:IsA("GuiButton") then
+            return slot
+        end
+
+        return slot:FindFirstChildWhichIsA("GuiButton", true)
+    end
+
+    local function activateSkillInput(skillName)
+        local button = hotbarButton(skillName)
+
+        if button then
+            local fireSignal =
+                rawget(getgenv(), "firesignal")
+                or firesignal
+
+            if typeof(fireSignal) == "function" then
+                local ok = pcall(function()
+                    fireSignal(button.Activated)
+                end)
+
+                if ok then
+                    return true
+                end
+            end
+        end
+
+        local keyMap = {
+            skill1 = Enum.KeyCode.One,
+            skill2 = Enum.KeyCode.Two,
+            skill3 = Enum.KeyCode.Three,
+            skill4 = Enum.KeyCode.Four,
+            skill5 = Enum.KeyCode.Five
+        }
+
+        local key = keyMap[skillName]
+
+        if key then
+            local ok = pcall(function()
+                vim:SendKeyEvent(true, key, false, game)
+
+                task.defer(function()
+                    pcall(function()
+                        vim:SendKeyEvent(false, key, false, game)
+                    end)
+                end)
+            end)
+
+            if ok then
+                return true
+            end
+        end
+
+        return false
+    end
 
     local function sendTrap(profile)
         if profile.style == "Nagi" then
@@ -3641,18 +3729,23 @@ do
             )
 
         elseif profile.style == "Shidou" then
-            remote:FireServer(
-                buffer.fromstring(buffers["base"]),
-                {
+            local usedGameInput =
+                activateSkillInput("skill1")
+
+            if not usedGameInput then
+                remote:FireServer(
+                    buffer.fromstring(buffers["base"]),
                     {
-                        "skill1"
+                        {
+                            "skill1"
+                        }
                     }
-                }
-            )
+                )
+            end
 
             local token = state.jumpHoldToken
 
-            task.delay(0.45, function()
+            task.delay(0.12, function()
                 releaseJump(token)
             end)
         end
@@ -3671,16 +3764,20 @@ do
             or not pending.ball.Parent then
 
             state.pending = nil
+            releaseJump()
             stopLock()
             return
         end
 
         local char = character()
-        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local humanoid =
+            char and char:FindFirstChildOfClass("Humanoid")
+        local root =
+            char and char:FindFirstChild("HumanoidRootPart")
 
         if not humanoid or not root then
             state.pending = nil
+            releaseJump()
             stopLock()
             return
         end
@@ -3692,19 +3789,63 @@ do
             return
         end
 
-        if pending.profile.style == "Shidou" then
-            humanoid.Jump = true
-        end
+        local timing =
+            trapTiming(pending.ball, root)
 
-        if airborneReady(pending.profile, humanoid, root) then
-            local profile = pending.profile
-            local ball = pending.ball
-
+        if not timing then
             state.pending = nil
-
-            startLock(ball, nil, false)
-            sendTrap(profile)
+            releaseJump()
+            return
         end
+
+        pending.enterTime = timing.enterTime
+        pending.activationLead = timing.activationLead
+        pending.jumpLead = timing.jumpLead
+
+        if pending.profile.style == "Shidou" then
+            if not pending.jumpStartedAt
+                and timing.enterTime <= timing.jumpLead then
+
+                pending.jumpStartY = root.Position.Y
+                pending.jumpStartedAt = os.clock()
+                holdJump(humanoid)
+            end
+
+            if pending.jumpStartedAt then
+                humanoid.Jump = true
+            end
+        elseif not pending.jumpStartedAt
+            and timing.enterTime <= timing.jumpLead then
+
+            pending.jumpStartY = root.Position.Y
+            pending.jumpStartedAt = os.clock()
+            humanoid.Jump = true
+            humanoid:ChangeState(
+                Enum.HumanoidStateType.Jumping
+            )
+        end
+
+        if timing.enterTime > timing.activationLead then
+            return
+        end
+
+        if not airborneReady(
+            pending.profile,
+            pending,
+            humanoid,
+            root
+        ) then
+            return
+        end
+
+        local profile = pending.profile
+        local ball = pending.ball
+
+        state.pending = nil
+        state.attemptedBall = ball
+
+        startLock(ball, nil, false)
+        sendTrap(profile)
     end
 
     local function resetAttempt()
@@ -3717,7 +3858,8 @@ do
             or not ball
             or not ball.Parent
             or hasBall()
-            or state.attemptedBall == ball then
+            or state.attemptedBall == ball
+            or state.pending then
 
             return
         end
@@ -3728,36 +3870,16 @@ do
             return
         end
 
-        local char = character()
-        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-
-        if not humanoid or not root then
-            return
-        end
-
-        state.attemptedBall = ball
         state.pending = {
             ball = ball,
-            profile = profile
+            profile = profile,
+            jumpStartY = nil,
+            jumpStartedAt = nil,
+            enterTime = nil,
+            activationLead = nil,
+            jumpLead = nil
         }
 
-        if profile.style == "Shidou" then
-            startLock(ball, nil, false)
-            holdJump(humanoid)
-            tryPending()
-            return
-        end
-
-        if airborneReady(profile, humanoid, root) then
-            tryPending()
-            return
-        end
-
-        startLock(ball, nil, false)
-
-        humanoid.Jump = true
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
         tryPending()
     end
 
@@ -3796,16 +3918,24 @@ do
         end
 
         if state.attemptedBall == ball then
-            if (ball.Position - root.Position).Magnitude > state.range + 15 then
+            if (ball.Position - root.Position).Magnitude > state.range + 18 then
                 resetAttempt()
                 stopLock()
             else
-                tryPending()
                 return
             end
         end
 
-        if trapCommitReady(ball, root) then
+        if state.pending then
+            tryPending()
+            return
+        end
+
+        local timing = trapTiming(ball, root)
+
+        if timing
+            and timing.enterTime <= timing.jumpLead then
+
             fireTrap(ball)
         end
     end
@@ -3887,7 +4017,7 @@ do
             if style == "Shidou" and state.jumpHeld then
                 local token = state.jumpHoldToken
 
-                task.delay(0.08, function()
+                task.delay(0.04, function()
                     releaseJump(token)
                 end)
             end
@@ -3915,7 +4045,7 @@ do
         state.rootVelocityConnection =
             root:GetPropertyChangedSignal("AssemblyLinearVelocity"):Connect(function()
                 if state.pending
-                    and root.AssemblyLinearVelocity.Y > 0.1 then
+                    and root.AssemblyLinearVelocity.Y > 0 then
 
                     tryPending()
                 end
@@ -4139,6 +4269,7 @@ do
 
     run.PreSimulation:Connect(function()
         tryPending()
+        evaluate()
     end)
 
     run.PostSimulation:Connect(function()
