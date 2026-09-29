@@ -2796,7 +2796,12 @@ do
         observedVelocity = Vector3.zero,
         attemptedBall = nil,
         pending = nil,
+        eligibleBall = nil,
+        eligibleUntil = 0,
+        releaseSource = nil,
         learnedStyle = nil,
+        jumpHeld = false,
+        jumpHoldToken = 0,
         animatorConnection = nil,
         humanoidStateConnection = nil,
         rootVelocityConnection = nil,
@@ -2813,6 +2818,7 @@ do
     local rs = game:GetService("ReplicatedStorage")
     local run = game:GetService("RunService")
     local ws = game:GetService("Workspace")
+    local vim = game:GetService("VirtualInputManager")
 
     local lp = ps.LocalPlayer
     local terrain = ws.Terrain
@@ -2869,6 +2875,119 @@ do
         if ball and ball:IsA("BasePart") then
             return ball
         end
+    end
+
+    local function playerFromCharacter(char)
+        if not char then
+            return nil
+        end
+
+        local player = ps:GetPlayerFromCharacter(char)
+
+        if player then
+            return player
+        end
+
+        if char.Name then
+            return ps:FindFirstChild(char.Name)
+        end
+    end
+
+    local function isEnemyCharacter(char)
+        local player = playerFromCharacter(char)
+
+        if not player or player == lp then
+            return false
+        end
+
+        if not lp.Team or not player.Team then
+            return false
+        end
+
+        return player.Team ~= lp.Team
+    end
+
+    local function clearEligibleRelease()
+        state.eligibleBall = nil
+        state.eligibleUntil = 0
+        state.releaseSource = nil
+    end
+
+    local function armEnemyRelease(char)
+        if not isEnemyCharacter(char) then
+            clearEligibleRelease()
+            return false
+        end
+
+        state.releaseSource = char
+        state.eligibleBall = nil
+        state.eligibleUntil = os.clock() + 3
+        return true
+    end
+
+    local function eligibleBall(ball)
+        if os.clock() > state.eligibleUntil then
+            clearEligibleRelease()
+            return false
+        end
+
+        if not state.releaseSource or not isEnemyCharacter(state.releaseSource) then
+            clearEligibleRelease()
+            return false
+        end
+
+        if state.eligibleBall and state.eligibleBall ~= ball then
+            return false
+        end
+
+        state.eligibleBall = ball
+        return true
+    end
+
+    local function releaseJump(expectedToken)
+        if expectedToken
+            and expectedToken ~= state.jumpHoldToken then
+
+            return
+        end
+
+        if not state.jumpHeld then
+            return
+        end
+
+        state.jumpHeld = false
+
+        pcall(function()
+            vim:SendKeyEvent(
+                false,
+                Enum.KeyCode.Space,
+                false,
+                game
+            )
+        end)
+    end
+
+    local function holdJump(humanoid)
+        state.jumpHoldToken += 1
+        local token = state.jumpHoldToken
+
+        if not state.jumpHeld then
+            state.jumpHeld = true
+
+            pcall(function()
+                vim:SendKeyEvent(
+                    true,
+                    Enum.KeyCode.Space,
+                    false,
+                    game
+                )
+            end)
+        end
+
+        humanoid.Jump = true
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+        return token
     end
 
     local function getSlots()
@@ -3159,7 +3278,7 @@ do
     local function trajectoryWillReach(ball, root)
         local velocity = velocityOf(ball)
 
-        if velocity.Magnitude < 2 then
+        if velocity.Magnitude < 1.25 then
             return false
         end
 
@@ -3172,7 +3291,6 @@ do
         local relativeSpeedSq = relativeVelocity:Dot(relativeVelocity)
 
         local lead = oneWayPing() + (1 / 120)
-
         local timeToClosest = lead
 
         if relativeSpeedSq > 0.001 then
@@ -3187,16 +3305,19 @@ do
             currentDistance / math.max(relativeVelocity.Magnitude, 1)
 
         local horizon = math.clamp(
-            math.max(timeToClosest + 0.18, travelEstimate + 0.12),
-            0.28,
-            0.9
+            math.max(
+                timeToClosest + 0.28,
+                travelEstimate + 0.2
+            ),
+            0.35,
+            1.25
         )
 
         local bestDistance = math.huge
         local highEnough = false
 
-        for index = 0, 20 do
-            local t = lead + (horizon - lead) * (index / 20)
+        for index = 0, 24 do
+            local t = lead + (horizon - lead) * (index / 24)
 
             local ballPosition =
                 ball.Position
@@ -3215,7 +3336,7 @@ do
                 bestDistance = distance
             end
 
-            if ballPosition.Y > rootPosition.Y - 1.1 then
+            if ballPosition.Y > rootPosition.Y - 1.25 then
                 highEnough = true
             end
         end
@@ -3224,22 +3345,26 @@ do
             relative:Dot(relativeVelocity) < 0
             or currentDistance <= state.range
 
+        local latencyMargin =
+            math.clamp(
+                velocity.Magnitude * oneWayPing(),
+                0,
+                4
+            )
+
         return highEnough
             and approaching
-            and bestDistance <= state.range
+            and bestDistance <= state.range + latencyMargin
     end
 
     local function airborneReady(profile, humanoid, root)
         local humanoidState = humanoid:GetState()
 
         if profile.style == "Shidou" then
-            return root.AssemblyLinearVelocity.Y > 1
+            return root.AssemblyLinearVelocity.Y > 0.25
                 or (
                     humanoid.FloorMaterial == Enum.Material.Air
-                    and (
-                        humanoidState == Enum.HumanoidStateType.Jumping
-                        or humanoidState == Enum.HumanoidStateType.Freefall
-                    )
+                    and humanoidState ~= Enum.HumanoidStateType.Landed
                 )
         end
 
@@ -3271,6 +3396,12 @@ do
                     }
                 }
             )
+
+            local token = state.jumpHoldToken
+
+            task.delay(0.45, function()
+                releaseJump(token)
+            end)
         end
     end
 
@@ -3303,8 +3434,13 @@ do
 
         if onCooldown(pending.profile.skill) then
             state.pending = nil
+            releaseJump()
             stopLock()
             return
+        end
+
+        if pending.profile.style == "Shidou" then
+            humanoid.Jump = true
         end
 
         if airborneReady(pending.profile, humanoid, root) then
@@ -3353,6 +3489,13 @@ do
             profile = profile
         }
 
+        if profile.style == "Shidou" then
+            startLock(ball, nil, false)
+            holdJump(humanoid)
+            tryPending()
+            return
+        end
+
         if airborneReady(profile, humanoid, root) then
             tryPending()
             return
@@ -3362,10 +3505,7 @@ do
 
         humanoid.Jump = true
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-
-        if profile.style ~= "Shidou" then
-            tryPending()
-        end
+        tryPending()
     end
 
     local function evaluate()
@@ -3395,6 +3535,10 @@ do
         end
 
         if ballHolder and ballHolder.Value ~= nil then
+            return
+        end
+
+        if not eligibleBall(ball) then
             return
         end
 
@@ -3477,13 +3621,31 @@ do
 
             state.learnedStyle = style
 
-            if state.enabled then
+            if state.enabled
+                and (
+                    state.lockActive
+                    or state.pending
+                    or state.attemptedBall
+                ) then
+
                 confirmLock(track)
+            end
+
+            if style == "Shidou" and state.jumpHeld then
+                local token = state.jumpHoldToken
+
+                task.delay(0.08, function()
+                    releaseJump(token)
+                end)
             end
 
             track.Stopped:Connect(function()
                 if state.lockTrack == track and not hasBall() then
                     stopLock()
+                end
+
+                if style == "Shidou" then
+                    releaseJump()
                 end
             end)
         end)
@@ -3499,7 +3661,9 @@ do
 
         state.rootVelocityConnection =
             root:GetPropertyChangedSignal("AssemblyLinearVelocity"):Connect(function()
-                if state.pending and root.AssemblyLinearVelocity.Y > 0 then
+                if state.pending
+                    and root.AssemblyLinearVelocity.Y > 0.1 then
+
                     tryPending()
                 end
             end)
@@ -3514,8 +3678,10 @@ do
             end)
 
         humanoid.Died:Connect(function()
+            releaseJump()
             stopLock()
             resetAttempt()
+            clearEligibleRelease()
         end)
     end
 
@@ -3528,18 +3694,34 @@ do
 
             if current == nil then
                 if previous == character() then
-                    state.ownReleaseUntil = os.clock() + 0.4
-                else
+                    state.ownReleaseUntil = os.clock() + 1.5
+                    clearEligibleRelease()
+                    resetAttempt()
+                    releaseJump()
+                    stopLock()
+
+                elseif armEnemyRelease(previous) then
                     state.ownReleaseUntil = 0
+                    resetAttempt()
                     evaluate()
+
+                else
+                    clearEligibleRelease()
+                    resetAttempt()
+                    releaseJump()
+                    stopLock()
                 end
 
             elseif current == character() then
+                clearEligibleRelease()
                 resetAttempt()
+                releaseJump()
                 stopLock()
 
             else
+                clearEligibleRelease()
                 resetAttempt()
+                releaseJump()
 
                 if state.lockActive then
                     stopLock()
@@ -3557,7 +3739,11 @@ do
 
         watchBall(child)
         resetAttempt()
-        evaluate()
+
+        if os.clock() <= state.eligibleUntil then
+            state.eligibleBall = child
+            evaluate()
+        end
     end)
 
     terrain.ChildRemoved:Connect(function(child)
@@ -3595,8 +3781,10 @@ do
     end
 
     lp.CharacterAdded:Connect(function(char)
+        releaseJump()
         stopLock()
         resetAttempt()
+        clearEligibleRelease()
 
         if state.ballVelocityConnection then
             state.ballVelocityConnection:Disconnect()
@@ -3638,6 +3826,8 @@ do
         resetAttempt()
 
         if not state.enabled then
+            releaseJump()
+            clearEligibleRelease()
             stopLock()
         end
     end)
