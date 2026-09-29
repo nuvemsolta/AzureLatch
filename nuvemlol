@@ -3250,7 +3250,6 @@ do
     local pendingWildPacket = nil
     local pendingWildAt = 0
     local lastWildAnimationAt = 0
-    local learnedPacketSide = {}
     local generation = 0
 
     local function flatUnit(vector)
@@ -3445,11 +3444,23 @@ do
             return nil
         end
 
+        if type(packetBoolean) == "boolean" then
+            return right
+                * (
+                    packetBoolean
+                    and -1
+                    or 1
+                )
+        end
+
+        if intentSide == 1
+            or intentSide == -1 then
+
+            return right * intentSide
+        end
+
         local startPosition =
             root.Position
-
-        local observedSide =
-            nil
 
         for _ = 1, 6 do
             RunService.PostSimulation:
@@ -3475,12 +3486,12 @@ do
                 Dot(right)
 
             if math.abs(lateral) >= 0.018 then
-                observedSide =
-                    lateral > 0
-                    and 1
-                    or -1
-
-                break
+                return right
+                    * (
+                        lateral > 0
+                        and 1
+                        or -1
+                    )
             end
 
             local lateralVelocity =
@@ -3488,25 +3499,13 @@ do
                 Dot(right)
 
             if math.abs(lateralVelocity) >= 1.0 then
-                observedSide =
-                    lateralVelocity > 0
-                    and 1
-                    or -1
-
-                break
+                return right
+                    * (
+                        lateralVelocity > 0
+                        and 1
+                        or -1
+                    )
             end
-        end
-
-        if observedSide then
-            if type(packetBoolean) == "boolean" then
-                learnedPacketSide[packetBoolean] =
-                    observedSide
-
-                learnedPacketSide[not packetBoolean] =
-                    -observedSide
-            end
-
-            return right * observedSide
         end
 
         local liveDot =
@@ -3519,32 +3518,6 @@ do
                     liveDot > 0
                     and 1
                     or -1
-                )
-        end
-
-        if intentSide == 1
-            or intentSide == -1 then
-
-            return right * intentSide
-        end
-
-        if type(packetBoolean) == "boolean" then
-            local learned =
-                learnedPacketSide[
-                    packetBoolean
-                ]
-
-            if learned == 1
-                or learned == -1 then
-
-                return right * learned
-            end
-
-            return right
-                * (
-                    packetBoolean
-                    and -1
-                    or 1
                 )
         end
 
@@ -3909,74 +3882,70 @@ do
 
             local replacement =
                 function(self, ...)
-                    local method = getnamecallmethod()
+                    local method =
+                        getnamecallmethod()
 
                     if self == remote
-                        and method == "FireServer" then
+                        and (
+                            method == "FireServer"
+                            or method == "fireServer"
+                        ) then
 
-                        local args = table.pack(...)
+                        local args =
+                            table.pack(...)
 
-                        local results = table.pack(
-                            oldNamecall(
-                                self,
-                                ...
-                            )
-                        )
+                        local packet =
+                            args[1]
 
-                        task.defer(function()
-                            local packet = args[1]
-                            local payload = args[2]
+                        local payload =
+                            args[2]
 
-                            local okLength, length = pcall(
+                        local okLength, length =
+                            pcall(
                                 buffer.len,
                                 packet
                             )
 
-                            if not okLength or length ~= 2 then
-                                return
+                        if okLength
+                            and length == 2 then
+
+                            local okA, byteA =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    0
+                                )
+
+                            local okB, byteB =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    1
+                                )
+
+                            if okA
+                                and okB
+                                and byteA == 25
+                                and byteB == 1 then
+
+                                local move =
+                                    type(payload) == "table"
+                                    and payload[1]
+                                    or nil
+
+                                if type(move) == "table"
+                                    and move[1] == "skill3"
+                                    and type(move[2]) == "boolean" then
+
+                                    rememberWildIntent(
+                                        move[2]
+                                            and -1
+                                            or 1,
+                                        move[2]
+                                    )
+                                end
                             end
-
-                            local okA, byteA = pcall(
-                                buffer.readu8,
-                                packet,
-                                0
-                            )
-
-                            local okB, byteB = pcall(
-                                buffer.readu8,
-                                packet,
-                                1
-                            )
-
-                            if not okA
-                                or not okB
-                                or byteA ~= 25
-                                or byteB ~= 1 then
-                                return
-                            end
-
-                            local move =
-                                type(payload) == "table"
-                                and payload[1]
-                                or nil
-
-                            if type(move) ~= "table"
-                                or move[1] ~= "skill3"
-                                or type(move[2]) ~= "boolean" then
-                                return
-                            end
-
-                            rememberWildIntent(
-                                nil,
-                                move[2]
-                            )
-                        end)
-
-                        return table.unpack(
-                            results,
-                            1,
-                            results.n
-                        )
+                        end
                     end
 
                     return oldNamecall(
@@ -3986,21 +3955,27 @@ do
                 end
 
             if type(newcclosure) == "function" then
-                replacement = newcclosure(replacement)
+                replacement =
+                    newcclosure(
+                        replacement
+                    )
             end
 
-            local okHook, original = pcall(
-                hookmetamethod,
-                game,
-                "__namecall",
-                replacement
-            )
+            local okHook, original =
+                pcall(
+                    hookmetamethod,
+                    game,
+                    "__namecall",
+                    replacement
+                )
 
             if okHook and original then
-                oldNamecall = original
+                oldNamecall =
+                    original
             end
         end
     end
+
 
     RunService.Heartbeat:Connect(function()
         local current = getSkill3()
@@ -6185,6 +6160,11 @@ do
                 button
             ) then
 
+            return
+        end
+
+        if isDonLorenzo()
+            and physicalClick(button) then
             return
         end
 
