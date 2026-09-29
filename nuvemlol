@@ -133,6 +133,554 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 
+do
+    local testtab = win:Tab("Test Options")
+    local kunigamiTests = testtab:Folder(
+        "Kunigami Tests.",
+        Color3.fromRGB(24, 255, 228),
+        true
+    )
+
+    kunigamiTests:Label(
+        "Experimental move tests. Hitbox values are printed to the console."
+    )
+
+    local enabled = false
+    local hitboxStuds = 20
+    local armedUntil = 0
+    local activationSerial = 0
+    local matchedThisActivation = 0
+    local nearbyLogCount = 0
+
+    local descendantConnection = nil
+    local heartbeatConnection = nil
+    local skillSlot = nil
+    local skillConnections = {}
+
+    local tracked = setmetatable({}, {
+        __mode = "k"
+    })
+
+    local originals = setmetatable({}, {
+        __mode = "k"
+    })
+
+    local function vecText(vector)
+        return string.format(
+            "%.2f, %.2f, %.2f",
+            vector.X,
+            vector.Y,
+            vector.Z
+        )
+    end
+
+    local function getRoot()
+        local character = Players.LocalPlayer.Character
+
+        return character
+            and character:FindFirstChild("HumanoidRootPart")
+            or nil
+    end
+
+    local function isOtherCharacterPart(part)
+        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+            if otherPlayer ~= Players.LocalPlayer
+                and otherPlayer.Character
+                and part:IsDescendantOf(otherPlayer.Character) then
+
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function restorePart(part)
+        local original = originals[part]
+
+        if not original or not part or not part.Parent then
+            return
+        end
+
+        pcall(function()
+            part.Size = original.Size
+            part.Transparency = original.Transparency
+            part.Color = original.Color
+            part.CanCollide = original.CanCollide
+            part.CanTouch = original.CanTouch
+            part.CanQuery = original.CanQuery
+        end)
+    end
+
+    local function stopTracking(part, restore)
+        local connection = tracked[part]
+
+        if connection then
+            connection:Disconnect()
+            tracked[part] = nil
+        end
+
+        if restore then
+            restorePart(part)
+        end
+    end
+
+    local function expandPart(part)
+        if not enabled
+            or os.clock() > armedUntil
+            or tracked[part]
+            or not part:IsA("BasePart") then
+
+            return
+        end
+
+        if isOtherCharacterPart(part) then
+            return
+        end
+
+        local root = getRoot()
+
+        if root
+            and (part.Position - root.Position).Magnitude > 80 then
+
+            return
+        end
+
+        originals[part] = {
+            Size = part.Size,
+            Transparency = part.Transparency,
+            Color = part.Color,
+            CanCollide = part.CanCollide,
+            CanTouch = part.CanTouch,
+            CanQuery = part.CanQuery
+        }
+
+        matchedThisActivation += 1
+
+        warn(
+            "[Heroic Clash] hitbox detected | name="
+            .. part:GetFullName()
+            .. " | original Size=("
+            .. vecText(part.Size)
+            .. ") | target="
+            .. tostring(hitboxStuds)
+            .. " studs"
+        )
+
+        local connection
+
+        connection = RunService.Heartbeat:Connect(function()
+            if not enabled
+                or os.clock() > armedUntil
+                or not part.Parent then
+
+                stopTracking(part, true)
+                return
+            end
+
+            pcall(function()
+                local target = Vector3.new(
+                    hitboxStuds,
+                    hitboxStuds,
+                    hitboxStuds
+                )
+
+                if part.Size ~= target then
+                    part.Size = target
+                end
+
+                part.Transparency = 0.5
+                part.Color = Color3.fromRGB(255, 60, 60)
+                part.CanCollide = false
+                part.CanTouch = true
+                part.CanQuery = true
+            end)
+        end)
+
+        tracked[part] = connection
+    end
+
+    local function inspectPart(part)
+        if not enabled
+            or os.clock() > armedUntil
+            or not part:IsA("BasePart") then
+
+            return
+        end
+
+        local root = getRoot()
+
+        if not root then
+            return
+        end
+
+        local distance =
+            (part.Position - root.Position).Magnitude
+
+        local name =
+            string.lower(part.Name)
+
+        local candidate =
+            name == "whiff"
+            or string.find(
+                name,
+                "hitbox",
+                1,
+                true
+            ) ~= nil
+
+        if candidate then
+            expandPart(part)
+            return
+        end
+
+        if distance <= 35
+            and nearbyLogCount < 24
+            and not part:IsDescendantOf(
+                Players.LocalPlayer.Character
+            ) then
+
+            nearbyLogCount += 1
+
+            warn(
+                "[Heroic Clash Scan] nearby BasePart | name="
+                .. part:GetFullName()
+                .. " | Size=("
+                .. vecText(part.Size)
+                .. ") | distance="
+                .. string.format("%.2f", distance)
+            )
+        end
+    end
+
+    local function scanExistingCandidates()
+        local root = getRoot()
+
+        if not root then
+            return
+        end
+
+        for _, object in ipairs(Workspace:GetDescendants()) do
+            if object:IsA("BasePart") then
+                local name =
+                    string.lower(object.Name)
+
+                if name == "whiff"
+                    or string.find(
+                        name,
+                        "hitbox",
+                        1,
+                        true
+                    ) ~= nil then
+
+                    if (
+                        object.Position
+                        - root.Position
+                    ).Magnitude <= 80 then
+
+                        expandPart(object)
+                    end
+                end
+            end
+        end
+    end
+
+    local function armHeroicClash(source)
+        if not enabled then
+            return
+        end
+
+        activationSerial += 1
+        local serial = activationSerial
+
+        armedUntil =
+            os.clock() + 2.0
+
+        matchedThisActivation = 0
+        nearbyLogCount = 0
+
+        warn(
+            "[Heroic Clash] armed from "
+            .. tostring(source)
+            .. " | target="
+            .. tostring(hitboxStuds)
+            .. " studs"
+        )
+
+        task.defer(
+            scanExistingCandidates
+        )
+
+        task.delay(2.05, function()
+            if serial ~= activationSerial
+                or not enabled then
+
+                return
+            end
+
+            if matchedThisActivation == 0 then
+                warn(
+                    "[Heroic Clash] no BasePart named 'whiff' or containing 'hitbox' was detected. "
+                    .. "Check the nearby BasePart lines above for the move's real hitbox name and normal Size."
+                )
+            end
+        end)
+    end
+
+    local function disconnectSkillSlot()
+        for _, connection in ipairs(skillConnections) do
+            connection:Disconnect()
+        end
+
+        table.clear(skillConnections)
+        skillSlot = nil
+    end
+
+    local function getSkill2()
+        local playerGui =
+            Players.LocalPlayer:
+            FindFirstChild("PlayerGui")
+
+        local hotbar =
+            playerGui
+            and playerGui:
+                FindFirstChild("Hotbar")
+
+        local backpack =
+            hotbar
+            and hotbar:
+                FindFirstChild("Backpack")
+
+        local inner =
+            backpack
+            and backpack:
+                FindFirstChild("Hotbar")
+
+        return inner
+            and inner:
+                FindFirstChild("skill2")
+            or nil
+    end
+
+    local function hookSkill2(slot)
+        if slot == skillSlot then
+            return
+        end
+
+        disconnectSkillSlot()
+
+        if not slot then
+            return
+        end
+
+        skillSlot = slot
+
+        local function activated()
+            armHeroicClash("skill2")
+        end
+
+        if slot:IsA("GuiObject") then
+            table.insert(
+                skillConnections,
+                slot.InputBegan:Connect(function(input)
+                    if input.UserInputType
+                            == Enum.UserInputType.Touch
+                        or input.UserInputType
+                            == Enum.UserInputType.MouseButton1 then
+
+                        activated()
+                    end
+                end)
+            )
+        end
+
+        for _, object in ipairs(slot:GetDescendants()) do
+            if object:IsA("GuiButton") then
+                table.insert(
+                    skillConnections,
+                    object.Activated:
+                        Connect(activated)
+                )
+
+                table.insert(
+                    skillConnections,
+                    object.InputBegan:
+                        Connect(function(input)
+                            if input.UserInputType
+                                    == Enum.UserInputType.Touch
+                                or input.UserInputType
+                                    == Enum.UserInputType.MouseButton1 then
+
+                                activated()
+                            end
+                        end)
+                )
+            end
+        end
+
+        local cooldown =
+            slot:
+            FindFirstChild(
+                "Cooldown",
+                true
+            )
+
+        if cooldown
+            and cooldown:IsA("GuiObject") then
+
+            local lastVisible =
+                cooldown.Visible
+
+            table.insert(
+                skillConnections,
+                cooldown:
+                GetPropertyChangedSignal(
+                    "Visible"
+                ):
+                Connect(function()
+                    local visible =
+                        cooldown.Visible
+
+                    if visible
+                        and not lastVisible then
+
+                        armHeroicClash(
+                            "skill2 cooldown"
+                        )
+                    end
+
+                    lastVisible =
+                        visible
+                end)
+            )
+        end
+    end
+
+    local function enableFeature()
+        if descendantConnection then
+            descendantConnection:
+                Disconnect()
+        end
+
+        if heartbeatConnection then
+            heartbeatConnection:
+                Disconnect()
+        end
+
+        descendantConnection =
+            Workspace.DescendantAdded:
+            Connect(function(object)
+                if os.clock() <= armedUntil
+                    and object:IsA("BasePart") then
+
+                    task.defer(
+                        inspectPart,
+                        object
+                    )
+                end
+            end)
+
+        heartbeatConnection =
+            RunService.Heartbeat:
+            Connect(function()
+                local current =
+                    getSkill2()
+
+                if current ~= skillSlot then
+                    hookSkill2(current)
+                end
+            end)
+
+        hookSkill2(
+            getSkill2()
+        )
+    end
+
+    local function disableFeature()
+        activationSerial += 1
+        armedUntil = 0
+
+        if descendantConnection then
+            descendantConnection:
+                Disconnect()
+
+            descendantConnection =
+                nil
+        end
+
+        if heartbeatConnection then
+            heartbeatConnection:
+                Disconnect()
+
+            heartbeatConnection =
+                nil
+        end
+
+        disconnectSkillSlot()
+
+        for part in pairs(tracked) do
+            stopTracking(part, true)
+        end
+    end
+
+    UserInputService.InputBegan:
+    Connect(function(input, gameProcessed)
+        if gameProcessed
+            or not enabled then
+
+            return
+        end
+
+        if input.KeyCode
+            == Enum.KeyCode.Two then
+
+            armHeroicClash(
+                "keyboard 2"
+            )
+        end
+    end)
+
+    kunigamiTests:Slider(
+        "Heroic Clash Hitbox Studs",
+        20,
+        1,
+        500,
+        1,
+        function(value)
+            hitboxStuds =
+                math.clamp(
+                    tonumber(value)
+                        or 20,
+                    1,
+                    500
+                )
+        end
+    )
+
+    kunigamiTests:Toggle(
+        "Heroic Clash Hitbox Increase",
+        "Arms on skill2 and expands detected whiff/hitbox parts. Original hitbox Size is printed to console.",
+        function(value)
+            enabled =
+                value == true
+
+            if enabled then
+                enableFeature()
+
+                warn(
+                    "[Heroic Clash] test enabled. Use Kunigami skill2; detected normal hitbox Size will be printed."
+                )
+            else
+                disableFeature()
+
+                warn(
+                    "[Heroic Clash] test disabled."
+                )
+            end
+        end
+    )
+end
+
 helptab:Button("Copy Owner Discord Username", "Copies The Owner's Discord Username To Your Clipboard.", function()
     local StarterGui = game:GetService("StarterGui")
     StarterGui:SetCore("SendNotification", {
