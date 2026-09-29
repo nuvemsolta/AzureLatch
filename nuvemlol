@@ -2805,6 +2805,10 @@ do
         learnedStyle = nil,
         jumpHeld = false,
         jumpHoldToken = 0,
+        jumpTouchActive = false,
+        jumpTouchPosition = nil,
+        jumpTouchId = 9101,
+        skillTouchId = 9201,
         shidouDispatchAt = 0,
         shidouTrapAt = 0,
         enemyAnimationConnections = {},
@@ -2831,13 +2835,19 @@ do
         lockPreviousCameraType = nil,
         lockPreviousCameraSubject = nil,
         lockCameraOffset = nil,
-        lockLastTargetPosition = nil
+        lockLastTargetPosition = nil,
+        lockPreviousMouseBehavior = nil,
+        lockMouseNeutralizer = nil,
+        lockCameraCFrameConnection = nil,
+        lockCameraTypeConnection = nil,
+        lockCameraWriting = false
     }
 
     local ps = game:GetService("Players")
     local rs = game:GetService("ReplicatedStorage")
     local run = game:GetService("RunService")
     local ws = game:GetService("Workspace")
+    local uis = game:GetService("UserInputService")
     local vim = game:GetService("VirtualInputManager")
 
     local lp = ps.LocalPlayer
@@ -2870,6 +2880,16 @@ do
 
     local AIR_KICK_ANIMATION =
         "rbxassetid://76587445975710"
+
+    local TRAPPABLE_RELEASE_ANIMATIONS = {
+        ["rbxassetid://113284951031775"] = true,
+        ["rbxassetid://134102760141398"] = true,
+        ["rbxassetid://99426023028221"] = true,
+        ["rbxassetid://136940491656183"] = true,
+        ["rbxassetid://82352266761422"] = true,
+        ["rbxassetid://138554810282359"] = true,
+        ["rbxassetid://76979409962243"] = true
+    }
 
     local function character()
         return lp.Character
@@ -3124,7 +3144,8 @@ do
                         local priorityValue =
                             track.Priority.Value
 
-                        if animationId == AIR_KICK_ANIMATION
+                        if TRAPPABLE_RELEASE_ANIMATIONS[animationId]
+                            or animationId == AIR_KICK_ANIMATION
                             or priorityValue
                                 >= Enum.AnimationPriority.Action.Value then
 
@@ -3213,7 +3234,8 @@ do
                         local priorityValue =
                             track.Priority.Value
 
-                        if animationId == AIR_KICK_ANIMATION
+                        if TRAPPABLE_RELEASE_ANIMATIONS[animationId]
+                            or animationId == AIR_KICK_ANIMATION
                             or priorityValue
                                 >= Enum.AnimationPriority.Action.Value then
 
@@ -3230,11 +3252,59 @@ do
         end)
     end
 
+    local function jumpButton()
+        local pg = lp:FindFirstChild("PlayerGui")
+        local touchGui =
+            pg and pg:FindFirstChild("TouchGui")
+
+        if not touchGui then
+            return nil
+        end
+
+        local button =
+            touchGui:FindFirstChild("JumpButton", true)
+
+        if button
+            and button:IsA("GuiButton")
+            and button.Visible then
+
+            return button
+        end
+    end
+
+    local function guiCenter(gui)
+        local position = gui.AbsolutePosition
+        local size = gui.AbsoluteSize
+
+        return Vector2.new(
+            position.X + size.X * 0.5,
+            position.Y + size.Y * 0.5
+        )
+    end
+
     local function releaseJump(expectedToken)
         if expectedToken
             and expectedToken ~= state.jumpHoldToken then
 
             return
+        end
+
+        if state.jumpTouchActive
+            and state.jumpTouchPosition then
+
+            local point = state.jumpTouchPosition
+
+            pcall(function()
+                vim:SendTouchEvent(
+                    state.jumpTouchId,
+                    Enum.UserInputState.End.Value,
+                    point.X,
+                    point.Y
+                )
+            end)
+
+            state.jumpTouchActive = false
+            state.jumpTouchPosition = nil
         end
 
         if not state.jumpHeld then
@@ -3260,18 +3330,46 @@ do
         if not state.jumpHeld then
             state.jumpHeld = true
 
-            pcall(function()
-                vim:SendKeyEvent(
-                    true,
-                    Enum.KeyCode.Space,
-                    false,
-                    game
-                )
-            end)
+            local usedTouch = false
+
+            if uis.TouchEnabled then
+                local button = jumpButton()
+
+                if button then
+                    local point = guiCenter(button)
+
+                    local ok = pcall(function()
+                        vim:SendTouchEvent(
+                            state.jumpTouchId,
+                            Enum.UserInputState.Begin.Value,
+                            point.X,
+                            point.Y
+                        )
+                    end)
+
+                    if ok then
+                        usedTouch = true
+                        state.jumpTouchActive = true
+                        state.jumpTouchPosition = point
+                    end
+                end
+            end
+
+            if not usedTouch then
+                pcall(function()
+                    vim:SendKeyEvent(
+                        true,
+                        Enum.KeyCode.Space,
+                        false,
+                        game
+                    )
+                end)
+            end
         end
 
+        -- Keep Roblox's real jump state asserted while the physical
+        -- jump input remains held. No forced ChangeState here.
         humanoid.Jump = true
-        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
         return token
     end
@@ -3384,7 +3482,84 @@ do
         state.lockBodyReady = false
     end
 
+    local function clearMouseNeutralizer()
+        if state.lockMouseNeutralizer then
+            state.lockMouseNeutralizer:Destroy()
+            state.lockMouseNeutralizer = nil
+        end
+
+        if state.lockPreviousMouseBehavior ~= nil then
+            pcall(function()
+                uis.MouseBehavior =
+                    state.lockPreviousMouseBehavior
+            end)
+        end
+
+        state.lockPreviousMouseBehavior = nil
+    end
+
+    local function ensureMouseNeutralizer()
+        if state.lockPreviousMouseBehavior == nil then
+            state.lockPreviousMouseBehavior =
+                uis.MouseBehavior
+        end
+
+        pcall(function()
+            uis.MouseBehavior =
+                Enum.MouseBehavior.Default
+        end)
+
+        if state.lockMouseNeutralizer
+            and state.lockMouseNeutralizer.Parent then
+
+            return
+        end
+
+        local pg = lp:FindFirstChild("PlayerGui")
+
+        if not pg then
+            return
+        end
+
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "CeleronTrapMouseNeutralizer"
+        gui.ResetOnSpawn = false
+        gui.IgnoreGuiInset = true
+        gui.DisplayOrder = 2147483647
+        gui.Parent = pg
+
+        local modal = Instance.new("TextButton")
+        modal.Name = "Modal"
+        modal.Size = UDim2.fromOffset(1, 1)
+        modal.Position = UDim2.fromOffset(-10, -10)
+        modal.BackgroundTransparency = 1
+        modal.TextTransparency = 1
+        modal.AutoButtonColor = false
+        modal.Active = true
+        modal.Modal = true
+        modal.Visible = true
+        modal.Parent = gui
+
+        state.lockMouseNeutralizer = gui
+    end
+
+    local function clearCameraWatchdog()
+        if state.lockCameraCFrameConnection then
+            state.lockCameraCFrameConnection:Disconnect()
+            state.lockCameraCFrameConnection = nil
+        end
+
+        if state.lockCameraTypeConnection then
+            state.lockCameraTypeConnection:Disconnect()
+            state.lockCameraTypeConnection = nil
+        end
+
+        state.lockCameraWriting = false
+    end
+
     local function restoreCamera()
+        clearCameraWatchdog()
+
         local camera = state.lockCamera
 
         if camera and camera.Parent then
@@ -3401,6 +3576,8 @@ do
                     or Enum.CameraType.Custom
             end)
         end
+
+        clearMouseNeutralizer()
 
         state.lockCamera = nil
         state.lockPreviousCameraType = nil
@@ -3651,7 +3828,11 @@ do
             return
         end
 
+        ensureMouseNeutralizer()
+
         if state.lockCamera ~= camera then
+            clearCameraWatchdog()
+
             state.lockCamera = camera
             state.lockPreviousCameraType =
                 camera.CameraType
@@ -3660,16 +3841,76 @@ do
         end
 
         if not state.lockCameraOffset then
-            state.lockCameraOffset =
+            local rawOffset =
                 camera.CFrame.Position
                 - root.Position
+
+            local distance =
+                math.max(rawOffset.Magnitude, 1)
+
+            -- Remove Shift Lock's lateral shoulder offset.
+            -- Keep the user's current distance/height instead.
+            local height =
+                math.clamp(
+                    rawOffset.Y,
+                    -distance * 0.9,
+                    distance * 0.9
+                )
+
+            local horizontal =
+                math.sqrt(
+                    math.max(
+                        distance * distance
+                        - height * height,
+                        0.01
+                    )
+                )
+
+            local look =
+                camera.CFrame.LookVector
+
+            local flatLook = Vector3.new(
+                look.X,
+                0,
+                look.Z
+            )
+
+            if flatLook.Magnitude <= 0.01 then
+                flatLook =
+                    -root.CFrame.LookVector
+            else
+                flatLook = flatLook.Unit
+            end
+
+            state.lockCameraOffset =
+                -flatLook * horizontal
+                + Vector3.new(0, height, 0)
         end
 
         camera.CameraType =
             Enum.CameraType.Scriptable
+
+        if not state.lockCameraTypeConnection then
+            state.lockCameraTypeConnection =
+                camera:GetPropertyChangedSignal(
+                    "CameraType"
+                ):Connect(function()
+                    if state.lockActive
+                        and camera.CameraType
+                            ~= Enum.CameraType.Scriptable then
+
+                        pcall(function()
+                            camera.CameraType =
+                                Enum.CameraType.Scriptable
+                        end)
+                    end
+                end)
+        end
     end
 
-    local function updateLockedCamera(
+    local updateLockedCamera
+
+    updateLockedCamera = function(
         root,
         targetPosition
     )
@@ -3697,6 +3938,8 @@ do
             return
         end
 
+        state.lockCameraWriting = true
+
         camera.CFrame =
             CFrame.lookAt(
                 cameraPosition,
@@ -3706,6 +3949,36 @@ do
 
         camera.Focus =
             CFrame.new(targetPosition)
+
+        state.lockCameraWriting = false
+
+        if not state.lockCameraCFrameConnection then
+            state.lockCameraCFrameConnection =
+                camera:GetPropertyChangedSignal(
+                    "CFrame"
+                ):Connect(function()
+                    if not state.lockActive
+                        or state.lockCameraWriting then
+
+                        return
+                    end
+
+                    local target = lockTarget()
+                    local char = character()
+                    local liveRoot =
+                        char
+                        and char:FindFirstChild(
+                            "HumanoidRootPart"
+                        )
+
+                    if target and liveRoot then
+                        updateLockedCamera(
+                            liveRoot,
+                            target.Position
+                        )
+                    end
+                end)
+        end
     end
 
     local function enforceHardLock(
@@ -4210,23 +4483,17 @@ do
             humanoid.FloorMaterial
                 == Enum.Material.Air
 
-        local rising =
+        local verticalSpeed =
             root.AssemblyLinearVelocity.Y
-                >= 2.5
 
-        -- Avoid sending Formless during the tiny state transition where
-        -- Roblox says "Jumping" but the character is effectively grounded.
-        return rise >= 0.32
-            or (
-                realAir
-                and rising
-                and elapsed >= 0.055
+        -- Formless must be pressed during a REAL airborne window.
+        -- This is still frame/event based; there is no fixed pre-skill wait.
+        return realAir
+            and (
+                rise >= 0.55
+                or verticalSpeed >= 5.5
             )
-            or (
-                realAir
-                and rise >= 0.16
-                and elapsed >= 0.075
-            )
+            and elapsed >= 0.045
     end
 
     local function airborneReady(profile, pending, humanoid, root)
@@ -4284,24 +4551,61 @@ do
         return best
     end
 
+    local function touchButton(button, touchId)
+        if not button
+            or not button.Visible then
+
+            return false
+        end
+
+        local point = guiCenter(button)
+
+        local ok = pcall(function()
+            vim:SendTouchEvent(
+                touchId,
+                Enum.UserInputState.Begin.Value,
+                point.X,
+                point.Y
+            )
+
+            task.defer(function()
+                pcall(function()
+                    vim:SendTouchEvent(
+                        touchId,
+                        Enum.UserInputState.End.Value,
+                        point.X,
+                        point.Y
+                    )
+                end)
+            end)
+        end)
+
+        return ok
+    end
+
     local function activateSkillInput(skillName)
+        local button =
+            hotbarButton(skillName)
+
+        if uis.TouchEnabled and button then
+            state.skillTouchId += 1
+
+            return touchButton(
+                button,
+                state.skillTouchId
+            )
+        end
+
         local activated = false
-        local button = hotbarButton(skillName)
 
         if button then
-            local position = button.AbsolutePosition
-            local size = button.AbsoluteSize
-
-            local x =
-                position.X + size.X * 0.5
-
-            local y =
-                position.Y + size.Y * 0.5
+            local point =
+                guiCenter(button)
 
             local ok = pcall(function()
                 vim:SendMouseButtonEvent(
-                    x,
-                    y,
+                    point.X,
+                    point.Y,
                     0,
                     true,
                     game,
@@ -4311,8 +4615,8 @@ do
                 task.defer(function()
                     pcall(function()
                         vim:SendMouseButtonEvent(
-                            x,
-                            y,
+                            point.X,
+                            point.Y,
                             0,
                             false,
                             game,
@@ -4379,22 +4683,13 @@ do
 
             state.shidouDispatchAt = dispatchAt
 
-            activateSkillInput("skill1")
+            local nativeInputWorked =
+                activateSkillInput("skill1")
 
-            task.delay(0.075, function()
-                if not state.enabled
-                    or state.shidouDispatchAt ~= dispatchAt then
-
-                    return
-                end
-
-                if state.shidouTrapAt >= dispatchAt then
-                    return
-                end
-
-                if onCooldown("skill1") then
-                    return
-                end
+            -- On mobile, never follow the real touch with a direct skill1
+            -- remote. Mixing both routes was able to select the normal Bike.
+            if not uis.TouchEnabled
+                and not nativeInputWorked then
 
                 remote:FireServer(
                     buffer.fromstring(buffers["base"]),
@@ -4404,12 +4699,16 @@ do
                         }
                     }
                 )
-            end)
+            end
 
             local token = state.jumpHoldToken
 
-            task.delay(0.16, function()
-                releaseJump(token)
+            -- Correct trap animation releases this much earlier.
+            -- This is only a stuck-input safety net.
+            task.delay(0.55, function()
+                if state.shidouTrapAt < dispatchAt then
+                    releaseJump(token)
+                end
             end)
         end
     end
@@ -4694,7 +4993,7 @@ do
             if style == "Shidou" and state.jumpHeld then
                 local token = state.jumpHoldToken
 
-                task.delay(0.035, function()
+                task.delay(0.045, function()
                     releaseJump(token)
                 end)
             end
