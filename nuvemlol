@@ -3247,8 +3247,10 @@ do
     local lastWildCooldownVisible = false
 
     local pendingWildSide = nil
+    local pendingWildPacket = nil
     local pendingWildAt = 0
     local lastWildAnimationAt = 0
+    local learnedPacketSide = {}
     local generation = 0
 
     local function flatUnit(vector)
@@ -3406,12 +3408,22 @@ do
         return nil
     end
 
-    local function rememberWildIntent(side)
+    local function rememberWildIntent(
+        side,
+        packetBoolean
+    )
         if side ~= 1 and side ~= -1 then
             side = captureWildSide()
         end
 
-        pendingWildSide = side
+        if side == 1 or side == -1 then
+            pendingWildSide = side
+        end
+
+        if type(packetBoolean) == "boolean" then
+            pendingWildPacket = packetBoolean
+        end
+
         pendingWildAt = os.clock()
     end
 
@@ -3419,71 +3431,141 @@ do
         humanoid,
         root,
         token,
-        intentSide
+        intentSide,
+        packetBoolean,
+        capturedRight
     )
-        local right = flatUnit(root.CFrame.RightVector)
+        local right =
+            capturedRight
+            or flatUnit(
+                root.CFrame.RightVector
+            )
 
         if not right then
             return nil
         end
 
-        if intentSide == 1 or intentSide == -1 then
-            return right * intentSide
-        end
+        local startPosition =
+            root.Position
 
-        local currentDot = humanoid.MoveDirection:Dot(right)
+        local observedSide =
+            nil
 
-        if math.abs(currentDot) >= 0.06 then
-            return right * (currentDot > 0 and 1 or -1)
-        end
+        for _ = 1, 6 do
+            RunService.PostSimulation:
+                Wait()
 
-        local startPosition = root.Position
+            if token ~= generation
+                or not root.Parent then
 
-        for _ = 1, 5 do
-            RunService.PostSimulation:Wait()
-
-            if token ~= generation or not root.Parent then
                 return nil
             end
 
-            local liveDot = humanoid.MoveDirection:Dot(right)
+            local delta =
+                Vector3.new(
+                    root.Position.X
+                        - startPosition.X,
+                    0,
+                    root.Position.Z
+                        - startPosition.Z
+                )
 
-            if math.abs(liveDot) >= 0.06 then
-                return right * (liveDot > 0 and 1 or -1)
+            local lateral =
+                delta:
+                Dot(right)
+
+            if math.abs(lateral) >= 0.018 then
+                observedSide =
+                    lateral > 0
+                    and 1
+                    or -1
+
+                break
             end
 
-            local delta = Vector3.new(
-                root.Position.X - startPosition.X,
-                0,
-                root.Position.Z - startPosition.Z
-            )
+            local lateralVelocity =
+                root.AssemblyLinearVelocity:
+                Dot(right)
 
-            local lateral = delta:Dot(right)
+            if math.abs(lateralVelocity) >= 1.0 then
+                observedSide =
+                    lateralVelocity > 0
+                    and 1
+                    or -1
 
-            if math.abs(lateral) >= 0.02 then
-                return right * (lateral > 0 and 1 or -1)
+                break
             end
         end
 
-        local velocity = flatUnit(root.AssemblyLinearVelocity)
+        if observedSide then
+            if type(packetBoolean) == "boolean" then
+                learnedPacketSide[packetBoolean] =
+                    observedSide
 
-        if velocity then
-            local velocityDot = velocity:Dot(right)
-
-            if math.abs(velocityDot) >= 0.10 then
-                return right * (velocityDot > 0 and 1 or -1)
+                learnedPacketSide[not packetBoolean] =
+                    -observedSide
             end
+
+            return right * observedSide
         end
 
-        local ball = getBall()
+        local liveDot =
+            humanoid.MoveDirection:
+            Dot(right)
+
+        if math.abs(liveDot) >= 0.06 then
+            return right
+                * (
+                    liveDot > 0
+                    and 1
+                    or -1
+                )
+        end
+
+        if intentSide == 1
+            or intentSide == -1 then
+
+            return right * intentSide
+        end
+
+        if type(packetBoolean) == "boolean" then
+            local learned =
+                learnedPacketSide[
+                    packetBoolean
+                ]
+
+            if learned == 1
+                or learned == -1 then
+
+                return right * learned
+            end
+
+            return right
+                * (
+                    packetBoolean
+                    and -1
+                    or 1
+                )
+        end
+
+        local ball =
+            getBall()
 
         if ball then
-            local ballSide = (
-                ball.Position - root.Position
-            ):Dot(right)
+            local ballSide =
+                (
+                    ball.Position
+                    - root.Position
+                ):
+                Dot(right)
 
             if math.abs(ballSide) >= 0.05 then
-                return right * (ballSide > 0 and 1 or -1)
+                return right
+                    * (
+                        ballSide > 0
+                        and 1
+                        or -1
+                    )
             end
         end
 
@@ -3545,10 +3627,13 @@ do
     local function onWildAnimation(track)
         if (Distances.wildInstinctsDist or 0) <= 0 then
             pendingWildSide = nil
+            pendingWildPacket = nil
+            pendingWildAt = 0
             return
         end
 
-        local now = os.clock()
+        local now =
+            os.clock()
 
         if now - lastWildAnimationAt < 0.18 then
             return
@@ -3557,36 +3642,65 @@ do
         lastWildAnimationAt = now
         generation += 1
 
-        local token = generation
-        local intentSide = nil
+        local token =
+            generation
+
+        local intentSide =
+            nil
+
+        local packetBoolean =
+            nil
 
         if now - pendingWildAt <= 1.0 then
-            intentSide = pendingWildSide
+            intentSide =
+                pendingWildSide
+
+            packetBoolean =
+                pendingWildPacket
         end
 
         pendingWildSide = nil
+        pendingWildPacket = nil
         pendingWildAt = 0
 
-        task.spawn(function()
-            local _, humanoid, root = getCharacter()
+        local _, humanoid, root =
+            getCharacter()
 
-            if not humanoid or not root then
-                return
-            end
+        if not humanoid or not root then
+            return
+        end
 
-            local direction = chooseWildDirection(
-                humanoid,
-                root,
-                token,
-                intentSide
+        local capturedRight =
+            flatUnit(
+                root.CFrame.RightVector
             )
 
-            if token ~= generation or not direction then
+        if not capturedRight then
+            return
+        end
+
+        cancelBoost(
+            DashConfigs.WildInstincts
+        )
+
+        task.spawn(function()
+            local direction =
+                chooseWildDirection(
+                    humanoid,
+                    root,
+                    token,
+                    intentSide,
+                    packetBoolean,
+                    capturedRight
+                )
+
+            if token ~= generation
+                or not direction
+                or not root.Parent then
+
                 return
             end
 
-            -- The animation is the only thing that starts Wild's boost.
-            -- UI/cooldown/packet detection only records the intended side.
             startBoost(
                 DashConfigs.WildInstincts,
                 direction,
@@ -3673,7 +3787,8 @@ do
 
         local function recordSide()
             rememberWildIntent(
-                captureWildSide()
+                captureWildSide(),
+                nil
             )
         end
 
@@ -3775,7 +3890,8 @@ do
 
         if input.KeyCode == Enum.KeyCode.Three then
             rememberWildIntent(
-                captureWildSide()
+                captureWildSide(),
+                nil
             )
         end
     end)
@@ -3851,7 +3967,8 @@ do
                             end
 
                             rememberWildIntent(
-                                move[2] and -1 or 1
+                                nil,
+                                move[2]
                             )
                         end)
 
@@ -3927,6 +4044,7 @@ do
     Players.LocalPlayer.CharacterAdded:Connect(function(char)
         generation += 1
         pendingWildSide = nil
+        pendingWildPacket = nil
         pendingWildAt = 0
 
         cancelBoost(
@@ -5701,16 +5819,146 @@ do
     local qteEnabled = false
     local renderConnection = nil
     local descendantConnection = nil
+    local watchedObjects = {}
     local activePrompt = false
     local promptToken = 0
     local lastButton = nil
 
-    local qteDelays = {
-        Normal = 0.863,
-        Don = 0.365
-    }
+    local NORMAL_QTE_DELAY = 0.863
+    local DON_QTE_DELAY = 0.3665
 
-    local currentQteMode = "Normal"
+    local function normalizeName(value)
+        return string.lower(
+            tostring(value or "")
+        ):gsub("[^%w]", "")
+    end
+
+    local function isDonText(value)
+        local s = normalizeName(value)
+
+        return s == "donlorenzo"
+            or s == "donlorenzomastery"
+            or s == "masterylorenzo"
+            or string.find(
+                s,
+                "donlorenzo",
+                1,
+                true
+            ) ~= nil
+            or string.find(
+                s,
+                "zombiedribble",
+                1,
+                true
+            ) ~= nil
+    end
+
+    local function objectLooksLikeDon(object)
+        if not object then
+            return false
+        end
+
+        if isDonText(object.Name) then
+            return true
+        end
+
+        for name, value in pairs(
+            object:GetAttributes()
+        ) do
+            if isDonText(name)
+                or isDonText(value) then
+                return true
+            end
+        end
+
+        if object:IsA("StringValue")
+            and isDonText(object.Value) then
+            return true
+        end
+
+        if (
+            object:IsA("TextLabel")
+            or object:IsA("TextButton")
+        )
+            and isDonText(object.Text) then
+            return true
+        end
+
+        return false
+    end
+
+    local function scanTree(root)
+        if not root then
+            return false
+        end
+
+        if objectLooksLikeDon(root) then
+            return true
+        end
+
+        for _, object in ipairs(
+            root:GetDescendants()
+        ) do
+            if objectLooksLikeDon(object) then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function isDonLorenzo()
+        if objectLooksLikeDon(LocalPlayer) then
+            return true
+        end
+
+        local character =
+            LocalPlayer.Character
+
+        if scanTree(character) then
+            return true
+        end
+
+        local charactersFolder =
+            workspace:
+            FindFirstChild("characters")
+
+        local workspaceCharacter =
+            charactersFolder
+            and charactersFolder:
+                FindFirstChild(
+                    LocalPlayer.Name
+                )
+
+        if workspaceCharacter ~= character
+            and scanTree(workspaceCharacter) then
+            return true
+        end
+
+        local playerGui =
+            LocalPlayer:
+            FindFirstChild("PlayerGui")
+
+        if playerGui then
+            local hotbar =
+                playerGui:
+                FindFirstChild("Hotbar")
+
+            if scanTree(hotbar) then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function getCurrentDelay()
+        if isDonLorenzo() then
+            return DON_QTE_DELAY
+        end
+
+        return NORMAL_QTE_DELAY
+    end
 
     local function isVisibleThroughParents(object)
         local current = object
@@ -5735,18 +5983,24 @@ do
     end
 
     local function findQTE()
-        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        local playerGui =
+            LocalPlayer:
+            FindFirstChild("PlayerGui")
 
         if not playerGui then
-            return nil, nil
+            return nil, nil, nil
         end
 
         local qteGui =
-            playerGui:FindFirstChild("Qte")
-            or playerGui:FindFirstChild("QTE")
+            playerGui:
+            FindFirstChild("Qte")
+            or playerGui:
+                FindFirstChild("QTE")
 
         if not qteGui then
-            for _, object in ipairs(playerGui:GetDescendants()) do
+            for _, object in ipairs(
+                playerGui:GetDescendants()
+            ) do
                 if (
                     object.Name == "Qte"
                     or object.Name == "QTE"
@@ -5762,27 +6016,34 @@ do
             end
         end
 
-        if not qteGui
-            or not isVisibleThroughParents(qteGui) then
-            return nil, nil
+        if not qteGui then
+            return nil, nil, nil
         end
 
         local qteGroup =
-            qteGui:FindFirstChild("QTE")
-            or qteGui:FindFirstChild("CanvasGroup")
+            qteGui:
+            FindFirstChild("QTE")
+            or qteGui:
+                FindFirstChild(
+                    "CanvasGroup"
+                )
             or qteGui
 
-        local targetButton = qteGroup:FindFirstChild("Button")
+        local targetButton =
+            qteGroup:
+            FindFirstChild("Button")
 
         if not targetButton
-            or not targetButton:IsA("GuiButton") then
+            or not targetButton:
+                IsA("GuiButton") then
 
             targetButton = nil
 
-            for _, object in ipairs(qteGui:GetDescendants()) do
+            for _, object in ipairs(
+                qteGui:GetDescendants()
+            ) do
                 if object:IsA("GuiButton")
-                    and object.Name == "Button"
-                    and isVisibleThroughParents(object) then
+                    and object.Name == "Button" then
 
                     targetButton = object
                     break
@@ -5790,7 +6051,33 @@ do
             end
         end
 
-        return qteGui, targetButton
+        return qteGui, qteGroup, targetButton
+    end
+
+    local function promptIsVisible()
+        local qteGui, qteGroup, button =
+            findQTE()
+
+        if not qteGui or not button then
+            return false, qteGui, qteGroup, button
+        end
+
+        if not isVisibleThroughParents(qteGui)
+            or not isVisibleThroughParents(button) then
+
+            return false, qteGui, qteGroup, button
+        end
+
+        if qteGroup
+            and qteGroup:IsA("GuiObject")
+            and not isVisibleThroughParents(
+                qteGroup
+            ) then
+
+            return false, qteGui, qteGroup, button
+        end
+
+        return true, qteGui, qteGroup, button
     end
 
     local function fireButtonSignal(button)
@@ -5807,19 +6094,13 @@ do
                 button.MouseButton1Click
             )
 
-            local ok3 = pcall(
-                firesignal,
-                button.MouseButton1Down
-            )
-
-            fired = ok1 or ok2 or ok3
+            fired = ok1 or ok2
         end
 
         if type(getconnections) == "function" then
             for _, signal in ipairs({
                 button.Activated,
-                button.MouseButton1Click,
-                button.MouseButton1Down
+                button.MouseButton1Click
             }) do
                 local ok, list = pcall(
                     getconnections,
@@ -5827,17 +6108,34 @@ do
                 )
 
                 if ok and type(list) == "table" then
-                    for _, conn in ipairs(list) do
-                        local success = pcall(function()
-                            if type(conn.Fire) == "function" then
-                                conn:Fire()
+                    for _, connection in ipairs(list) do
+                        local invoked = false
 
-                            elseif type(conn.Function) == "function" then
-                                conn.Function()
-                            end
-                        end)
+                        local success =
+                            pcall(function()
+                                if type(
+                                    connection.Fire
+                                ) == "function" then
 
-                        fired = fired or success
+                                    connection:
+                                        Fire()
+
+                                    invoked = true
+
+                                elseif type(
+                                    connection.Function
+                                ) == "function" then
+
+                                    connection:
+                                        Function()
+
+                                    invoked = true
+                                end
+                            end)
+
+                        if success and invoked then
+                            fired = true
+                        end
                     end
                 end
             end
@@ -5848,148 +6146,249 @@ do
 
     local function physicalClick(button)
         return pcall(function()
-            local vim = game:GetService("VirtualInputManager")
+            local vim =
+                game:
+                GetService(
+                    "VirtualInputManager"
+                )
 
             local center =
                 button.AbsolutePosition
                 + button.AbsoluteSize / 2
 
-            vim:SendMouseButtonEvent(
-                center.X,
-                center.Y,
-                0,
-                true,
-                game,
-                0
-            )
+            vim:
+                SendMouseButtonEvent(
+                    center.X,
+                    center.Y,
+                    0,
+                    true,
+                    game,
+                    0
+                )
 
-            RunService.RenderStepped:Wait()
-
-            vim:SendMouseButtonEvent(
-                center.X,
-                center.Y,
-                0,
-                false,
-                game,
-                0
-            )
+            vim:
+                SendMouseButtonEvent(
+                    center.X,
+                    center.Y,
+                    0,
+                    false,
+                    game,
+                    0
+                )
         end)
     end
 
     local function activateButton(button)
         if not button
             or not button.Parent
-            or not isVisibleThroughParents(button) then
+            or not isVisibleThroughParents(
+                button
+            ) then
+
             return
         end
 
-        local signalWorked = fireButtonSignal(button)
-
-        if not signalWorked then
+        if not fireButtonSignal(button) then
             physicalClick(button)
         end
     end
 
-    local function beginPrompt(button)
+    local function cancelPrompt()
+        activePrompt = false
+        lastButton = nil
+        promptToken += 1
+    end
+
+    local function beginPrompt(
+        startedAt,
+        knownButton
+    )
         if not qteEnabled
-            or activePrompt
-            or not button
-            or not button.Parent then
+            or activePrompt then
             return
         end
 
         activePrompt = true
-        lastButton = button
+        lastButton = knownButton
         promptToken += 1
 
-        local myToken = promptToken
-        local detectedAt = os.clock()
+        local myToken =
+            promptToken
+
+        local targetTime =
+            (startedAt or os.clock())
+            + getCurrentDelay()
 
         task.spawn(function()
-            local qteDelay =
-                qteDelays[currentQteMode]
-                or qteDelays.Normal
+            while qteEnabled
+                and myToken
+                    == promptToken do
 
-            local targetTime =
-                detectedAt
-                + qteDelay
-
-            while qteEnabled and myToken == promptToken do
-                local remaining = targetTime - os.clock()
+                local remaining =
+                    targetTime
+                    - os.clock()
 
                 if remaining <= 0 then
                     break
                 end
 
-                if remaining > 0.035 then
+                if remaining > 0.030 then
                     task.wait(
                         math.max(
-                            remaining - 0.020,
+                            remaining
+                                - 0.015,
                             0
                         )
                     )
                 else
-                    RunService.Heartbeat:Wait()
+                    RunService.PreRender:
+                        Wait()
                 end
             end
 
             if not qteEnabled
-                or myToken ~= promptToken then
+                or myToken
+                    ~= promptToken then
                 return
             end
 
-            local _, liveButton = findQTE()
+            local visible, _, _, liveButton =
+                promptIsVisible()
 
-            if liveButton and liveButton.Parent then
-                activateButton(liveButton)
+            if visible
+                and liveButton
+                and liveButton.Parent then
+
+                activateButton(
+                    liveButton
+                )
             end
         end)
     end
 
-    local function probeQTE()
+    local function probeQTE(eventTime)
         if not qteEnabled then
             return
         end
 
-        local _, button = findQTE()
+        local visible, _, _, button =
+            promptIsVisible()
 
-        if not button then
+        if not visible then
             if activePrompt then
-                activePrompt = false
-                lastButton = nil
-                promptToken += 1
+                cancelPrompt()
             end
 
             return
         end
 
         if not activePrompt then
-            beginPrompt(button)
+            beginPrompt(
+                eventTime
+                    or os.clock(),
+                button
+            )
+        elseif button
+            and lastButton ~= button then
 
-        elseif lastButton ~= button then
-            activePrompt = false
-            beginPrompt(button)
+            lastButton = button
+        end
+    end
+
+    local function watchObject(object)
+        if not object
+            or watchedObjects[object] then
+            return
+        end
+
+        watchedObjects[object] = true
+
+        if object:IsA("ScreenGui") then
+            object:
+                GetPropertyChangedSignal(
+                    "Enabled"
+                ):
+                Connect(function()
+                    if not qteEnabled then
+                        return
+                    end
+
+                    local eventTime =
+                        os.clock()
+
+                    if object.Enabled then
+                        probeQTE(eventTime)
+                    else
+                        probeQTE()
+                    end
+                end)
+        end
+
+        if object:IsA("GuiObject") then
+            object:
+                GetPropertyChangedSignal(
+                    "Visible"
+                ):
+                Connect(function()
+                    if not qteEnabled then
+                        return
+                    end
+
+                    local eventTime =
+                        os.clock()
+
+                    if object.Visible then
+                        probeQTE(eventTime)
+                    else
+                        probeQTE()
+                    end
+                end)
+        end
+    end
+
+    local function refreshWatchers()
+        local qteGui, qteGroup, button =
+            findQTE()
+
+        watchObject(qteGui)
+        watchObject(qteGroup)
+        watchObject(button)
+
+        if qteGui then
+            for _, object in ipairs(
+                qteGui:GetDescendants()
+            ) do
+                if object.Name == "QTE"
+                    or object.Name == "CanvasGroup"
+                    or object.Name == "Button" then
+
+                    watchObject(object)
+                end
+            end
         end
     end
 
     local function disconnectQTE()
         if renderConnection then
-            renderConnection:Disconnect()
+            renderConnection:
+                Disconnect()
+
             renderConnection = nil
         end
 
         if descendantConnection then
-            descendantConnection:Disconnect()
+            descendantConnection:
+                Disconnect()
+
             descendantConnection = nil
         end
 
-        activePrompt = false
-        lastButton = nil
-        promptToken += 1
+        cancelPrompt()
     end
 
     local function setQTEEnabled(value)
-        qteEnabled = value == true
+        qteEnabled =
+            value == true
 
         disconnectQTE()
 
@@ -5997,36 +6396,42 @@ do
             return
         end
 
-        local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+        local playerGui =
+            LocalPlayer:
+            WaitForChild(
+                "PlayerGui"
+            )
 
         descendantConnection =
             playerGui.DescendantAdded:
             Connect(function(object)
                 if object.Name == "Qte"
                     or object.Name == "QTE"
+                    or object.Name == "CanvasGroup"
                     or object.Name == "Button"
                     or object:IsA("GuiButton") then
 
-                    task.defer(probeQTE)
+                    watchObject(object)
+
+                    task.defer(function()
+                        refreshWatchers()
+                        probeQTE(
+                            os.clock()
+                        )
+                    end)
                 end
             end)
 
         renderConnection =
             RunService.RenderStepped:
-            Connect(probeQTE)
+            Connect(function()
+                refreshWatchers()
+                probeQTE()
+            end)
 
+        refreshWatchers()
         task.defer(probeQTE)
     end
-
-    othersil:Dropdown(
-        "Auto QuickTimeEvent Mode",
-        {"Normal", "Don"},
-        function(value)
-            if qteDelays[value] then
-                currentQteMode = value
-            end
-        end
-    )
 
     othersil:Toggle(
         "Auto QuickTimeEvent",
