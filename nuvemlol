@@ -135,6 +135,139 @@ local StarterGui = game:GetService("StarterGui")
 
 do
     local testtab = win:Tab("Tests")
+
+    task.defer(function()
+        local localPlayer = Players.LocalPlayer
+        local darkUI =
+            game:GetService("CoreGui"):FindFirstChild("dark_UI")
+            or localPlayer.PlayerGui:FindFirstChild("dark_UI")
+
+        local main =
+            darkUI
+            and darkUI:FindFirstChild("main")
+
+        local tabs =
+            main
+            and main:FindFirstChild("tabContainer")
+
+        if not tabs then
+            return
+        end
+
+        local layout =
+            tabs:FindFirstChildOfClass("UIListLayout")
+
+        local padding =
+            tabs:FindFirstChildOfClass("UIPadding")
+
+        if not layout or not padding then
+            return
+        end
+
+        local oldLeft =
+            main:FindFirstChild("tabPageLeft")
+
+        local oldRight =
+            main:FindFirstChild("tabPageRight")
+
+        if oldLeft then
+            oldLeft:Destroy()
+        end
+
+        if oldRight then
+            oldRight:Destroy()
+        end
+
+        tabs.ClipsDescendants = true
+        tabs.Size = UDim2.fromOffset(350, 30)
+
+        local left = Instance.new("TextButton")
+        left.Name = "tabPageLeft"
+        left.Text = "‹"
+        left.Font = Enum.Font.GothamBold
+        left.TextSize = 22
+        left.TextColor3 = Color3.fromRGB(220, 220, 220)
+        left.BackgroundColor3 = tabs.BackgroundColor3
+        left.AutoButtonColor = false
+        left.Size = UDim2.fromOffset(30, 30)
+        left.Position = UDim2.new(0, 372, 0.188, 0)
+        left.Parent = main
+
+        local leftCorner = Instance.new("UICorner")
+        leftCorner.CornerRadius = UDim.new(0, 6)
+        leftCorner.Parent = left
+
+        local right = Instance.new("TextButton")
+        right.Name = "tabPageRight"
+        right.Text = "›"
+        right.Font = Enum.Font.GothamBold
+        right.TextSize = 22
+        right.TextColor3 = Color3.fromRGB(220, 220, 220)
+        right.BackgroundColor3 = tabs.BackgroundColor3
+        right.AutoButtonColor = false
+        right.Size = UDim2.fromOffset(30, 30)
+        right.Position = UDim2.new(0, 405, 0.188, 0)
+        right.Parent = main
+
+        local rightCorner = Instance.new("UICorner")
+        rightCorner.CornerRadius = UDim.new(0, 6)
+        rightCorner.Parent = right
+
+        local offset = 0
+
+        local function maxOffset()
+            return math.max(
+                0,
+                layout.AbsoluteContentSize.X
+                    - tabs.AbsoluteSize.X
+                    + 14
+            )
+        end
+
+        local function update()
+            local maximum = maxOffset()
+
+            offset = math.clamp(
+                offset,
+                0,
+                maximum
+            )
+
+            padding.PaddingLeft =
+                UDim.new(
+                    0,
+                    7 - offset
+                )
+
+            left.TextTransparency =
+                offset > 0
+                and 0
+                or 0.7
+
+            right.TextTransparency =
+                offset < maximum - 1
+                and 0
+                or 0.7
+        end
+
+        left.MouseButton1Click:Connect(function()
+            offset -= 260
+            update()
+        end)
+
+        right.MouseButton1Click:Connect(function()
+            offset += 260
+            update()
+        end)
+
+        layout:GetPropertyChangedSignal(
+            "AbsoluteContentSize"
+        ):Connect(update)
+
+        task.wait()
+        update()
+    end)
+
     local kunigamiTests = testtab:Folder(
         "Kunigami",
         Color3.fromRGB(24, 255, 228),
@@ -142,358 +275,369 @@ do
     )
 
     local heroicClashSize = 0
-    local armedUntil = 0
-    local scanCount = 0
+    local heroicClashUntil = 0
+    local heroicAnimationConnection = nil
+    local seenQueries = {}
+    local nearbyParts = 0
 
-    local skill2 = nil
-    local skill2Connections = {}
+    local HEROIC_CLASH_ANIMATION =
+        "101568232677122"
 
-    local tracked = setmetatable({}, {
-        __mode = "k"
-    })
-
-    local originals = setmetatable({}, {
-        __mode = "k"
-    })
-
-    local function vecText(vector)
+    local function fmtVector(vector)
         return string.format(
-            "%.2f, %.2f, %.2f",
+            "%.2f x %.2f x %.2f",
             vector.X,
             vector.Y,
             vector.Z
         )
     end
 
-    local function getRoot()
-        local character = Players.LocalPlayer.Character
-
-        return character
-            and character:FindFirstChild("HumanoidRootPart")
-            or nil
-    end
-
-    local function stopTracking(part, restore)
-        local data = tracked[part]
-
-        if not data then
-            return
-        end
-
-        if data.connection then
-            data.connection:Disconnect()
-        end
-
-        if data.destroying then
-            data.destroying:Disconnect()
-        end
-
-        tracked[part] = nil
-
-        if not restore
-            or not part
-            or part.Parent == nil then
-
-            return
-        end
-
-        local original = originals[part]
-
-        if not original then
-            return
-        end
-
-        pcall(function()
-            part.Size = original.Size
-            part.Transparency = original.Transparency
-            part.Color = original.Color
-            part.CanCollide = original.CanCollide
-            part.CanTouch = original.CanTouch
-            part.CanQuery = original.CanQuery
-        end)
-    end
-
-    local function candidate(part)
-        if not part:IsA("BasePart") then
-            return false
-        end
-
-        local name = string.lower(part.Name)
-
-        if name == "whiff"
-            or string.find(name, "hitbox", 1, true) then
-
-            return true
-        end
-
-        local parent = part.Parent
-
-        for _ = 1, 3 do
-            if not parent then
-                break
-            end
-
-            local parentName = string.lower(parent.Name)
-
-            if string.find(parentName, "heroic", 1, true)
-                or string.find(parentName, "clash", 1, true) then
-
-                return true
-            end
-
-            parent = parent.Parent
-        end
-
-        return false
-    end
-
-    local function applyHitbox(part)
-        if heroicClashSize <= 0
-            or os.clock() > armedUntil
-            or tracked[part]
-            or not part.Parent then
-
-            return
-        end
-
-        local root = getRoot()
-
-        if root
-            and (part.Position - root.Position).Magnitude > 90 then
-
-            return
-        end
-
-        originals[part] = {
-            Size = part.Size,
-            Transparency = part.Transparency,
-            Color = part.Color,
-            CanCollide = part.CanCollide,
-            CanTouch = part.CanTouch,
-            CanQuery = part.CanQuery
-        }
-
-        warn(
-            "Heroic Clash hitbox: "
-            .. part.Name
-            .. " | normal size: "
-            .. vecText(part.Size)
-            .. " | new size: "
-            .. tostring(heroicClashSize)
-        )
-
-        local data = {}
-
-        data.destroying = part.Destroying:Connect(function()
-            stopTracking(
-                part,
-                false
-            )
-        end)
-
-        data.connection = RunService.Heartbeat:Connect(function()
-            if heroicClashSize <= 0
-                or os.clock() > armedUntil then
-
-                stopTracking(
-                    part,
-                    true
-                )
-
-                return
-            end
-
-            if not part.Parent then
-                stopTracking(
-                    part,
-                    false
-                )
-
-                return
-            end
-
-            pcall(function()
-                part.Size = Vector3.new(
-                    heroicClashSize,
-                    heroicClashSize,
-                    heroicClashSize
-                )
-
-                part.CanCollide = false
-            end)
-        end)
-
-        tracked[part] = data
-    end
-
-    local function inspect(part)
-        if heroicClashSize <= 0
-            or os.clock() > armedUntil
-            or not part:IsA("BasePart")
-            or not part.Parent then
-
-            return
-        end
-
-        local root = getRoot()
-
-        if not root then
-            return
-        end
-
-        local distance = (part.Position - root.Position).Magnitude
-
-        if distance > 90 then
-            return
-        end
-
-        if candidate(part) then
-            applyHitbox(part)
-            return
-        end
-
-        if scanCount < 16
-            and distance <= 30 then
-
-            scanCount += 1
-
-            warn(
-                "Heroic Clash scan: "
-                .. part.Name
-                .. " | size: "
-                .. vecText(part.Size)
-            )
-        end
-    end
-
-    local function arm()
+    local function armHeroicClash(source)
         if heroicClashSize <= 0 then
             return
         end
 
-        armedUntil = os.clock() + 1.8
-        scanCount = 0
+        heroicClashUntil =
+            os.clock() + 1.4
+
+        table.clear(seenQueries)
+        nearbyParts = 0
+
+        print(
+            "Heroic Clash detected ("
+            .. tostring(source)
+            .. ")"
+        )
     end
 
-    local function clearSkill2()
-        for _, connection in ipairs(skill2Connections) do
-            connection:Disconnect()
-        end
+    local function logQuery(kind, value)
+        local key =
+            kind
+            .. ":"
+            .. tostring(value)
 
-        table.clear(skill2Connections)
-        skill2 = nil
-    end
-
-    local function findSkill2()
-        local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
-        local hotbar = playerGui and playerGui:FindFirstChild("Hotbar")
-        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
-        local inner = backpack and backpack:FindFirstChild("Hotbar")
-
-        return inner
-            and inner:FindFirstChild("skill2")
-            or nil
-    end
-
-    local function hookSkill2(slot)
-        if slot == skill2 then
+        if seenQueries[key] then
             return
         end
 
-        clearSkill2()
+        seenQueries[key] = true
 
-        if not slot then
+        print(
+            "Heroic Clash "
+            .. kind
+            .. ": "
+            .. tostring(value)
+        )
+    end
+
+    local function hookAnimator(character)
+        if heroicAnimationConnection then
+            heroicAnimationConnection:Disconnect()
+            heroicAnimationConnection = nil
+        end
+
+        local humanoid =
+            character:WaitForChild("Humanoid", 5)
+
+        if not humanoid then
             return
         end
 
-        skill2 = slot
+        local animator =
+            humanoid:FindFirstChildOfClass("Animator")
+            or humanoid:WaitForChild("Animator", 5)
 
-        if slot:IsA("GuiObject") then
-            table.insert(
-                skill2Connections,
-                slot.InputBegan:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.Touch
-                        or input.UserInputType == Enum.UserInputType.MouseButton1 then
-
-                        arm()
-                    end
-                end)
-            )
+        if not animator then
+            return
         end
 
-        for _, object in ipairs(slot:GetDescendants()) do
-            if object:IsA("GuiButton") then
-                table.insert(
-                    skill2Connections,
-                    object.Activated:Connect(arm)
-                )
+        heroicAnimationConnection =
+            animator.AnimationPlayed:Connect(function(track)
+                local animation = track.Animation
 
-                table.insert(
-                    skill2Connections,
-                    object.InputBegan:Connect(function(input)
-                        if input.UserInputType == Enum.UserInputType.Touch
-                            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if not animation then
+                    return
+                end
 
-                            arm()
-                        end
-                    end)
-                )
-            end
-        end
+                local id =
+                    tostring(
+                        animation.AnimationId
+                    ):match("%d+")
 
-        local cooldown = slot:FindFirstChild("Cooldown", true)
-
-        if cooldown and cooldown:IsA("GuiObject") then
-            local lastVisible = cooldown.Visible
-
-            table.insert(
-                skill2Connections,
-                cooldown:GetPropertyChangedSignal("Visible"):Connect(function()
-                    local visible = cooldown.Visible
-
-                    if visible and not lastVisible then
-                        arm()
-                    end
-
-                    lastVisible = visible
-                end)
-            )
-        end
+                if id == HEROIC_CLASH_ANIMATION then
+                    armHeroicClash("animation")
+                end
+            end)
     end
+
+    if Players.LocalPlayer.Character then
+        task.defer(
+            hookAnimator,
+            Players.LocalPlayer.Character
+        )
+    end
+
+    Players.LocalPlayer.CharacterAdded:Connect(function(character)
+        task.defer(
+            hookAnimator,
+            character
+        )
+    end)
 
     Workspace.DescendantAdded:Connect(function(object)
         if heroicClashSize <= 0
-            or os.clock() > armedUntil
+            or os.clock() > heroicClashUntil
             or not object:IsA("BasePart") then
 
             return
         end
 
-        task.defer(
-            inspect,
-            object
-        )
-    end)
-
-    RunService.Heartbeat:Connect(function()
-        local current = findSkill2()
-
-        if current ~= skill2 then
-            hookSkill2(current)
+        if nearbyParts >= 18 then
+            return
         end
-    end)
 
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed
-            or heroicClashSize <= 0 then
+        local character =
+            Players.LocalPlayer.Character
+
+        local root =
+            character
+            and character:FindFirstChild("HumanoidRootPart")
+
+        if not root then
+            return
+        end
+
+        if (
+            object.Position
+            - root.Position
+        ).Magnitude > 35 then
 
             return
         end
 
-        if input.KeyCode == Enum.KeyCode.Two then
-            arm()
-        end
+        nearbyParts += 1
+
+        print(
+            "Heroic Clash part: "
+            .. object.Name
+            .. " | "
+            .. fmtVector(
+                object.Size
+            )
+        )
     end)
+
+    do
+        local remote =
+            ReplicatedStorage:FindFirstChild("ByteNetReliable")
+
+        if remote
+            and type(hookmetamethod) == "function"
+            and type(getnamecallmethod) == "function" then
+
+            local oldNamecall
+
+            local replacement =
+                function(self, ...)
+                    local method =
+                        getnamecallmethod()
+
+                    local args =
+                        table.pack(...)
+
+                    if self == remote
+                        and method == "FireServer" then
+
+                        local packet =
+                            args[1]
+
+                        local payload =
+                            args[2]
+
+                        local okLength, length =
+                            pcall(
+                                buffer.len,
+                                packet
+                            )
+
+                        if okLength
+                            and length == 2 then
+
+                            local okA, a =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    0
+                                )
+
+                            local okB, b =
+                                pcall(
+                                    buffer.readu8,
+                                    packet,
+                                    1
+                                )
+
+                            local move =
+                                type(payload) == "table"
+                                and payload[1]
+                                or nil
+
+                            if okA
+                                and okB
+                                and a == 25
+                                and b == 1
+                                and type(move) == "table"
+                                and move[1] == "skill3"
+                                and type(move[2]) == "boolean" then
+
+                                armHeroicClash(
+                                    move[2]
+                                    and "left"
+                                    or "right"
+                                )
+                            end
+                        end
+
+                    elseif self == Workspace
+                        and os.clock() <= heroicClashUntil then
+
+                        if method == "GetPartBoundsInBox"
+                            and typeof(args[2]) == "Vector3" then
+
+                            local normalSize = args[2]
+
+                            logQuery(
+                                "box",
+                                fmtVector(normalSize)
+                            )
+
+                            if heroicClashSize > 0 then
+                                args[2] =
+                                    Vector3.new(
+                                        heroicClashSize,
+                                        heroicClashSize,
+                                        heroicClashSize
+                                    )
+                            end
+
+                            return oldNamecall(
+                                self,
+                                table.unpack(
+                                    args,
+                                    1,
+                                    args.n
+                                )
+                            )
+
+                        elseif method == "GetPartBoundsInRadius"
+                            and type(args[2]) == "number" then
+
+                            logQuery(
+                                "radius",
+                                string.format(
+                                    "%.2f",
+                                    args[2]
+                                )
+                            )
+
+                            if heroicClashSize > 0 then
+                                args[2] =
+                                    heroicClashSize
+                            end
+
+                            return oldNamecall(
+                                self,
+                                table.unpack(
+                                    args,
+                                    1,
+                                    args.n
+                                )
+                            )
+
+                        elseif method == "GetPartsInPart"
+                            and typeof(args[1]) == "Instance"
+                            and args[1]:IsA("BasePart") then
+
+                            local hitboxPart =
+                                args[1]
+
+                            local normalSize =
+                                hitboxPart.Size
+
+                            logQuery(
+                                "part box",
+                                hitboxPart.Name
+                                .. " | "
+                                .. fmtVector(normalSize)
+                            )
+
+                            if heroicClashSize > 0
+                                and hitboxPart.Parent then
+
+                                local changed =
+                                    pcall(function()
+                                        hitboxPart.Size =
+                                            Vector3.new(
+                                                heroicClashSize,
+                                                heroicClashSize,
+                                                heroicClashSize
+                                            )
+                                    end)
+
+                                local results =
+                                    table.pack(
+                                        oldNamecall(
+                                            self,
+                                            table.unpack(
+                                                args,
+                                                1,
+                                                args.n
+                                            )
+                                        )
+                                    )
+
+                                if changed
+                                    and hitboxPart.Parent then
+
+                                    pcall(function()
+                                        hitboxPart.Size =
+                                            normalSize
+                                    end)
+                                end
+
+                                return table.unpack(
+                                    results,
+                                    1,
+                                    results.n
+                                )
+                            end
+                        end
+                    end
+
+                    return oldNamecall(
+                        self,
+                        ...
+                    )
+                end
+
+            if type(newcclosure) == "function" then
+                replacement =
+                    newcclosure(replacement)
+            end
+
+            local okHook, original =
+                pcall(
+                    hookmetamethod,
+                    game,
+                    "__namecall",
+                    replacement
+                )
+
+            if okHook and original then
+                oldNamecall = original
+            end
+        end
+    end
 
     kunigamiTests:Slider(
         "Heroic Clash Hitbox Increase",
@@ -502,22 +646,13 @@ do
         500,
         1,
         function(value)
-            heroicClashSize = math.clamp(
-                tonumber(value) or 0,
-                0,
-                500
-            )
-
-            if heroicClashSize <= 0 then
-                armedUntil = 0
-
-                for part in pairs(tracked) do
-                    stopTracking(
-                        part,
-                        true
-                    )
-                end
-            end
+            heroicClashSize =
+                math.clamp(
+                    tonumber(value)
+                        or 0,
+                    0,
+                    500
+                )
         end
     )
 end
