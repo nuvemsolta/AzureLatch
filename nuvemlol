@@ -2780,6 +2780,473 @@ if game:GetService("Players").LocalPlayer.Character then
     killthemNOW()
 end
 
+do
+    local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
+    at:Label("Auto Trap: Automatically Uses Trap On Air Balls.")
+
+    local state = {
+        enabled = false,
+        moveNumber = 1,
+        range = 18,
+        lastHolder = nil,
+        ownReleaseUntil = 0,
+        ball = nil,
+        lastPosition = nil,
+        lastPositionTime = 0,
+        observedVelocity = Vector3.zero,
+        attemptedBall = nil,
+        lockBall = nil,
+        lockTrack = nil,
+        lockConfirmed = false,
+        lockStarted = 0,
+        lockPendingUntil = 0,
+        cooldownObject = nil,
+        cooldownSkill = nil,
+        animatorConnection = nil
+    }
+
+    local ps = game:GetService("Players")
+    local rs = game:GetService("ReplicatedStorage")
+    local run = game:GetService("RunService")
+    local ws = game:GetService("Workspace")
+
+    local lp = ps.LocalPlayer
+    local terrain = ws.Terrain
+    local remote = rs:WaitForChild("ByteNetReliable")
+    local holderFolder = rs:FindFirstChild("workspace")
+    local ballHolder = holderFolder and holderFolder:FindFirstChild("ballHolder")
+    local lockName = "CeleronAutoTrapCamera"
+
+    local trapAnimations = {
+        ["rbxassetid://73387016994281"] = true,
+        ["rbxassetid://101043441232233"] = true,
+        ["rbxassetid://96593185131882"] = true,
+        ["rbxassetid://116422938520670"] = true,
+        ["rbxassetid://90734196141468"] = true,
+        ["rbxassetid://85349589701503"] = true,
+        ["rbxassetid://120351399679118"] = true
+    }
+
+    local function character()
+        return lp.Character
+    end
+
+    local function hasBall()
+        local char = character()
+        if not char then return false end
+        if char:FindFirstChild("Ball") then return true end
+        return ballHolder and ballHolder.Value == char
+    end
+
+    local function findBall()
+        local ball = terrain:FindFirstChild("Ball")
+        if ball and ball:IsA("BasePart") then
+            return ball
+        end
+
+        ball = ws:FindFirstChild("Ball", true)
+        if ball and ball:IsA("BasePart") then
+            return ball
+        end
+    end
+
+    local function clearCooldown()
+        state.cooldownObject = nil
+        state.cooldownSkill = nil
+    end
+
+    local function getCooldown()
+        local skillName = "skill" .. tostring(state.moveNumber)
+
+        if state.cooldownObject
+            and state.cooldownObject.Parent
+            and state.cooldownSkill == skillName then
+
+            return state.cooldownObject
+        end
+
+        clearCooldown()
+
+        local pg = lp:FindFirstChild("PlayerGui")
+        local hotbar = pg and pg:FindFirstChild("Hotbar")
+        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+        local slots = backpack and backpack:FindFirstChild("Hotbar")
+        local slot = slots and slots:FindFirstChild(skillName)
+        local cooldown = slot and slot:FindFirstChild("Cooldown", true)
+
+        if cooldown and cooldown:IsA("GuiObject") then
+            state.cooldownObject = cooldown
+            state.cooldownSkill = skillName
+            return cooldown
+        end
+    end
+
+    local function onCooldown()
+        local cooldown = getCooldown()
+        return cooldown and cooldown.Visible == true
+    end
+
+    local function stopLock()
+        pcall(function()
+            run:UnbindFromRenderStep(lockName)
+        end)
+
+        state.lockBall = nil
+        state.lockTrack = nil
+        state.lockConfirmed = false
+        state.lockStarted = 0
+        state.lockPendingUntil = 0
+    end
+
+    local function startLock(ball, track, confirmed)
+        if not ball or not ball.Parent then
+            return
+        end
+
+        pcall(function()
+            run:UnbindFromRenderStep(lockName)
+        end)
+
+        state.lockBall = ball
+        state.lockTrack = track
+        state.lockConfirmed = confirmed == true
+        state.lockStarted = os.clock()
+        state.lockPendingUntil = state.lockConfirmed and 0 or state.lockStarted + 0.38
+
+        run:BindToRenderStep(
+            lockName,
+            Enum.RenderPriority.Camera.Value + 1,
+            function()
+                if not state.enabled or hasBall() then
+                    stopLock()
+                    return
+                end
+
+                local target = state.lockBall
+                if not target or not target.Parent then
+                    stopLock()
+                    return
+                end
+
+                if state.lockConfirmed then
+                    if state.lockTrack and not state.lockTrack.IsPlaying then
+                        stopLock()
+                        return
+                    end
+                elseif os.clock() > state.lockPendingUntil then
+                    stopLock()
+                    return
+                end
+
+                if os.clock() - state.lockStarted > 3 then
+                    stopLock()
+                    return
+                end
+
+                local camera = ws.CurrentCamera
+                if not camera then return end
+
+                local cameraPosition = camera.CFrame.Position
+                local targetPosition = target.Position
+
+                if (targetPosition - cameraPosition).Magnitude > 0.01 then
+                    camera.CFrame = CFrame.lookAt(
+                        cameraPosition,
+                        targetPosition,
+                        Vector3.yAxis
+                    )
+                end
+            end
+        )
+    end
+
+    local function oneWayPing()
+        local ping = 0
+        pcall(function()
+            ping = lp:GetNetworkPing() * 0.5
+        end)
+        return math.clamp(ping, 0, 0.12)
+    end
+
+    local function updateObserved(ball, now)
+        if state.ball ~= ball then
+            state.ball = ball
+            state.lastPosition = ball.Position
+            state.lastPositionTime = now
+            state.observedVelocity = Vector3.zero
+            return
+        end
+
+        if not state.lastPosition then
+            state.lastPosition = ball.Position
+            state.lastPositionTime = now
+            return
+        end
+
+        local dt = now - state.lastPositionTime
+        if dt > 0.001 then
+            state.observedVelocity = (ball.Position - state.lastPosition) / dt
+            state.lastPosition = ball.Position
+            state.lastPositionTime = now
+        end
+    end
+
+    local function velocityOf(ball)
+        local physicsVelocity = ball.AssemblyLinearVelocity
+
+        if physicsVelocity.Magnitude < 2
+            and state.observedVelocity.Magnitude > 3 then
+
+            return state.observedVelocity
+        end
+
+        return physicsVelocity
+    end
+
+    local function trajectoryWillReach(ball, root)
+        local velocity = velocityOf(ball)
+        if velocity.Magnitude < 2 then
+            return false
+        end
+
+        local gravity = Vector3.new(0, -ws.Gravity, 0)
+        local rootVelocity = root.AssemblyLinearVelocity
+        local lead = oneWayPing() + (1 / 60)
+        local catchOffset = Vector3.new(0, 2.25, 0)
+        local bestDistance = math.huge
+        local highEnough = false
+
+        for index = 0, 9 do
+            local t = lead + 0.22 * (index / 9)
+
+            local ballPosition =
+                ball.Position
+                + velocity * t
+                + 0.5 * gravity * t * t
+
+            local rootPosition =
+                root.Position
+                + rootVelocity * t
+                + catchOffset
+
+            local distance =
+                (ballPosition - rootPosition).Magnitude
+
+            if distance < bestDistance then
+                bestDistance = distance
+            end
+
+            if ballPosition.Y > rootPosition.Y - 1.1 then
+                highEnough = true
+            end
+        end
+
+        local currentCatch = root.Position + catchOffset
+        local relative = ball.Position - currentCatch
+
+        local approaching =
+            relative:Dot(velocity) < 0
+            or relative.Magnitude <= state.range
+
+        return highEnough
+            and approaching
+            and bestDistance <= state.range
+    end
+
+    local function resetAttempt()
+        state.attemptedBall = nil
+    end
+
+    local function fireTrap(ball)
+        if not state.enabled
+            or not ball
+            or not ball.Parent
+            or hasBall()
+            or onCooldown()
+            or state.attemptedBall == ball then
+
+            return
+        end
+
+        state.attemptedBall = ball
+
+        startLock(ball, nil, false)
+
+        remote:FireServer(
+            buffer.fromstring(buffers["base"]),
+            {
+                {
+                    "skill" .. state.moveNumber
+                }
+            }
+        )
+    end
+
+    local function evaluate()
+        if not state.enabled or hasBall() then
+            return
+        end
+
+        local char = character()
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local ball = findBall()
+        if not ball then return end
+
+        local now = os.clock()
+        updateObserved(ball, now)
+
+        if now < state.ownReleaseUntil then
+            return
+        end
+
+        if ballHolder and ballHolder.Value ~= nil then
+            return
+        end
+
+        if state.attemptedBall == ball then
+            if (ball.Position - root.Position).Magnitude > state.range + 15 then
+                resetAttempt()
+            else
+                return
+            end
+        end
+
+        if trajectoryWillReach(ball, root) then
+            fireTrap(ball)
+        end
+    end
+
+    local function hookAnimator(char)
+        if state.animatorConnection then
+            state.animatorConnection:Disconnect()
+            state.animatorConnection = nil
+        end
+
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+            or char:WaitForChild("Humanoid")
+
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+            or humanoid:WaitForChild("Animator")
+
+        state.animatorConnection = animator.AnimationPlayed:Connect(function(track)
+            if not state.enabled or not track.Animation then
+                return
+            end
+
+            if not trapAnimations[track.Animation.AnimationId] then
+                return
+            end
+
+            local ball = findBall()
+            if not ball then return end
+
+            startLock(ball, track, true)
+
+            track.Stopped:Connect(function()
+                if state.lockTrack == track and not hasBall() then
+                    stopLock()
+                end
+            end)
+        end)
+    end
+
+    if ballHolder then
+        state.lastHolder = ballHolder.Value
+
+        ballHolder.Changed:Connect(function(current)
+            local previous = state.lastHolder
+            state.lastHolder = current
+
+            if current == nil then
+                if previous == character() then
+                    state.ownReleaseUntil = os.clock() + 0.4
+                else
+                    state.ownReleaseUntil = 0
+                    evaluate()
+                end
+            elseif current == character() then
+                resetAttempt()
+                stopLock()
+            else
+                resetAttempt()
+            end
+        end)
+    end
+
+    terrain.ChildAdded:Connect(function(child)
+        if child.Name ~= "Ball" or not child:IsA("BasePart") then
+            return
+        end
+
+        state.ball = child
+        state.lastPosition = child.Position
+        state.lastPositionTime = os.clock()
+        state.observedVelocity = Vector3.zero
+        resetAttempt()
+        evaluate()
+    end)
+
+    terrain.ChildRemoved:Connect(function(child)
+        if child == state.ball then
+            state.ball = nil
+            state.lastPosition = nil
+            state.lastPositionTime = 0
+            state.observedVelocity = Vector3.zero
+        end
+
+        if child == state.lockBall and not hasBall() then
+            stopLock()
+        end
+    end)
+
+    if lp.Character then
+        hookAnimator(lp.Character)
+    end
+
+    lp.CharacterAdded:Connect(function(char)
+        stopLock()
+        resetAttempt()
+        clearCooldown()
+        state.ball = nil
+        state.lastPosition = nil
+        state.lastPositionTime = 0
+        state.observedVelocity = Vector3.zero
+        state.ownReleaseUntil = 0
+        hookAnimator(char)
+    end)
+
+    run.PostSimulation:Connect(function()
+        evaluate()
+    end)
+
+    at:Textbox("Auto Trap Move Number", "Example: 1, 2, 3, 4, 5.", function(value)
+        local number = tonumber(value)
+
+        if number and number >= 1 and number <= 5 then
+            state.moveNumber = number
+            clearCooldown()
+            resetAttempt()
+        end
+    end)
+
+    at:Slider("Auto Trap Range", 18, 5, 60, 1, function(value)
+        state.range = value
+        resetAttempt()
+    end)
+
+    at:Toggle("Auto Trap", function(value)
+        state.enabled = value == true
+        resetAttempt()
+        clearCooldown()
+
+        if not state.enabled then
+            stopLock()
+        end
+    end)
+end
+
 local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
 th:Label("Trap Helper: Automatically Moves Toward Ball During Trap Moves.")
 
