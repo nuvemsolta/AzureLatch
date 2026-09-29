@@ -2786,7 +2786,6 @@ do
 
     local state = {
         enabled = false,
-        moveNumber = 1,
         range = 18,
         lastHolder = nil,
         ownReleaseUntil = 0,
@@ -2795,13 +2794,8 @@ do
         lastPositionTime = 0,
         observedVelocity = Vector3.zero,
         attemptedBall = nil,
-        lockBall = nil,
-        lockTrack = nil,
-        lockConfirmed = false,
-        lockStarted = 0,
-        lockPendingUntil = 0,
-        cooldownObject = nil,
-        cooldownSkill = nil,
+        pending = nil,
+        learnedStyle = nil,
         animatorConnection = nil
     }
 
@@ -2815,16 +2809,23 @@ do
     local remote = rs:WaitForChild("ByteNetReliable")
     local holderFolder = rs:FindFirstChild("workspace")
     local ballHolder = holderFolder and holderFolder:FindFirstChild("ballHolder")
-    local lockName = "CeleronAutoTrapCamera"
 
-    local trapAnimations = {
-        ["rbxassetid://73387016994281"] = true,
-        ["rbxassetid://101043441232233"] = true,
-        ["rbxassetid://96593185131882"] = true,
-        ["rbxassetid://116422938520670"] = true,
-        ["rbxassetid://90734196141468"] = true,
-        ["rbxassetid://85349589701503"] = true,
-        ["rbxassetid://120351399679118"] = true
+    local trapProfiles = {
+        Nagi = {
+            skill = "skill2",
+            animation = "rbxassetid://73387016994281",
+            words = {"control"}
+        },
+        Shidou = {
+            skill = "skill1",
+            animation = "rbxassetid://85349589701503",
+            words = {"formless", "draconic"}
+        }
+    }
+
+    local animationToStyle = {
+        ["rbxassetid://73387016994281"] = "Nagi",
+        ["rbxassetid://85349589701503"] = "Shidou"
     }
 
     local function character()
@@ -2833,138 +2834,122 @@ do
 
     local function hasBall()
         local char = character()
-        if not char then return false end
-        if char:FindFirstChild("Ball") then return true end
+
+        if not char then
+            return false
+        end
+
+        if char:FindFirstChild("Ball") then
+            return true
+        end
+
         return ballHolder and ballHolder.Value == char
     end
 
     local function findBall()
         local ball = terrain:FindFirstChild("Ball")
+
         if ball and ball:IsA("BasePart") then
             return ball
         end
 
         ball = ws:FindFirstChild("Ball", true)
+
         if ball and ball:IsA("BasePart") then
             return ball
         end
     end
 
-    local function clearCooldown()
-        state.cooldownObject = nil
-        state.cooldownSkill = nil
-    end
-
-    local function getCooldown()
-        local skillName = "skill" .. tostring(state.moveNumber)
-
-        if state.cooldownObject
-            and state.cooldownObject.Parent
-            and state.cooldownSkill == skillName then
-
-            return state.cooldownObject
-        end
-
-        clearCooldown()
-
+    local function getSlots()
         local pg = lp:FindFirstChild("PlayerGui")
         local hotbar = pg and pg:FindFirstChild("Hotbar")
         local backpack = hotbar and hotbar:FindFirstChild("Backpack")
-        local slots = backpack and backpack:FindFirstChild("Hotbar")
+        return backpack and backpack:FindFirstChild("Hotbar")
+    end
+
+    local function textOf(root)
+        local pieces = {}
+
+        if root:IsA("TextLabel")
+            or root:IsA("TextButton")
+            or root:IsA("TextBox") then
+
+            pieces[#pieces + 1] = root.Text
+        end
+
+        for _, object in ipairs(root:GetDescendants()) do
+            if object:IsA("TextLabel")
+                or object:IsA("TextButton")
+                or object:IsA("TextBox") then
+
+                pieces[#pieces + 1] = object.Text
+            end
+        end
+
+        return string.lower(table.concat(pieces, " "))
+    end
+
+    local function resolveTrap()
+        local slots = getSlots()
+
+        if slots then
+            for style, profile in pairs(trapProfiles) do
+                for index = 1, 5 do
+                    local slot = slots:FindFirstChild("skill" .. index)
+
+                    if slot then
+                        local slotText = textOf(slot)
+
+                        for _, word in ipairs(profile.words) do
+                            if string.find(slotText, word, 1, true) then
+                                state.learnedStyle = style
+
+                                return {
+                                    style = style,
+                                    skill = "skill" .. index,
+                                    animation = profile.animation
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        local learned = state.learnedStyle
+        local profile = learned and trapProfiles[learned]
+
+        if profile then
+            return {
+                style = learned,
+                skill = profile.skill,
+                animation = profile.animation
+            }
+        end
+    end
+
+    local function getCooldown(skillName)
+        local slots = getSlots()
         local slot = slots and slots:FindFirstChild(skillName)
         local cooldown = slot and slot:FindFirstChild("Cooldown", true)
 
         if cooldown and cooldown:IsA("GuiObject") then
-            state.cooldownObject = cooldown
-            state.cooldownSkill = skillName
             return cooldown
         end
     end
 
-    local function onCooldown()
-        local cooldown = getCooldown()
+    local function onCooldown(skillName)
+        local cooldown = getCooldown(skillName)
         return cooldown and cooldown.Visible == true
-    end
-
-    local function stopLock()
-        pcall(function()
-            run:UnbindFromRenderStep(lockName)
-        end)
-
-        state.lockBall = nil
-        state.lockTrack = nil
-        state.lockConfirmed = false
-        state.lockStarted = 0
-        state.lockPendingUntil = 0
-    end
-
-    local function startLock(ball, track, confirmed)
-        if not ball or not ball.Parent then
-            return
-        end
-
-        pcall(function()
-            run:UnbindFromRenderStep(lockName)
-        end)
-
-        state.lockBall = ball
-        state.lockTrack = track
-        state.lockConfirmed = confirmed == true
-        state.lockStarted = os.clock()
-        state.lockPendingUntil = state.lockConfirmed and 0 or state.lockStarted + 0.38
-
-        run:BindToRenderStep(
-            lockName,
-            Enum.RenderPriority.Camera.Value + 1,
-            function()
-                if not state.enabled or hasBall() then
-                    stopLock()
-                    return
-                end
-
-                local target = state.lockBall
-                if not target or not target.Parent then
-                    stopLock()
-                    return
-                end
-
-                if state.lockConfirmed then
-                    if state.lockTrack and not state.lockTrack.IsPlaying then
-                        stopLock()
-                        return
-                    end
-                elseif os.clock() > state.lockPendingUntil then
-                    stopLock()
-                    return
-                end
-
-                if os.clock() - state.lockStarted > 3 then
-                    stopLock()
-                    return
-                end
-
-                local camera = ws.CurrentCamera
-                if not camera then return end
-
-                local cameraPosition = camera.CFrame.Position
-                local targetPosition = target.Position
-
-                if (targetPosition - cameraPosition).Magnitude > 0.01 then
-                    camera.CFrame = CFrame.lookAt(
-                        cameraPosition,
-                        targetPosition,
-                        Vector3.yAxis
-                    )
-                end
-            end
-        )
     end
 
     local function oneWayPing()
         local ping = 0
+
         pcall(function()
             ping = lp:GetNetworkPing() * 0.5
         end)
+
         return math.clamp(ping, 0, 0.12)
     end
 
@@ -2984,8 +2969,11 @@ do
         end
 
         local dt = now - state.lastPositionTime
+
         if dt > 0.001 then
-            state.observedVelocity = (ball.Position - state.lastPosition) / dt
+            state.observedVelocity =
+                (ball.Position - state.lastPosition) / dt
+
             state.lastPosition = ball.Position
             state.lastPositionTime = now
         end
@@ -3005,6 +2993,7 @@ do
 
     local function trajectoryWillReach(ball, root)
         local velocity = velocityOf(ball)
+
         if velocity.Magnitude < 2 then
             return false
         end
@@ -3053,8 +3042,79 @@ do
             and bestDistance <= state.range
     end
 
+    local function airborne(humanoid, root)
+        local humanoidState = humanoid:GetState()
+
+        return humanoidState == Enum.HumanoidStateType.Jumping
+            or humanoidState == Enum.HumanoidStateType.Freefall
+            or humanoid.FloorMaterial == Enum.Material.Air
+            or root.AssemblyLinearVelocity.Y > 0.5
+    end
+
+    local function sendTrap(profile)
+        if profile.style == "Nagi" then
+            remote:FireServer(
+                buffer.fromstring(buffers["base"]),
+                {
+                    {
+                        "skill2",
+                        true
+                    }
+                }
+            )
+
+        elseif profile.style == "Shidou" then
+            remote:FireServer(
+                buffer.fromstring(buffers["base"]),
+                {
+                    {
+                        "skill1"
+                    }
+                }
+            )
+        end
+    end
+
+    local function tryPending()
+        local pending = state.pending
+
+        if not pending then
+            return
+        end
+
+        if not state.enabled
+            or hasBall()
+            or not pending.ball
+            or not pending.ball.Parent then
+
+            state.pending = nil
+            return
+        end
+
+        local char = character()
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then
+            state.pending = nil
+            return
+        end
+
+        if onCooldown(pending.profile.skill) then
+            state.pending = nil
+            return
+        end
+
+        if airborne(humanoid, root) then
+            local profile = pending.profile
+            state.pending = nil
+            sendTrap(profile)
+        end
+    end
+
     local function resetAttempt()
         state.attemptedBall = nil
+        state.pending = nil
     end
 
     local function fireTrap(ball)
@@ -3062,24 +3122,39 @@ do
             or not ball
             or not ball.Parent
             or hasBall()
-            or onCooldown()
             or state.attemptedBall == ball then
 
             return
         end
 
+        local profile = resolveTrap()
+
+        if not profile or onCooldown(profile.skill) then
+            return
+        end
+
+        local char = character()
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then
+            return
+        end
+
         state.attemptedBall = ball
+        state.pending = {
+            ball = ball,
+            profile = profile
+        }
 
-        startLock(ball, nil, false)
+        if airborne(humanoid, root) then
+            tryPending()
+            return
+        end
 
-        remote:FireServer(
-            buffer.fromstring(buffers["base"]),
-            {
-                {
-                    "skill" .. state.moveNumber
-                }
-            }
-        )
+        humanoid.Jump = true
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        tryPending()
     end
 
     local function evaluate()
@@ -3089,10 +3164,16 @@ do
 
         local char = character()
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
+
+        if not root then
+            return
+        end
 
         local ball = findBall()
-        if not ball then return end
+
+        if not ball then
+            return
+        end
 
         local now = os.clock()
         updateObserved(ball, now)
@@ -3109,6 +3190,7 @@ do
             if (ball.Position - root.Position).Magnitude > state.range + 15 then
                 resetAttempt()
             else
+                tryPending()
                 return
             end
         end
@@ -3131,24 +3213,23 @@ do
             or humanoid:WaitForChild("Animator")
 
         state.animatorConnection = animator.AnimationPlayed:Connect(function(track)
-            if not state.enabled or not track.Animation then
+            if not track.Animation then
                 return
             end
 
-            if not trapAnimations[track.Animation.AnimationId] then
-                return
+            local style = animationToStyle[track.Animation.AnimationId]
+
+            if style then
+                state.learnedStyle = style
             end
+        end)
 
-            local ball = findBall()
-            if not ball then return end
+        humanoid.StateChanged:Connect(function(_, newState)
+            if newState == Enum.HumanoidStateType.Jumping
+                or newState == Enum.HumanoidStateType.Freefall then
 
-            startLock(ball, track, true)
-
-            track.Stopped:Connect(function()
-                if state.lockTrack == track and not hasBall() then
-                    stopLock()
-                end
-            end)
+                tryPending()
+            end
         end)
     end
 
@@ -3166,9 +3247,10 @@ do
                     state.ownReleaseUntil = 0
                     evaluate()
                 end
+
             elseif current == character() then
                 resetAttempt()
-                stopLock()
+
             else
                 resetAttempt()
             end
@@ -3176,7 +3258,9 @@ do
     end
 
     terrain.ChildAdded:Connect(function(child)
-        if child.Name ~= "Ball" or not child:IsA("BasePart") then
+        if child.Name ~= "Ball"
+            or not child:IsA("BasePart") then
+
             return
         end
 
@@ -3195,10 +3279,6 @@ do
             state.lastPositionTime = 0
             state.observedVelocity = Vector3.zero
         end
-
-        if child == state.lockBall and not hasBall() then
-            stopLock()
-        end
     end)
 
     if lp.Character then
@@ -3206,29 +3286,19 @@ do
     end
 
     lp.CharacterAdded:Connect(function(char)
-        stopLock()
         resetAttempt()
-        clearCooldown()
         state.ball = nil
         state.lastPosition = nil
         state.lastPositionTime = 0
         state.observedVelocity = Vector3.zero
         state.ownReleaseUntil = 0
+        state.learnedStyle = nil
         hookAnimator(char)
     end)
 
     run.PostSimulation:Connect(function()
+        tryPending()
         evaluate()
-    end)
-
-    at:Textbox("Auto Trap Move Number", "Example: 1, 2, 3, 4, 5.", function(value)
-        local number = tonumber(value)
-
-        if number and number >= 1 and number <= 5 then
-            state.moveNumber = number
-            clearCooldown()
-            resetAttempt()
-        end
     end)
 
     at:Slider("Auto Trap Range", 18, 5, 60, 1, function(value)
@@ -3239,11 +3309,6 @@ do
     at:Toggle("Auto Trap", function(value)
         state.enabled = value == true
         resetAttempt()
-        clearCooldown()
-
-        if not state.enabled then
-            stopLock()
-        end
     end)
 end
 
