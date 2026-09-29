@@ -2207,7 +2207,6 @@ end
 do
     local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
     at:Label("Auto Trap: Automatically Uses Trap On Air Balls.")
-    at:Label("Supported: Nagi, Shidou, Hiori, Don Lorenzo, Kiyora.")
 
     local PlayersService = game:GetService("Players")
     local ReplicatedStorageService = game:GetService("ReplicatedStorage")
@@ -2232,7 +2231,10 @@ do
         ["rbxassetid://73387016994281"] = "Nagi",
         ["rbxassetid://85349589701503"] = "Shidou",
         ["rbxassetid://101043441232233"] = true,
-        ["rbxassetid://90734196141468"] = true
+        ["rbxassetid://90734196141468"] = true,
+        ["rbxassetid://96593185131882"] = true,
+        ["rbxassetid://116422938520670"] = true,
+        ["rbxassetid://120351399679118"] = true
     }
 
     local profiles = {
@@ -2252,24 +2254,29 @@ do
             skill = "skill2",
             words = {"frost guard", "glacial cut", "link up", "hiori"},
             jump = false,
-            lock = false
+            lock = true
         },
         DonLorenzo = {
             skill = "skill4",
             words = {"horrific intercept", "defensive stance", "zombie dribble", "don lorenzo", "lorenzo"},
             jump = false,
-            lock = false
+            lock = true
         },
         Kiyora = {
             skill = "skill3",
-            words = {"side trap", "windmill shot", "dance battle", "twister pass", "kiyora"},
+            words = {"side trap", "sidetrap", "side-trap", "windmill shot", "dance battle", "twister pass", "kiyora"},
             jump = false,
-            lock = false
+            lock = true
         }
     }
 
     local state = {
         enabled = false,
+        helperEnabled = false,
+        helperActive = false,
+        helperRange = 50,
+        helperSpeed = 50,
+        lockDeadline = 0,
         range = 18,
         mode = "Legit",
 
@@ -2558,49 +2565,33 @@ do
     end
 
     local function resolveProfile(force)
-        if state.profile and not force then
+        local now = os.clock()
+        if not force and now - state.profileCheckedAt < 0.75 then
             return state.profile
         end
-
-        local now = os.clock()
-
-        if not force
-            and now - state.profileCheckedAt < 0.75 then
-
-            return nil
-        end
-
         state.profileCheckedAt = now
-
+        state.profile = nil
         local slots = getSlots()
-
-        if not slots then
-            return nil
+        if not slots then return nil end
+        -- Read each slot once; refresh when a style changes without respawning.
+        local texts = {}
+        for index = 1, 5 do
+            local slot = slots:FindFirstChild("skill" .. index)
+            texts[index] = slot and slotText(slot) or ""
         end
-
         for style, profile in pairs(profiles) do
-            for index = 1, 5 do
-                local slot = slots:FindFirstChild("skill" .. index)
-
-                if slot then
-                    local text = slotText(slot)
-
-                    for _, word in ipairs(profile.words) do
-                        if string.find(text, word, 1, true) then
-                            state.profile = {
-                                style = style,
-                                skill = profile.skill or ("skill" .. index),
-                                jump = profile.jump,
-                                lock = profile.lock
-                            }
-
-                            return state.profile
-                        end
+            for _, text in ipairs(texts) do
+                for _, word in ipairs(profile.words) do
+                    if string.find(text, word, 1, true) then
+                        state.profile = {
+                            style = style, skill = profile.skill,
+                            jump = profile.jump, lock = true
+                        }
+                        return state.profile
                     end
                 end
             end
         end
-
         return nil
     end
 
@@ -2652,7 +2643,11 @@ do
         return state.observedVelocity
     end
 
-    local function trapTiming(ball, root)
+    local function trapTiming(ball, root, profile)
+        profile = profile or resolveProfile(false)
+        if not profile then return nil end
+        local closeTrap = profile.style == "Hiori" or profile.style == "DonLorenzo" or profile.style == "Kiyora"
+        local catchRange = closeTrap and math.min(state.range, 8) or state.range
         local velocity = velocityOf(ball)
 
         if velocity.Magnitude < 1.25 then
@@ -2730,7 +2725,7 @@ do
             local futureHeight =
                 ballPosition.Y - rootBase.Y
 
-            if futureDistance <= state.range + margin
+            if futureDistance <= catchRange + (closeTrap and math.min(margin, 1) or margin)
                 and futureHeight >= 0.9 then
 
                 enterTime = t
@@ -2770,6 +2765,10 @@ do
                 0.62,
                 0.88
             )
+        end
+
+        if closeTrap then
+            activationLead = math.clamp(0.09 + ping, 0.09, 0.21)
         end
 
         local jumpLead = math.clamp(
@@ -2864,6 +2863,7 @@ do
         end
 
         state.lockActive = false
+        state.helperActive = false
 
         pcall(function()
             RunServiceService:UnbindFromRenderStep(lockName)
@@ -3003,6 +3003,16 @@ do
     end
 
     local function pullBall(root, targetPosition, dt)
+        if state.helperActive then
+            local delta = targetPosition - Vector3.new(0, 3, 0) - root.Position
+            local distance = delta.Magnitude
+            if distance > state.helperRange then return end
+            if distance > 0.5 then
+                local step = math.min(distance - 0.5, state.helperSpeed * math.clamp(dt or 0, 0, 0.04))
+                root.CFrame = root.CFrame + delta.Unit * step
+            end
+            return
+        end
         if not state.lockConfirmed
             or state.mode ~= "Blatant" then
 
@@ -3242,6 +3252,11 @@ do
             return
         end
 
+        if os.clock() > state.lockDeadline then
+            stopLock()
+            return
+        end
+
         if hasBall() then
             stopLock()
             return
@@ -3301,6 +3316,7 @@ do
         stopLock()
 
         state.lockActive = true
+        state.lockDeadline = os.clock() + 2.5
         state.lockBall = ball
         state.lockConfirmed = false
         state.lockMissingSince = 0
@@ -3470,7 +3486,13 @@ do
             return
         end
 
-        local timing = trapTiming(ball, root)
+        local currentProfile = resolveProfile(false)
+        if not currentProfile or currentProfile.style ~= pending.profile.style then
+            state.pending = nil
+            return
+        end
+
+        local timing = trapTiming(ball, root, pending.profile)
 
         if not timing then
             state.pending = nil
@@ -3515,7 +3537,7 @@ do
         state.pending = nil
         state.attemptedBall = ball
 
-        local shouldLock = pending.profile.lock ~= false
+        local shouldLock = true
         if shouldLock then
             startLock(ball)
         end
@@ -4078,6 +4100,68 @@ do
 
         resetRuntime()
     end
+
+    -- Event-driven manual helper: no idle frame loop and no keyboard polling.
+    local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
+    local helperAnimations = {
+        ["73387016994281"] = true, ["101043441232233"] = true,
+        ["96593185131882"] = true, ["116422938520670"] = true,
+        ["90734196141468"] = true, ["85349589701503"] = true,
+        ["120351399679118"] = true
+    }
+    local helperConnections = {}
+    local helperAnimatorConnection
+    local helperFrameConnection
+    local helperStopConnection
+    local helperGeneration = 0
+    local function stopHelper()
+        if helperFrameConnection then helperFrameConnection:Disconnect(); helperFrameConnection = nil end
+        if helperStopConnection then helperStopConnection:Disconnect(); helperStopConnection = nil end
+        if state.helperActive then stopLock() end
+    end
+    local function hookHelper(char)
+        helperGeneration += 1
+        local generation = helperGeneration
+        stopHelper()
+        if helperAnimatorConnection then helperAnimatorConnection:Disconnect(); helperAnimatorConnection = nil end
+        task.spawn(function()
+            local humanoid = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+            local animator = humanoid and (humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 5))
+            if not animator or not state.helperEnabled or generation ~= helperGeneration or char ~= character() then return end
+            helperAnimatorConnection = animator.AnimationPlayed:Connect(function(track)
+                local animation = track.Animation
+                local id = animation and string.match(animation.AnimationId, "%d+")
+                if not state.helperEnabled or not helperAnimations[id] then return end
+                -- Auto Trap owns its own lock; a manual helper never overrides it.
+                if state.lockActive and not state.helperActive then return end
+                local ball = currentBall()
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not ball or not root or hasBall() or (ball.Position - root.Position).Magnitude > state.helperRange then return end
+                stopHelper()
+                startLock(ball)
+                state.helperActive = true
+                state.lockConfirmed = true
+                state.lockDeadline = os.clock() + math.clamp(track.Length + 0.2, 0.5, 3)
+                helperStopConnection = track.Stopped:Connect(stopHelper)
+                helperFrameConnection = RunServiceService.PreSimulation:Connect(function(dt)
+                    if not state.helperActive or not track.IsPlaying or not state.helperEnabled then stopHelper(); return end
+                    if not state.enabled then physicsLock(dt) end
+                end)
+            end)
+        end)
+    end
+    th:Toggle("Trap Helper", function(value)
+        state.helperEnabled = value == true
+        helperGeneration += 1
+        stopHelper()
+        disconnectList(helperConnections)
+        if helperAnimatorConnection then helperAnimatorConnection:Disconnect(); helperAnimatorConnection = nil end
+        if not state.helperEnabled then return end
+        helperConnections[#helperConnections + 1] = localPlayer.CharacterAdded:Connect(hookHelper)
+        if character() then hookHelper(character()) end
+    end)
+    th:Slider("Trap Helper Max Distance", 50, 5, 200, 1, function(value) state.helperRange = value end)
+    th:Slider("Trap Helper Speed", 50, 10, 1000, 1, function(value) state.helperSpeed = value end)
 
     at:Dropdown(
         "Auto Trap Mode",
