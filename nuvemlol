@@ -164,54 +164,50 @@ do
             return
         end
 
-        local oldLeft =
+        local left =
             main:FindFirstChild("tabPageLeft")
 
-        local oldRight =
+        local right =
             main:FindFirstChild("tabPageRight")
 
-        if oldLeft then
-            oldLeft:Destroy()
+        if not left then
+            left = Instance.new("TextButton")
+            left.Name = "tabPageLeft"
+            left.Text = "‹"
+            left.Font = Enum.Font.GothamBold
+            left.TextSize = 22
+            left.TextColor3 = Color3.fromRGB(220, 220, 220)
+            left.BackgroundColor3 = tabs.BackgroundColor3
+            left.AutoButtonColor = false
+            left.Size = UDim2.fromOffset(30, 30)
+            left.Position = UDim2.new(0, 372, 0.188, 0)
+            left.Parent = main
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = left
         end
 
-        if oldRight then
-            oldRight:Destroy()
+        if not right then
+            right = Instance.new("TextButton")
+            right.Name = "tabPageRight"
+            right.Text = "›"
+            right.Font = Enum.Font.GothamBold
+            right.TextSize = 22
+            right.TextColor3 = Color3.fromRGB(220, 220, 220)
+            right.BackgroundColor3 = tabs.BackgroundColor3
+            right.AutoButtonColor = false
+            right.Size = UDim2.fromOffset(30, 30)
+            right.Position = UDim2.new(0, 405, 0.188, 0)
+            right.Parent = main
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = right
         end
 
         tabs.ClipsDescendants = true
         tabs.Size = UDim2.fromOffset(350, 30)
-
-        local left = Instance.new("TextButton")
-        left.Name = "tabPageLeft"
-        left.Text = "‹"
-        left.Font = Enum.Font.GothamBold
-        left.TextSize = 22
-        left.TextColor3 = Color3.fromRGB(220, 220, 220)
-        left.BackgroundColor3 = tabs.BackgroundColor3
-        left.AutoButtonColor = false
-        left.Size = UDim2.fromOffset(30, 30)
-        left.Position = UDim2.new(0, 372, 0.188, 0)
-        left.Parent = main
-
-        local leftCorner = Instance.new("UICorner")
-        leftCorner.CornerRadius = UDim.new(0, 6)
-        leftCorner.Parent = left
-
-        local right = Instance.new("TextButton")
-        right.Name = "tabPageRight"
-        right.Text = "›"
-        right.Font = Enum.Font.GothamBold
-        right.TextSize = 22
-        right.TextColor3 = Color3.fromRGB(220, 220, 220)
-        right.BackgroundColor3 = tabs.BackgroundColor3
-        right.AutoButtonColor = false
-        right.Size = UDim2.fromOffset(30, 30)
-        right.Position = UDim2.new(0, 405, 0.188, 0)
-        right.Parent = main
-
-        local rightCorner = Instance.new("UICorner")
-        rightCorner.CornerRadius = UDim.new(0, 6)
-        rightCorner.Parent = right
 
         local offset = 0
 
@@ -277,11 +273,13 @@ do
     local heroicClashSize = 0
     local heroicClashUntil = 0
     local heroicAnimationConnection = nil
-    local seenQueries = {}
-    local nearbyParts = 0
 
     local HEROIC_CLASH_ANIMATION =
         "101568232677122"
+
+    local activeWhiffs = setmetatable({}, {
+        __mode = "k"
+    })
 
     local function fmtVector(vector)
         return string.format(
@@ -298,62 +296,275 @@ do
         end
 
         heroicClashUntil =
-            os.clock() + 1.4
-
-        table.clear(seenQueries)
-        nearbyParts = 0
+            os.clock() + 1.5
 
         print(
-            "Heroic Clash detected ("
+            "Heroic Clash: "
             .. tostring(source)
-            .. ")"
         )
     end
 
-    local function logQuery(kind, value)
-        local key =
-            kind
-            .. ":"
-            .. tostring(value)
+    local function stopWhiff(part, restore)
+        local data =
+            activeWhiffs[part]
 
-        if seenQueries[key] then
+        if not data then
             return
         end
 
-        seenQueries[key] = true
+        if data.preSimulation then
+            data.preSimulation:
+                Disconnect()
+        end
+
+        if data.destroying then
+            data.destroying:
+                Disconnect()
+        end
+
+        activeWhiffs[part] = nil
+
+        if not restore
+            or not part
+            or not part.Parent then
+
+            return
+        end
+
+        pcall(function()
+            part.Size =
+                data.size
+
+            part.CanTouch =
+                data.canTouch
+
+            part.CanQuery =
+                data.canQuery
+
+            part.CanCollide =
+                data.canCollide
+        end)
+    end
+
+    local function touchHandlerCount(part)
+        if type(getconnections) ~= "function" then
+            return "?"
+        end
+
+        local ok, connections =
+            pcall(
+                getconnections,
+                part.Touched
+            )
+
+        if not ok
+            or type(connections) ~= "table" then
+
+            return "?"
+        end
+
+        return tostring(
+            #connections
+        )
+    end
+
+    local function trackWhiff(part)
+        if heroicClashSize <= 0
+            or os.clock() > heroicClashUntil
+            or activeWhiffs[part]
+            or not part.Parent then
+
+            return
+        end
+
+        local character =
+            Players.LocalPlayer.Character
+
+        local root =
+            character
+            and character:
+                FindFirstChild(
+                    "HumanoidRootPart"
+                )
+
+        if root
+            and (
+                part.Position
+                - root.Position
+            ).Magnitude > 35 then
+
+            return
+        end
+
+        local data = {
+            size = part.Size,
+            canTouch = part.CanTouch,
+            canQuery = part.CanQuery,
+            canCollide = part.CanCollide
+        }
+
+        activeWhiffs[part] =
+            data
 
         print(
-            "Heroic Clash "
-            .. kind
-            .. ": "
-            .. tostring(value)
+            "Heroic Clash whiff | normal: "
+            .. fmtVector(
+                data.size
+            )
+            .. " | CanTouch: "
+            .. tostring(
+                data.canTouch
+            )
+            .. " | Touch handlers: "
+            .. touchHandlerCount(
+                part
+            )
         )
+
+        data.destroying =
+            part.Destroying:
+            Connect(function()
+                stopWhiff(
+                    part,
+                    false
+                )
+            end)
+
+        data.preSimulation =
+            RunService.PreSimulation:
+            Connect(function()
+                if heroicClashSize <= 0
+                    or os.clock()
+                        > heroicClashUntil then
+
+                    stopWhiff(
+                        part,
+                        true
+                    )
+
+                    return
+                end
+
+                if not part.Parent then
+                    stopWhiff(
+                        part,
+                        false
+                    )
+
+                    return
+                end
+
+                pcall(function()
+                    part.Size =
+                        Vector3.new(
+                            heroicClashSize,
+                            heroicClashSize,
+                            heroicClashSize
+                        )
+
+                    part.CanTouch = true
+                    part.CanQuery = true
+                    part.CanCollide = false
+                end)
+            end)
+    end
+
+    local function inspectObject(object)
+        if heroicClashSize <= 0
+            or os.clock() > heroicClashUntil
+            or not object:IsA("BasePart") then
+
+            return
+        end
+
+        if string.lower(
+            object.Name
+        ) == "whiff" then
+
+            trackWhiff(
+                object
+            )
+        end
+    end
+
+    local function scanExistingWhiffs()
+        if heroicClashSize <= 0 then
+            return
+        end
+
+        local character =
+            Players.LocalPlayer.Character
+
+        local root =
+            character
+            and character:
+                FindFirstChild(
+                    "HumanoidRootPart"
+                )
+
+        if not root then
+            return
+        end
+
+        for _, object in ipairs(
+            Workspace:GetDescendants()
+        ) do
+            if object:IsA("BasePart")
+                and string.lower(
+                    object.Name
+                ) == "whiff"
+                and (
+                    object.Position
+                    - root.Position
+                ).Magnitude <= 35 then
+
+                trackWhiff(
+                    object
+                )
+            end
+        end
     end
 
     local function hookAnimator(character)
         if heroicAnimationConnection then
-            heroicAnimationConnection:Disconnect()
-            heroicAnimationConnection = nil
+            heroicAnimationConnection:
+                Disconnect()
+
+            heroicAnimationConnection =
+                nil
         end
 
         local humanoid =
-            character:WaitForChild("Humanoid", 5)
+            character:
+            WaitForChild(
+                "Humanoid",
+                5
+            )
 
         if not humanoid then
             return
         end
 
         local animator =
-            humanoid:FindFirstChildOfClass("Animator")
-            or humanoid:WaitForChild("Animator", 5)
+            humanoid:
+            FindFirstChildOfClass(
+                "Animator"
+            )
+            or humanoid:
+                WaitForChild(
+                    "Animator",
+                    5
+                )
 
         if not animator then
             return
         end
 
         heroicAnimationConnection =
-            animator.AnimationPlayed:Connect(function(track)
-                local animation = track.Animation
+            animator.AnimationPlayed:
+            Connect(function(track)
+                local animation =
+                    track.Animation
 
                 if not animation then
                     return
@@ -364,8 +575,16 @@ do
                         animation.AnimationId
                     ):match("%d+")
 
-                if id == HEROIC_CLASH_ANIMATION then
-                    armHeroicClash("animation")
+                if id
+                    == HEROIC_CLASH_ANIMATION then
+
+                    armHeroicClash(
+                        "animation"
+                    )
+
+                    task.defer(
+                        scanExistingWhiffs
+                    )
                 end
             end)
     end
@@ -377,63 +596,38 @@ do
         )
     end
 
-    Players.LocalPlayer.CharacterAdded:Connect(function(character)
+    Players.LocalPlayer.CharacterAdded:
+    Connect(function(character)
         task.defer(
             hookAnimator,
             character
         )
     end)
 
-    Workspace.DescendantAdded:Connect(function(object)
-        if heroicClashSize <= 0
-            or os.clock() > heroicClashUntil
-            or not object:IsA("BasePart") then
+    Workspace.DescendantAdded:
+    Connect(function(object)
+        if os.clock()
+            <= heroicClashUntil then
 
-            return
-        end
-
-        if nearbyParts >= 18 then
-            return
-        end
-
-        local character =
-            Players.LocalPlayer.Character
-
-        local root =
-            character
-            and character:FindFirstChild("HumanoidRootPart")
-
-        if not root then
-            return
-        end
-
-        if (
-            object.Position
-            - root.Position
-        ).Magnitude > 35 then
-
-            return
-        end
-
-        nearbyParts += 1
-
-        print(
-            "Heroic Clash part: "
-            .. object.Name
-            .. " | "
-            .. fmtVector(
-                object.Size
+            task.defer(
+                inspectObject,
+                object
             )
-        )
+        end
     end)
 
     do
         local remote =
-            ReplicatedStorage:FindFirstChild("ByteNetReliable")
+            ReplicatedStorage:
+            FindFirstChild(
+                "ByteNetReliable"
+            )
 
         if remote
-            and type(hookmetamethod) == "function"
-            and type(getnamecallmethod) == "function" then
+            and type(hookmetamethod)
+                == "function"
+            and type(getnamecallmethod)
+                == "function" then
 
             local oldNamecall
 
@@ -442,11 +636,12 @@ do
                     local method =
                         getnamecallmethod()
 
-                    local args =
-                        table.pack(...)
-
                     if self == remote
-                        and method == "FireServer" then
+                        and method
+                            == "FireServer" then
+
+                        local args =
+                            table.pack(...)
 
                         local packet =
                             args[1]
@@ -478,7 +673,8 @@ do
                                 )
 
                             local move =
-                                type(payload) == "table"
+                                type(payload)
+                                    == "table"
                                 and payload[1]
                                 or nil
 
@@ -486,129 +682,21 @@ do
                                 and okB
                                 and a == 25
                                 and b == 1
-                                and type(move) == "table"
-                                and move[1] == "skill3"
-                                and type(move[2]) == "boolean" then
+                                and type(move)
+                                    == "table"
+                                and move[1]
+                                    == "skill3"
+                                and type(move[2])
+                                    == "boolean" then
 
                                 armHeroicClash(
                                     move[2]
                                     and "left"
                                     or "right"
                                 )
-                            end
-                        end
 
-                    elseif self == Workspace
-                        and os.clock() <= heroicClashUntil then
-
-                        if method == "GetPartBoundsInBox"
-                            and typeof(args[2]) == "Vector3" then
-
-                            local normalSize = args[2]
-
-                            logQuery(
-                                "box",
-                                fmtVector(normalSize)
-                            )
-
-                            if heroicClashSize > 0 then
-                                args[2] =
-                                    Vector3.new(
-                                        heroicClashSize,
-                                        heroicClashSize,
-                                        heroicClashSize
-                                    )
-                            end
-
-                            return oldNamecall(
-                                self,
-                                table.unpack(
-                                    args,
-                                    1,
-                                    args.n
-                                )
-                            )
-
-                        elseif method == "GetPartBoundsInRadius"
-                            and type(args[2]) == "number" then
-
-                            logQuery(
-                                "radius",
-                                string.format(
-                                    "%.2f",
-                                    args[2]
-                                )
-                            )
-
-                            if heroicClashSize > 0 then
-                                args[2] =
-                                    heroicClashSize
-                            end
-
-                            return oldNamecall(
-                                self,
-                                table.unpack(
-                                    args,
-                                    1,
-                                    args.n
-                                )
-                            )
-
-                        elseif method == "GetPartsInPart"
-                            and typeof(args[1]) == "Instance"
-                            and args[1]:IsA("BasePart") then
-
-                            local hitboxPart =
-                                args[1]
-
-                            local normalSize =
-                                hitboxPart.Size
-
-                            logQuery(
-                                "part box",
-                                hitboxPart.Name
-                                .. " | "
-                                .. fmtVector(normalSize)
-                            )
-
-                            if heroicClashSize > 0
-                                and hitboxPart.Parent then
-
-                                local changed =
-                                    pcall(function()
-                                        hitboxPart.Size =
-                                            Vector3.new(
-                                                heroicClashSize,
-                                                heroicClashSize,
-                                                heroicClashSize
-                                            )
-                                    end)
-
-                                local results =
-                                    table.pack(
-                                        oldNamecall(
-                                            self,
-                                            table.unpack(
-                                                args,
-                                                1,
-                                                args.n
-                                            )
-                                        )
-                                    )
-
-                                if changed
-                                    and hitboxPart.Parent then
-
-                                    pcall(function()
-                                        hitboxPart.Size =
-                                            normalSize
-                                    end)
-                                end
-
-                                return table.unpack(
-                                    results,
-                                    1,
-                                    results.n
+                                task.defer(
+                                    scanExistingWhiffs
                                 )
                             end
                         end
@@ -620,9 +708,13 @@ do
                     )
                 end
 
-            if type(newcclosure) == "function" then
+            if type(newcclosure)
+                == "function" then
+
                 replacement =
-                    newcclosure(replacement)
+                    newcclosure(
+                        replacement
+                    )
             end
 
             local okHook, original =
@@ -633,8 +725,11 @@ do
                     replacement
                 )
 
-            if okHook and original then
-                oldNamecall = original
+            if okHook
+                and original then
+
+                oldNamecall =
+                    original
             end
         end
     end
@@ -653,6 +748,19 @@ do
                     0,
                     500
                 )
+
+            if heroicClashSize <= 0 then
+                heroicClashUntil = 0
+
+                for part in pairs(
+                    activeWhiffs
+                ) do
+                    stopWhiff(
+                        part,
+                        true
+                    )
+                end
+            end
         end
     )
 end
