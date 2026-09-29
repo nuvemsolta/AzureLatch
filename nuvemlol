@@ -2207,1997 +2207,610 @@ end
 do
     local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
     at:Label("Auto Trap: Automatically Uses Trap On Air Balls.")
+    local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
 
-    local PlayersService = game:GetService("Players")
-    local ReplicatedStorageService = game:GetService("ReplicatedStorage")
-    local RunServiceService = game:GetService("RunService")
-    local UserInputServiceService = game:GetService("UserInputService")
-    local WorkspaceService = game:GetService("Workspace")
-
-    local localPlayer = PlayersService.LocalPlayer
-    local terrain = WorkspaceService.Terrain
-    local remote = ReplicatedStorageService:WaitForChild("ByteNetReliable")
-    local holderFolder = ReplicatedStorageService:FindFirstChild("workspace")
-    local ballHolder = holderFolder and holderFolder:FindFirstChild("ballHolder")
-
+    local ps = game:GetService("Players")
+    local rs = game:GetService("RunService")
+    local storage = game:GetService("ReplicatedStorage")
+    local ws = game:GetService("Workspace")
+    local lp = ps.LocalPlayer
+    local terrain = ws.Terrain
+    local remote = storage:WaitForChild("ByteNetReliable")
+    local worldValues = storage:FindFirstChild("workspace")
+    local holderValue = worldValues and worldValues:FindFirstChild("ballHolder")
     local packet = buffer.create(2)
     buffer.writeu8(packet, 0, 25)
     buffer.writeu8(packet, 1, 1)
+    local renderName = "CeleronAutoTrapAbsoluteLock"
+    local env = (getgenv and getgenv()) or _G
+    if type(env.CeleronTrapRuntime) == "table" and type(env.CeleronTrapRuntime.destroy) == "function" then
+        pcall(env.CeleronTrapRuntime.destroy)
+    end
 
-    local SUPER_THROW_ANIMATION = "rbxassetid://76979409962243"
-    local AIR_KICK_ANIMATION = "rbxassetid://76587445975710"
-
-    local CONFIRMED_TRAP_ANIMATIONS = {
-        ["rbxassetid://73387016994281"] = "Nagi",
-        ["rbxassetid://85349589701503"] = "Shidou",
-        ["rbxassetid://101043441232233"] = true,
-        ["rbxassetid://90734196141468"] = true,
-        ["rbxassetid://96593185131882"] = true,
-        ["rbxassetid://116422938520670"] = true,
-        ["rbxassetid://120351399679118"] = true
-    }
-
+    -- Character-specific wire arguments belong here; detection/lock/lifecycle are shared.
+    -- New profiles require the game's real remote arguments. Animation IDs alone are insufficient.
     local profiles = {
         Nagi = {
-            skill = "skill2",
-            words = {"control"},
-            jump = true,
-            lock = true
+            skill = "skill2", words = {"nagi", "control"}, jump = true,
+            animations = {"73387016994281"}, lead = 0.42,
+            args = function() return {"skill2", true} end
         },
         Shidou = {
-            skill = "skill1",
-            words = {"formless", "draconic"},
-            jump = true,
-            lock = true
+            skill = "skill1", words = {"shidou", "shidoumastery", "formless", "draconic"}, jump = true,
+            animations = {"85349589701503"}, lead = 0.42,
+            args = function() return {"skill1", "Front", true} end
         },
         Hiori = {
-            skill = "skill2",
-            words = {"frost guard", "glacial cut", "link up", "hiori"},
-            jump = false,
-            lock = true
+            skill = "skill2", words = {"hiori", "frostguard", "glacialcut", "linkup"}, jump = false,
+            animations = {"135646079977066"}, lead = 0.18,
+            args = function(ball, root)
+                local direction = ball.Position - root.Position
+                return {"skill2", direction.Magnitude > 0.001 and direction.Unit or root.CFrame.LookVector}
+            end
         },
         DonLorenzo = {
-            skill = "skill4",
-            words = {"horrific intercept", "defensive stance", "zombie dribble", "don lorenzo", "lorenzo"},
-            jump = false,
-            lock = true
+            skill = "skill4", words = {"donlorenzo", "lorenzo", "horrificintercept", "defensivestance", "zombiedribble"}, jump = false,
+            animations = {}, lead = 0.18,
+            args = function() return {"skill4"} end
         },
         Kiyora = {
-            skill = "skill3",
-            words = {"side trap", "sidetrap", "side-trap", "windmill shot", "dance battle", "twister pass", "kiyora"},
-            jump = false,
-            lock = true
+            skill = "skill3", words = {"kiyora", "sidetrap", "windmillshot", "dancebattle", "twisterpass"}, jump = false,
+            animations = {"101043441232233"}, lead = 0.18,
+            args = function() return {"skill3", "Right"} end
         }
     }
-
-    local state = {
-        enabled = false,
-        helperEnabled = false,
-        helperActive = false,
-        helperRange = 50,
-        helperSpeed = 50,
-        lockDeadline = 0,
-        range = 18,
-        mode = "Legit",
-
-        ball = nil,
-        lastBallPosition = nil,
-        lastBallTime = 0,
-        observedVelocity = Vector3.zero,
-
-        lastHolder = nil,
-        releaseSource = nil,
-        releaseKind = nil,
-        eligibleUntil = 0,
-        eligibleBall = nil,
-
-        fastSource = nil,
-        fastUntil = 0,
-
-        profile = nil,
-        profileCheckedAt = 0,
-        evalAccumulator = 0,
-
-        pending = nil,
-        attemptedBall = nil,
-
-        lockActive = false,
-        lockConfirmed = false,
-        lockBall = nil,
-        lockMissingSince = 0,
-        lockSeenAir = false,
-        lockLowSince = 0,
-        lockLastGroundCheck = 0,
-        lockLastGrounded = false,
-
-        lockAlign = nil,
-        lockAttachment = nil,
-        lockHumanoid = nil,
-        previousAutoRotate = nil,
-
-        lockCamera = nil,
-        previousCameraType = nil,
-        previousCameraSubject = nil,
-        previousMouseBehavior = nil,
-        cameraOffset = nil,
-        modalGui = nil,
-
-        connections = {},
-        sourceConnections = {},
-        playerCharacterConnections = {},
-        npcConnections = {},
-        localAnimatorConnection = nil
-    }
-
-    local lockName = "CeleronAutoTrapAbsoluteLock"
-
-    local function character()
-        return localPlayer.Character
-    end
-
-    local function addConnection(connection, source)
-        if not connection then
-            return
-        end
-
-        local list = source
-            and state.sourceConnections
-            or state.connections
-
-        list[#list + 1] = connection
-    end
-
-    local function disconnectList(list)
-        for index = #list, 1, -1 do
-            local connection = list[index]
-
-            if connection then
-                pcall(function()
-                    connection:Disconnect()
-                end)
-            end
-
-            list[index] = nil
-        end
-    end
-
-    local function currentBall()
-        local ball = state.ball
-
-        if ball
-            and ball.Parent
-            and ball:IsA("BasePart") then
-
-            return ball
-        end
-
-        ball = terrain:FindFirstChild("Ball")
-
-        if ball and ball:IsA("BasePart") then
-            state.ball = ball
-            return ball
-        end
-
-        state.ball = nil
-        return nil
-    end
-
-    local function setBall(ball)
-        if ball
-            and ball:IsA("BasePart")
-            and ball.Name == "Ball" then
-
-            state.ball = ball
-            state.lastBallPosition = ball.Position
-            state.lastBallTime = os.clock()
-            state.observedVelocity = Vector3.zero
-
-            if state.lockActive then
-                state.lockBall = ball
-                state.lockMissingSince = 0
-            end
-        end
-    end
-
-    local function playerFromCharacter(char)
-        if not char then
-            return nil
-        end
-
-        local player = PlayersService:GetPlayerFromCharacter(char)
-
-        if player then
-            return player
-        end
-
-        if char.Name then
-            return PlayersService:FindFirstChild(char.Name)
-        end
-    end
-
-    local function isEnemyCharacter(char)
-        local player = playerFromCharacter(char)
-
-        if not player
-            or player == localPlayer
-            or not player.Team
-            or not localPlayer.Team then
-
-            return false
-        end
-
-        return player.Team ~= localPlayer.Team
-    end
-
-    local function isNeutralNPC(char)
-        if not char
-            or char == character()
-            or playerFromCharacter(char) then
-
-            return false
-        end
-
-        return char:IsA("Model")
-            and char:FindFirstChildOfClass("Humanoid") ~= nil
-    end
-
-    local function isDefensiveSource(char)
-        return isEnemyCharacter(char)
-            or isNeutralNPC(char)
-    end
-
-    local function isSuperThrowSource(char)
-        if not char or char == character() then
-            return false
-        end
-
-        local player = playerFromCharacter(char)
-
-        if player then
-            return player ~= localPlayer
-        end
-
-        return isNeutralNPC(char)
-    end
-
-    local function hasBall()
-        local char = character()
-
-        if not char then
-            return false
-        end
-
-        if char:FindFirstChild("Ball") then
-            return true
-        end
-
-        return ballHolder
-            and ballHolder.Value == char
-    end
-
-    local function clearRelease()
-        state.releaseSource = nil
-        state.releaseKind = nil
-        state.eligibleUntil = 0
-        state.eligibleBall = nil
-    end
-
-    local function armRelease(source, kind, fast)
-        state.releaseSource = source
-        state.releaseKind = kind
-        state.eligibleUntil = os.clock() + 3.5
-        state.eligibleBall = nil
-
-        if fast then
-            state.fastSource = source
-            state.fastUntil = os.clock() + 1.5
-        end
-    end
-
-    local function releaseIsFast()
-        return state.fastSource ~= nil
-            and state.fastSource == state.releaseSource
-            and os.clock() <= state.fastUntil
-    end
-
-    local function eligibleBall(ball)
-        if not ball
-            or os.clock() > state.eligibleUntil then
-
-            clearRelease()
-            return false
-        end
-
-        local source = state.releaseSource
-
-        if not source then
-            return false
-        end
-
-        if state.releaseKind == "superthrow" then
-            if not isSuperThrowSource(source) then
-                clearRelease()
-                return false
-            end
-        elseif not isDefensiveSource(source) then
-            clearRelease()
-            return false
-        end
-
-        if state.eligibleBall
-            and state.eligibleBall ~= ball then
-
-            return false
-        end
-
-        state.eligibleBall = ball
-        return true
-    end
-
-    local function getSlots()
-        local playerGui = localPlayer:FindFirstChild("PlayerGui")
-        local hotbar = playerGui and playerGui:FindFirstChild("Hotbar")
-        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
-
-        return backpack and backpack:FindFirstChild("Hotbar")
-    end
-
-    local function slotText(slot)
-        local pieces = {}
-
-        if slot:IsA("TextLabel")
-            or slot:IsA("TextButton")
-            or slot:IsA("TextBox") then
-
-            pieces[#pieces + 1] = slot.Text
-        end
-
-        for _, object in ipairs(slot:GetDescendants()) do
-            if object:IsA("TextLabel")
-                or object:IsA("TextButton")
-                or object:IsA("TextBox") then
-
-                pieces[#pieces + 1] = object.Text
-            end
-        end
-
-        return string.lower(table.concat(pieces, " "))
-    end
-
-    local function resolveProfile(force)
-        local now = os.clock()
-        if not force and now - state.profileCheckedAt < 0.75 then
-            return state.profile
-        end
-        state.profileCheckedAt = now
-        state.profile = nil
-        local slots = getSlots()
-        if not slots then return nil end
-        -- Read each slot once; refresh when a style changes without respawning.
-        local texts = {}
-        for index = 1, 5 do
-            local slot = slots:FindFirstChild("skill" .. index)
-            texts[index] = slot and slotText(slot) or ""
-        end
-        for style, profile in pairs(profiles) do
-            for _, text in ipairs(texts) do
-                for _, word in ipairs(profile.words) do
-                    if string.find(text, word, 1, true) then
-                        state.profile = {
-                            style = style, skill = profile.skill,
-                            jump = profile.jump, lock = true
-                        }
-                        return state.profile
-                    end
-                end
-            end
-        end
-        return nil
-    end
-
-    local function onCooldown(skillName)
-        local slots = getSlots()
-        local slot = slots and slots:FindFirstChild(skillName)
-        local cooldown = slot and slot:FindFirstChild("Cooldown", true)
-
-        return cooldown
-            and cooldown:IsA("GuiObject")
-            and cooldown.Visible == true
-    end
-
-    local function oneWayPing()
-        local ping = 0
-
-        pcall(function()
-            ping = localPlayer:GetNetworkPing() * 0.5
-        end)
-
-        return math.clamp(ping, 0, 0.12)
-    end
-
-    local function updateObservedVelocity(ball, now)
-        if not state.lastBallPosition then
-            state.lastBallPosition = ball.Position
-            state.lastBallTime = now
-            return
-        end
-
-        local dt = now - state.lastBallTime
-
-        if dt >= 0.008 then
-            state.observedVelocity =
-                (ball.Position - state.lastBallPosition) / dt
-
-            state.lastBallPosition = ball.Position
-            state.lastBallTime = now
-        end
-    end
-
-    local function velocityOf(ball)
-        local physicsVelocity = ball.AssemblyLinearVelocity
-
-        if physicsVelocity.Magnitude >= 1.25 then
-            return physicsVelocity
-        end
-
-        return state.observedVelocity
-    end
-
-    local function trapTiming(ball, root, profile)
-        profile = profile or resolveProfile(false)
-        if not profile then return nil end
-        local closeTrap = profile.style == "Hiori" or profile.style == "DonLorenzo" or profile.style == "Kiyora"
-        local catchRange = closeTrap and math.min(state.range, 8) or state.range
-        local velocity = velocityOf(ball)
-
-        if velocity.Magnitude < 1.25 then
-            return nil
-        end
-
-        local rootVelocity = root.AssemblyLinearVelocity
-        local catchOffset = Vector3.new(0, 2.25, 0)
-        local catchPosition = root.Position + catchOffset
-
-        local relative = ball.Position - catchPosition
-        local relativeVelocity = velocity - rootVelocity
-        local relativeSpeedSq = relativeVelocity:Dot(relativeVelocity)
-
-        local ping = oneWayPing()
-        local networkLead = ping + (1 / 120)
-        local fast = releaseIsFast()
-
-        local closestTime = networkLead
-
-        if relativeSpeedSq > 0.001 then
-            closestTime = math.max(
-                networkLead,
-                -relative:Dot(relativeVelocity) / relativeSpeedSq
-            )
-        end
-
-        local distance = relative.Magnitude
-        local travelEstimate =
-            distance / math.max(relativeVelocity.Magnitude, 1)
-
-        local horizon = math.clamp(
-            math.max(
-                closestTime + (fast and 0.55 or 0.35),
-                travelEstimate + (fast and 0.4 or 0.25)
-            ),
-            fast and 0.65 or 0.45,
-            fast and 1.75 or 1.35
-        )
-
-        local margin = math.clamp(
-            velocity.Magnitude * ping,
-            0,
-            fast and 5.5 or 4.25
-        )
-
-        local gravity = WorkspaceService.Gravity
-        local samples = fast and 14 or 10
-        local enterTime = nil
-
-        for index = 0, samples do
-            local t =
-                networkLead
-                + (horizon - networkLead)
-                * (index / samples)
-
-            local ballPosition =
-                ball.Position
-                + velocity * t
-                + Vector3.new(
-                    0,
-                    -0.5 * gravity * t * t,
-                    0
-                )
-
-            local rootBase =
-                root.Position + rootVelocity * t
-
-            local targetPosition =
-                rootBase + catchOffset
-
-            local futureDistance =
-                (ballPosition - targetPosition).Magnitude
-
-            local futureHeight =
-                ballPosition.Y - rootBase.Y
-
-            if futureDistance <= catchRange + (closeTrap and math.min(margin, 1) or margin)
-                and futureHeight >= 0.9 then
-
-                enterTime = t
-                break
-            end
-        end
-
-        if not enterTime then
-            return nil
-        end
-
-        local approaching =
-            relative:Dot(relativeVelocity) < 0
-            or distance <= state.range
-
-        if not approaching then
-            return nil
-        end
-
-        local speedBonus = math.clamp(
-            velocity.Magnitude / (fast and 240 or 300),
-            0,
-            fast and 0.26 or 0.18
-        )
-
-        local activationLead
-
-        if fast then
-            activationLead = math.clamp(
-                0.8 + ping * 1.7 + speedBonus,
-                0.8,
-                1.08
-            )
-        else
-            activationLead = math.clamp(
-                0.62 + ping * 1.5 + speedBonus,
-                0.62,
-                0.88
-            )
-        end
-
-        if closeTrap then
-            activationLead = math.clamp(0.09 + ping, 0.09, 0.21)
-        end
-
-        local jumpLead = math.clamp(
-            activationLead + 0.16,
-            fast and 0.96 or 0.78,
-            fast and 1.22 or 1.04
-        )
-
-        return {
-            enterTime = enterTime,
-            activationLead = activationLead,
-            jumpLead = jumpLead
-        }
-    end
-
-    local function airborne(humanoid, root)
-        local humanoidState = humanoid:GetState()
-
-        return humanoid.FloorMaterial == Enum.Material.Air
-            or humanoidState == Enum.HumanoidStateType.Jumping
-            or humanoidState == Enum.HumanoidStateType.Freefall
-            or root.AssemblyLinearVelocity.Y > 0.75
-    end
-
-    local function clearModal()
-        if state.modalGui then
-            state.modalGui:Destroy()
-            state.modalGui = nil
-        end
-    end
-
-    local function restoreCamera()
-        local camera = state.lockCamera
-
-        if camera and camera.Parent then
-            pcall(function()
-                if state.previousCameraSubject then
-                    camera.CameraSubject =
-                        state.previousCameraSubject
-                end
-
-                camera.CameraType =
-                    state.previousCameraType
-                    or Enum.CameraType.Custom
-            end)
-        end
-
-        if state.previousMouseBehavior ~= nil then
-            pcall(function()
-                UserInputServiceService.MouseBehavior =
-                    state.previousMouseBehavior
-            end)
-        end
-
-        state.lockCamera = nil
-        state.previousCameraType = nil
-        state.previousCameraSubject = nil
-        state.previousMouseBehavior = nil
-        state.cameraOffset = nil
-
-        clearModal()
-    end
-
-    local function clearBodyLock()
-        if state.lockAlign then
-            state.lockAlign:Destroy()
-            state.lockAlign = nil
-        end
-
-        if state.lockAttachment then
-            state.lockAttachment:Destroy()
-            state.lockAttachment = nil
-        end
-
-        local humanoid = state.lockHumanoid
-
-        if humanoid
-            and humanoid.Parent
-            and state.previousAutoRotate ~= nil then
-
-            humanoid.AutoRotate =
-                state.previousAutoRotate
-        end
-
-        state.lockHumanoid = nil
-        state.previousAutoRotate = nil
-    end
-
-    local function stopLock()
-        if not state.lockActive then
-            return
-        end
-
-        state.lockActive = false
-        state.helperActive = false
-
-        pcall(function()
-            RunServiceService:UnbindFromRenderStep(lockName)
-        end)
-
-        clearBodyLock()
-        restoreCamera()
-
-        state.lockConfirmed = false
-        state.lockBall = nil
-        state.lockMissingSince = 0
-        state.lockSeenAir = false
-        state.lockLowSince = 0
-        state.lockLastGroundCheck = 0
-        state.lockLastGrounded = false
-    end
-
-    local function ensureModal()
-        if state.previousMouseBehavior == nil then
-            state.previousMouseBehavior =
-                UserInputServiceService.MouseBehavior
-        end
-
-        UserInputServiceService.MouseBehavior =
-            Enum.MouseBehavior.Default
-
-        if state.modalGui
-            and state.modalGui.Parent then
-
-            return
-        end
-
-        local playerGui = localPlayer:FindFirstChild("PlayerGui")
-
-        if not playerGui then
-            return
-        end
-
-        local gui = Instance.new("ScreenGui")
-        gui.Name = "CeleronTrapLock"
-        gui.ResetOnSpawn = false
-        gui.IgnoreGuiInset = true
-        gui.DisplayOrder = 2147483647
-        gui.Parent = playerGui
-
-        local modal = Instance.new("TextButton")
-        modal.Size = UDim2.fromOffset(1, 1)
-        modal.Position = UDim2.fromOffset(-10, -10)
-        modal.BackgroundTransparency = 1
-        modal.TextTransparency = 1
-        modal.Modal = true
-        modal.Active = true
-        modal.Parent = gui
-
-        state.modalGui = gui
-    end
-
-    local function ensureBodyLock(root, humanoid)
-        if state.lockHumanoid ~= humanoid then
-            clearBodyLock()
-        end
-
-        if state.previousAutoRotate == nil then
-            state.previousAutoRotate =
-                humanoid.AutoRotate
-        end
-
-        state.lockHumanoid = humanoid
-        humanoid.AutoRotate = false
-
-        if state.lockAlign
-            and state.lockAlign.Parent == root then
-
-            return
-        end
-
-        local attachment =
-            root:FindFirstChild("RootAttachment")
-
-        if not attachment then
-            attachment = Instance.new("Attachment")
-            attachment.Name = "CeleronTrapAttachment"
-            attachment.Parent = root
-            state.lockAttachment = attachment
-        end
-
-        local align = Instance.new("AlignOrientation")
-        align.Name = "CeleronTrapAlign"
-        align.Mode =
-            Enum.OrientationAlignmentMode.OneAttachment
-        align.Attachment0 = attachment
-        align.RigidityEnabled = true
-        align.MaxTorque = math.huge
-        align.Responsiveness = 2000
-        align.Parent = root
-
-        state.lockAlign = align
-    end
-
-    local function faceBall(root, humanoid, targetPosition)
-        ensureBodyLock(root, humanoid)
-
-        local rootPosition = root.Position
-        local flat = Vector3.new(
-            targetPosition.X,
-            rootPosition.Y,
-            targetPosition.Z
-        )
-
-        local delta = flat - rootPosition
-
-        if delta.Magnitude <= 0.01 then
-            return
-        end
-
-        local direction = delta.Unit
-        local facing =
-            CFrame.lookAt(
-                rootPosition,
-                rootPosition + direction,
-                Vector3.yAxis
-            )
-
-        if state.lockAlign then
-            state.lockAlign.CFrame =
-                CFrame.lookAt(
-                    Vector3.zero,
-                    direction,
-                    Vector3.yAxis
-                )
-        end
-
-        root.AssemblyAngularVelocity =
-            Vector3.zero
-
-        root.CFrame = facing
-    end
-
-    local function pullBall(root, targetPosition, dt)
-        if state.helperActive then
-            local delta = targetPosition - Vector3.new(0, 3, 0) - root.Position
-            local distance = delta.Magnitude
-            if distance > state.helperRange then return end
-            if distance > 0.5 then
-                local step = math.min(distance - 0.5, state.helperSpeed * math.clamp(dt or 0, 0, 0.04))
-                root.CFrame = root.CFrame + delta.Unit * step
-            end
-            return
-        end
-        if not state.lockConfirmed
-            or state.mode ~= "Blatant" then
-
-            return
-        end
-
-        local current = root.Position
-
-        local delta = Vector3.new(
-            targetPosition.X - current.X,
-            0,
-            targetPosition.Z - current.Z
-        )
-
-        local distance = delta.Magnitude
-
-        if distance <= 0.65
-            or distance > state.range + 20 then
-
-            return
-        end
-
-        local step = math.min(
-            distance - 0.65,
-            92 * math.clamp(dt or (1 / 60), 0, 0.04)
-        )
-
-        if step <= 0 then
-            return
-        end
-
-        local newPosition =
-            current + delta.Unit * step
-
-        root.CFrame =
-            CFrame.lookAt(
-                newPosition,
-                Vector3.new(
-                    targetPosition.X,
-                    newPosition.Y,
-                    targetPosition.Z
-                ),
-                Vector3.yAxis
-            )
-    end
-
-    local function setupCamera(root)
-        local camera = WorkspaceService.CurrentCamera
-
-        if not camera then
-            return nil
-        end
-
-        ensureModal()
-
-        if state.lockCamera ~= camera then
-            state.lockCamera = camera
-            state.previousCameraType =
-                camera.CameraType
-            state.previousCameraSubject =
-                camera.CameraSubject
-        end
-
-        if not state.cameraOffset then
-            local raw =
-                camera.CFrame.Position - root.Position
-
-            local distance =
-                math.max(raw.Magnitude, 1)
-
-            local height =
-                math.clamp(
-                    raw.Y,
-                    -distance * 0.9,
-                    distance * 0.9
-                )
-
-            local horizontal =
-                math.sqrt(
-                    math.max(
-                        distance * distance
-                            - height * height,
-                        0.01
-                    )
-                )
-
-            local flatLook = Vector3.new(
-                camera.CFrame.LookVector.X,
-                0,
-                camera.CFrame.LookVector.Z
-            )
-
-            if flatLook.Magnitude <= 0.01 then
-                flatLook =
-                    -root.CFrame.LookVector
-            else
-                flatLook = flatLook.Unit
-            end
-
-            state.cameraOffset =
-                -flatLook * horizontal
-                + Vector3.new(0, height, 0)
-        end
-
-        camera.CameraType =
-            Enum.CameraType.Scriptable
-
-        return camera
-    end
-
-    local function updateCamera(root, targetPosition)
-        local camera = setupCamera(root)
-
-        if not camera then
-            return
-        end
-
-        UserInputServiceService.MouseBehavior =
-            Enum.MouseBehavior.Default
-
-        camera.CameraType =
-            Enum.CameraType.Scriptable
-
-        local cameraPosition =
-            root.Position + state.cameraOffset
-
-        if (targetPosition - cameraPosition).Magnitude
-            <= 0.001 then
-
-            return
-        end
-
-        camera.CFrame =
-            CFrame.lookAt(
-                cameraPosition,
-                targetPosition,
-                Vector3.yAxis
-            )
-
-        camera.Focus =
-            CFrame.new(targetPosition)
-    end
-
-    local function lockTarget()
-        local target = state.lockBall
-
-        if target
-            and target.Parent
-            and target:IsA("BasePart") then
-
-            state.lockMissingSince = 0
-            return target
-        end
-
-        target = currentBall()
-
-        if target then
-            state.lockBall = target
-            state.lockMissingSince = 0
-            return target
-        end
-
-        if state.lockMissingSince == 0 then
-            state.lockMissingSince = os.clock()
-        end
-
-        return nil
-    end
-
-    local trapGroundParams = RaycastParams.new()
-    trapGroundParams.FilterType = Enum.RaycastFilterType.Exclude
-
-    local function groundMissed(target, char)
-        local now = os.clock()
-
-        if now - state.lockLastGroundCheck < 0.05 then
-            return state.lockLastGrounded
-        end
-
-        state.lockLastGroundCheck = now
-
-        trapGroundParams.FilterDescendantsInstances = {
-            char,
-            target
-        }
-
-        local position = target.Position
-        local velocity = target.AssemblyLinearVelocity
-
-        local hit = WorkspaceService:Raycast(
-            position,
-            Vector3.new(0, -3.5, 0),
-            trapGroundParams
-        )
-
-        local distance =
-            hit
-            and (position - hit.Position).Magnitude
-            or math.huge
-
-        local airborneNow =
-            distance > 1.15
-            or velocity.Y > 1.2
-
-        if airborneNow then
-            state.lockSeenAir = true
-            state.lockLowSince = 0
-            state.lockLastGrounded = false
-            return false
-        end
-
-        if not state.lockSeenAir then
-            state.lockLastGrounded = false
-            return false
-        end
-
-        if velocity.Y > 0.35 then
-            state.lockLowSince = 0
-            state.lockLastGrounded = false
-            return false
-        end
-
-        if state.lockLowSince == 0 then
-            state.lockLowSince = now
-            state.lockLastGrounded = false
-            return false
-        end
-
-        state.lockLastGrounded =
-            now - state.lockLowSince >= 0.22
-
-        return state.lockLastGrounded
-    end
-
-    local function physicsLock(dt)
-        if not state.lockActive then
-            return
-        end
-
-        if os.clock() > state.lockDeadline then
-            stopLock()
-            return
-        end
-
-        if hasBall() then
-            stopLock()
-            return
-        end
-
-        local target = lockTarget()
-
-        if not target then
-            if state.lockMissingSince > 0
-                and os.clock() - state.lockMissingSince > 0.18 then
-
-                stopLock()
-            end
-
-            return
-        end
-
-        local char = character()
-        local humanoid =
-            char and char:FindFirstChildOfClass("Humanoid")
-        local root =
-            char and char:FindFirstChild("HumanoidRootPart")
-
-        if not humanoid or not root then
-            stopLock()
-            return
-        end
-
-        local holder =
-            ballHolder and ballHolder.Value
-
-        if holder
-            and holder ~= char then
-
-            stopLock()
-            return
-        end
-
-        faceBall(
-            root,
-            humanoid,
-            target.Position
-        )
-
-        pullBall(
-            root,
-            target.Position,
-            dt
-        )
-    end
-
-    local function startLock(ball)
-        if not ball or not ball.Parent then
-            return
-        end
-
-        stopLock()
-
-        state.lockActive = true
-        state.lockDeadline = os.clock() + 2.5
-        state.lockBall = ball
-        state.lockConfirmed = false
-        state.lockMissingSince = 0
-        state.lockSeenAir = false
-        state.lockLowSince = 0
-        state.lockLastGroundCheck = 0
-        state.lockLastGrounded = false
-
-        physicsLock(0)
-
-        RunServiceService:BindToRenderStep(
-            lockName,
-            Enum.RenderPriority.Last.Value + 100,
-            function()
-                if not state.lockActive then
-                    return
-                end
-
-                if hasBall() then
-                    stopLock()
-                    return
-                end
-
-                local target = lockTarget()
-
-                if not target then
-                    if state.lockMissingSince > 0
-                        and os.clock() - state.lockMissingSince > 0.18 then
-
-                        stopLock()
-                    end
-
-                    return
-                end
-
-                local char = character()
-                local root =
-                    char and char:FindFirstChild("HumanoidRootPart")
-
-                if not root then
-                    stopLock()
-                    return
-                end
-
-                updateCamera(
-                    root,
-                    target.Position
-                )
-
-                if groundMissed(target, char) then
-                    stopLock()
-                end
-            end
-        )
-    end
-
-    local function confirmLock()
-        if state.lockActive then
-            state.lockConfirmed = true
-        end
-    end
-
-    local function fireTrap(profile)
-        if profile.style == "Nagi" then
-            remote:FireServer(
-                packet,
-                {
-                    {
-                        "skill2",
-                        true
-                    }
-                }
-            )
-
-            return true
-        end
-
-        if profile.style == "Shidou" then
-            remote:FireServer(
-                packet,
-                {
-                    {
-                        "skill1",
-                        "Front",
-                        true
-                    }
-                }
-            )
-
-            return true
-        end
-
-        if profile.style == "Hiori" then
-            remote:FireServer(
-                packet,
-                {
-                    {
-                        "skill2",
-                        Vector3.new(
-                            0.88363766670227051,
-                            -0.44731688499450684,
-                            -0.13817381858825684
-                        )
-                    }
-                }
-            )
-
-            return true
-        end
-
-        if profile.style == "DonLorenzo" then
-            remote:FireServer(
-                packet,
-                {
-                    {
-                        "skill4"
-                    }
-                }
-            )
-
-            return true
-        end
-
-        if profile.style == "Kiyora" then
-            remote:FireServer(
-                packet,
-                {
-                    {
-                        "skill3",
-                        "Right"
-                    }
-                }
-            )
-
-            return true
-        end
-
-        return false
-    end
-
-    local function tryPending()
-        local pending = state.pending
-
-        if not pending then
-            return
-        end
-
-        local ball = pending.ball
-
-        if not state.enabled
-            or not ball
-            or not ball.Parent
-            or hasBall() then
-
-            state.pending = nil
-            return
-        end
-
-        local char = character()
-        local humanoid =
-            char and char:FindFirstChildOfClass("Humanoid")
-        local root =
-            char and char:FindFirstChild("HumanoidRootPart")
-
-        if not humanoid or not root then
-            state.pending = nil
-            return
-        end
-
-        local currentProfile = resolveProfile(false)
-        if not currentProfile or currentProfile.style ~= pending.profile.style then
-            state.pending = nil
-            return
-        end
-
-        local timing = trapTiming(ball, root, pending.profile)
-
-        if not timing then
-            state.pending = nil
-            return
-        end
-
-        pending.enterTime = timing.enterTime
-        pending.activationLead = timing.activationLead
-        pending.jumpLead = timing.jumpLead
-
-        if onCooldown(pending.profile.skill) then
-            state.pending = nil
-            return
-        end
-
-        local shouldJump = pending.profile.jump ~= false
-
-        if shouldJump then
-            if not pending.jumpStarted
-                and timing.enterTime <= timing.jumpLead then
-
-                pending.jumpStarted = true
-                humanoid.Jump = true
-                humanoid:ChangeState(
-                    Enum.HumanoidStateType.Jumping
-                )
-            end
-
-            if pending.jumpStarted then
-                humanoid.Jump = true
-            end
-        end
-
-        if timing.enterTime > timing.activationLead then
-            return
-        end
-
-        if shouldJump and not airborne(humanoid, root) then
-            return
-        end
-
-        state.pending = nil
-        state.attemptedBall = ball
-
-        local shouldLock = true
-        if shouldLock then
-            startLock(ball)
-        end
-
-        if not fireTrap(pending.profile) and shouldLock then
-            stopLock()
-        end
-    end
-
-    local function beginAttempt(ball)
-        if state.pending
-            or state.attemptedBall == ball then
-
-            return
-        end
-
-        local profile =
-            resolveProfile(false)
-
-        if not profile then
-            return
-        end
-
-        state.pending = {
-            ball = ball,
-            profile = profile,
-            jumpStarted = false,
-            enterTime = nil,
-            activationLead = nil,
-            jumpLead = nil
-        }
-
-        tryPending()
-    end
-
-    local function evaluate()
-        if not state.enabled
-            or hasBall()
-            or os.clock() > state.eligibleUntil then
-
-            return
-        end
-
-        if ballHolder
-            and ballHolder.Value ~= nil then
-
-            return
-        end
-
-        local ball = currentBall()
-
-        if not ball
-            or not eligibleBall(ball) then
-
-            return
-        end
-
-        local now = os.clock()
-
-        updateObservedVelocity(
-            ball,
-            now
-        )
-
-        if state.attemptedBall == ball then
-            return
-        end
-
-        if state.pending then
-            tryPending()
-            return
-        end
-
-        local char = character()
-        local root =
-            char and char:FindFirstChild("HumanoidRootPart")
-
-        if not root then
-            return
-        end
-
-        local timing =
-            trapTiming(ball, root)
-
-        if timing
-            and timing.enterTime <= timing.jumpLead then
-
-            beginAttempt(ball)
-        end
-    end
-
-    local function hookLocalAnimator(char)
-        if state.localAnimatorConnection then
-            state.localAnimatorConnection:Disconnect()
-            state.localAnimatorConnection = nil
-        end
-
-        task.spawn(function()
-            if not state.enabled
-                or not char
-                or not char.Parent then
-
-                return
-            end
-
-            local humanoid =
-                char:FindFirstChildOfClass("Humanoid")
-                or char:WaitForChild("Humanoid", 5)
-
-            local animator =
-                humanoid
-                and (
-                    humanoid:FindFirstChildOfClass("Animator")
-                    or humanoid:WaitForChild("Animator", 5)
-                )
-
-            if not state.enabled
-                or not animator then
-
-                return
-            end
-
-            state.localAnimatorConnection =
-                animator.AnimationPlayed:Connect(function(track)
-                    local animation =
-                        track.Animation
-
-                    if not animation then
-                        return
-                    end
-
-                    local style =
-                        CONFIRMED_TRAP_ANIMATIONS[
-                            animation.AnimationId
-                        ]
-
-                    if not style then
-                        return
-                    end
-
-                    if style == "Nagi"
-                        or style == "Shidou" then
-
-                        state.profile = {
-                            style = style,
-                            skill = profiles[style].skill,
-                            jump = profiles[style].jump,
-                            lock = profiles[style].lock
-                        }
-                    end
-
-                    confirmLock()
-                end)
-        end)
-    end
-
-    local function hookSourceCharacter(char, key)
-        if not char or not char.Parent then
-            return
-        end
-
-        task.spawn(function()
-            local humanoid =
-                char:FindFirstChildOfClass("Humanoid")
-                or char:WaitForChild("Humanoid", 5)
-
-            local animator =
-                humanoid
-                and (
-                    humanoid:FindFirstChildOfClass("Animator")
-                    or humanoid:WaitForChild("Animator", 5)
-                )
-
-            if not state.enabled
-                or not animator
-                or not char.Parent then
-
-                return
-            end
-
-            local existing =
-                state.npcConnections[key]
-
-            if existing then
-                existing:Disconnect()
-            end
-
-            state.npcConnections[key] =
-                animator.AnimationPlayed:Connect(function(track)
-                    if not state.enabled
-                        or not track.Animation then
-
-                        return
-                    end
-
-                    local animationId =
-                        track.Animation.AnimationId
-
-                    if animationId == SUPER_THROW_ANIMATION
-                        and isSuperThrowSource(char) then
-
-                        armRelease(
-                            char,
-                            "superthrow",
-                            true
-                        )
-
-                        return
-                    end
-
-                    if ballHolder
-                        and ballHolder.Value == char
-                        and isDefensiveSource(char) then
-
-                        if animationId == AIR_KICK_ANIMATION
-                            or track.Priority.Value
-                                >= Enum.AnimationPriority.Action.Value then
-
-                            state.fastSource = char
-                            state.fastUntil =
-                                os.clock() + 1.3
-                        end
-                    end
-                end)
-        end)
-    end
-
-    local function hookPlayer(player)
-        if player == localPlayer then
-            return
-        end
-
-        local old =
-            state.playerCharacterConnections[player]
-
-        if old then
-            old:Disconnect()
-        end
-
-        state.playerCharacterConnections[player] =
-            player.CharacterAdded:Connect(function(char)
-                hookSourceCharacter(
-                    char,
-                    player
-                )
-            end)
-
-        if player.Character then
-            hookSourceCharacter(
-                player.Character,
-                player
-            )
-        end
-    end
-
-    local function hookNPC(char)
-        if not isNeutralNPC(char) then
-            return
-        end
-
-        hookSourceCharacter(
-            char,
-            char
-        )
-    end
-
-    local function clearSourceHooks()
-        for key, connection in pairs(state.npcConnections) do
-            if connection then
-                connection:Disconnect()
-            end
-
-            state.npcConnections[key] = nil
-        end
-
-        for player, connection in pairs(state.playerCharacterConnections) do
-            if connection then
-                connection:Disconnect()
-            end
-
-            state.playerCharacterConnections[player] = nil
-        end
-
-        disconnectList(
-            state.sourceConnections
-        )
-    end
-
-    local function resetRuntime()
-        state.pending = nil
-        state.attemptedBall = nil
-
-        state.releaseSource = nil
-        state.releaseKind = nil
-        state.eligibleUntil = 0
-        state.eligibleBall = nil
-
-        state.fastSource = nil
-        state.fastUntil = 0
-
-        state.lastBallPosition = nil
-        state.lastBallTime = 0
-        state.observedVelocity =
-            Vector3.zero
-        state.evalAccumulator = 0
-    end
-
-    local function onHolderChanged(current)
-        local previous =
-            state.lastHolder
-
-        state.lastHolder =
-            current
-
-        if current == nil then
-            if previous == character() then
-                clearRelease()
-                state.pending = nil
-                state.attemptedBall = nil
-                stopLock()
-                return
-            end
-
-            if state.releaseKind == "superthrow"
-                and state.releaseSource == previous
-                and os.clock() <= state.eligibleUntil
-                and isSuperThrowSource(previous) then
-
-                state.eligibleBall = nil
-                state.pending = nil
-                state.attemptedBall = nil
-                evaluate()
-                return
-            end
-
-            if isDefensiveSource(previous) then
-                local fast =
-                    state.fastSource == previous
-                    and os.clock() <= state.fastUntil
-
-                armRelease(
-                    previous,
-                    "pass",
-                    fast
-                )
-
-                state.pending = nil
-                state.attemptedBall = nil
-                evaluate()
-                return
-            end
-
-            clearRelease()
-            return
-        end
-
-        if current == character() then
-            clearRelease()
-            state.pending = nil
-            state.attemptedBall = nil
-            stopLock()
-            return
-        end
-
-        if state.lockActive then
-            stopLock()
-        end
-
-        if not (
-            state.releaseKind == "superthrow"
-            and state.releaseSource == current
-            and os.clock() <= state.eligibleUntil
-        ) then
-            clearRelease()
-        end
-    end
-
-    local function enable()
-        if state.enabled then
-            return
-        end
-
-        state.enabled = true
-        resetRuntime()
-
-        state.profile = nil
-        state.profileCheckedAt = 0
-        resolveProfile(true)
-
-        local ball =
-            terrain:FindFirstChild("Ball")
-
-        if ball
-            and ball:IsA("BasePart") then
-
-            setBall(ball)
-        end
-
-        if ballHolder then
-            state.lastHolder =
-                ballHolder.Value
-
-            addConnection(
-                ballHolder.Changed:Connect(
-                    onHolderChanged
-                )
-            )
-        end
-
-        addConnection(
-            terrain.ChildAdded:Connect(function(child)
-                if child.Name ~= "Ball"
-                    or not child:IsA("BasePart") then
-
-                    return
-                end
-
-                setBall(child)
-
-                if state.releaseSource
-                    and os.clock() <= state.eligibleUntil then
-
-                    state.eligibleBall = child
-                    evaluate()
-                end
-            end)
-        )
-
-        addConnection(
-            terrain.ChildRemoved:Connect(function(child)
-                if child ~= state.ball then
-                    return
-                end
-
-                state.ball = nil
-                state.lastBallPosition = nil
-                state.lastBallTime = 0
-                state.observedVelocity =
-                    Vector3.zero
-
-                if state.lockActive then
-                    state.lockMissingSince =
-                        os.clock()
-                end
-            end)
-        )
-
-        addConnection(
-            localPlayer.CharacterAdded:Connect(function(char)
-                stopLock()
-                resetRuntime()
-                state.profile = nil
-                state.profileCheckedAt = 0
-
-                hookLocalAnimator(char)
-            end)
-        )
-
-        addConnection(
-            PlayersService.PlayerAdded:Connect(
-                hookPlayer
-            ),
-            true
-        )
-
-        addConnection(
-            PlayersService.PlayerRemoving:Connect(function(player)
-                local connection =
-                    state.playerCharacterConnections[player]
-
-                if connection then
-                    connection:Disconnect()
-                    state.playerCharacterConnections[player] = nil
-                end
-
-                local animatorConnection =
-                    state.npcConnections[player]
-
-                if animatorConnection then
-                    animatorConnection:Disconnect()
-                    state.npcConnections[player] = nil
-                end
-            end),
-            true
-        )
-
-        for _, player in ipairs(PlayersService:GetPlayers()) do
-            hookPlayer(player)
-        end
-
-        local charactersFolder =
-            WorkspaceService:FindFirstChild("characters")
-
-        if charactersFolder then
-            for _, char in ipairs(charactersFolder:GetChildren()) do
-                hookNPC(char)
-            end
-
-            addConnection(
-                charactersFolder.ChildAdded:Connect(
-                    hookNPC
-                ),
-                true
-            )
-        end
-
-        if localPlayer.Character then
-            hookLocalAnimator(
-                localPlayer.Character
-            )
-        end
-
-        addConnection(
-            RunServiceService.PreSimulation:Connect(function(dt)
-                if not state.enabled then
-                    return
-                end
-
-                if state.lockActive then
-                    physicsLock(dt)
-                end
-
-                if state.pending
-                    or (
-                        state.releaseSource
-                        and os.clock()
-                            <= state.eligibleUntil
-                    ) then
-
-                    state.evalAccumulator += dt
-                    if state.evalAccumulator >= (1 / 60) then
-                        state.evalAccumulator = 0
-                        evaluate()
-                    end
-                else
-                    state.evalAccumulator = 0
-                end
-            end)
-        )
-    end
-
-    local function disable()
-        if not state.enabled then
-            return
-        end
-
-        state.enabled = false
-
-        stopLock()
-
-        if state.localAnimatorConnection then
-            state.localAnimatorConnection:Disconnect()
-            state.localAnimatorConnection = nil
-        end
-
-        clearSourceHooks()
-        disconnectList(
-            state.connections
-        )
-
-        resetRuntime()
-    end
-
-    -- Event-driven manual helper: no idle frame loop and no keyboard polling.
-    local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
+    local animationProfiles = {}
     local helperAnimations = {
         ["73387016994281"] = true, ["101043441232233"] = true,
         ["96593185131882"] = true, ["116422938520670"] = true,
         ["90734196141468"] = true, ["85349589701503"] = true,
-        ["120351399679118"] = true
+        ["120351399679118"] = true, ["135646079977066"] = true
     }
-    local helperConnections = {}
-    local helperAnimatorConnection
-    local helperFrameConnection
-    local helperStopConnection
-    local helperGeneration = 0
-    local function stopHelper()
-        if helperFrameConnection then helperFrameConnection:Disconnect(); helperFrameConnection = nil end
-        if helperStopConnection then helperStopConnection:Disconnect(); helperStopConnection = nil end
-        if state.helperActive then stopLock() end
+    for name, profile in pairs(profiles) do
+        profile.name = name
+        for _, id in ipairs(profile.animations) do
+            animationProfiles[id] = profile
+            helperAnimations[id] = true
+        end
     end
-    local function hookHelper(char)
-        helperGeneration += 1
-        local generation = helperGeneration
-        stopHelper()
-        if helperAnimatorConnection then helperAnimatorConnection:Disconnect(); helperAnimatorConnection = nil end
+    local state = {
+        enabled = false, helper = false, running = false, destroyed = false,
+        mode = "Legit", selected = "Auto", range = 60, skillRange = 18,
+        helperRange = 50, helperSpeed = 50, diagnostics = false,
+        char = nil, humanoid = nil, root = nil, ball = nil,
+        active = nil, flight = nil, sequence = 0, generation = 0,
+        profile = nil, profileAt = -math.huge, learned = nil,
+        slots = nil, slotCache = {}, slotAt = -math.huge,
+        ballPosition = nil, sampleAt = 0, velocity = Vector3.zero,
+        groundAt = -math.huge, inAir = false,
+        ping = 0, pingAt = -math.huge,
+        connections = {}, characterConnections = {},
+        lastWarning = nil, warningAt = -math.huge
+    }
+    local runtime = {}
+    env.CeleronTrapRuntime = runtime
+    local groundParams = RaycastParams.new()
+    groundParams.FilterType = Enum.RaycastFilterType.Exclude
+    local stopLock, evaluate, syncRuntime
+
+    local function disconnectAll(list)
+        for index = #list, 1, -1 do
+            list[index]:Disconnect()
+            list[index] = nil
+        end
+    end
+    local function diagnostic(message)
+        if not state.diagnostics then return end
+        local now = os.clock()
+        if state.lastWarning ~= message or now - state.warningAt >= 3 then
+            state.lastWarning, state.warningAt = message, now
+            warn("[Celeron Auto Trap] " .. message)
+        end
+    end
+    local function normalize(value)
+        return tostring(value or ""):lower():gsub("<[^>]*>", ""):gsub("[^%w]", "")
+    end
+    local function refreshSlots(now)
+        if now - state.slotAt < 0.25 and state.slots and state.slots.Parent then return end
+        state.slotAt = now
+        local gui = lp:FindFirstChild("PlayerGui")
+        local hotbar = gui and gui:FindFirstChild("Hotbar")
+        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+        local slots = backpack and backpack:FindFirstChild("Hotbar")
+        state.slots = slots
+        for index = 1, 5 do
+            local name = "skill" .. index
+            local slot = slots and slots:FindFirstChild(name)
+            state.slotCache[name] = {
+                slot = slot, cooldown = slot and slot:FindFirstChild("Cooldown", true)
+            }
+        end
+    end
+    local function onCooldown(profile)
+        refreshSlots(os.clock())
+        local entry = state.slotCache[profile.skill]
+        local cd = entry and entry.cooldown
+        return cd and cd.Parent and cd:IsA("GuiObject") and cd.Visible == true or false
+    end
+    local function resolveProfile(force)
+        if state.selected ~= "Auto" then return profiles[state.selected] end
+        local now = os.clock()
+        if not force and now - state.profileAt < 0.35 then return state.profile end
+        state.profileAt = now
+        refreshSlots(now)
+        local pieces = {}
+        for _, object in ipairs({lp, state.char}) do
+            for name, value in pairs(object:GetAttributes()) do
+                local key = normalize(name)
+                if key:find("style", 1, true) or key:find("character", 1, true) then
+                    pieces[#pieces + 1] = normalize(value)
+                end
+            end
+        end
+        local attributes = table.concat(pieces, " ")
+        local previous = state.profile
+        -- Explicit style attributes outrank generic move names such as Control.
+        for name, profile in pairs(profiles) do
+            if attributes:find(normalize(name), 1, true) then
+                state.profile = profile
+                if previous ~= profile then state.learned = nil end
+                return profile
+            end
+        end
+        pieces = {}
+        for _, entry in pairs(state.slotCache) do
+            local slot = entry.slot
+            if slot then
+                if slot:IsA("TextLabel") or slot:IsA("TextButton") or slot:IsA("TextBox") then
+                    pieces[#pieces + 1] = normalize(slot.Text)
+                end
+                for _, object in ipairs(slot:GetDescendants()) do
+                    if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                        pieces[#pieces + 1] = normalize(object.Text)
+                    end
+                end
+            end
+        end
+        local text = table.concat(pieces, " ")
+        local found, best = nil, 0
+        for _, profile in pairs(profiles) do
+            local score = 0
+            for _, word in ipairs(profile.words) do
+                if text:find(word, 1, true) then score = score + #word end
+            end
+            if score > best then found, best = profile, score end
+        end
+        if found then
+            state.profile = found
+            if previous ~= found then state.learned = nil end
+        else
+            state.profile = state.learned
+        end
+        return state.profile
+    end
+    local function heldByLocal()
+        return state.char and (state.char:FindFirstChild("Ball") ~= nil
+            or (holderValue and (holderValue.Value == state.char or holderValue.Value == lp)))
+    end
+    local function heldBall(ball)
+        if heldByLocal() then return true end
+        local holder = holderValue and holderValue.Value
+        if not holder then return false end
+        local char = holder:IsA("Player") and holder.Character or holder
+        -- A stale holder value alone must not hide an air-dribble/released ball.
+        return char and ball:IsDescendantOf(char) or false
+    end
+    local function currentBall()
+        if state.ball and state.ball.Parent and state.ball:IsDescendantOf(terrain) then return state.ball end
+        local ball = terrain:FindFirstChild("Ball")
+        if ball and ball:IsA("BasePart") then
+            if state.ball ~= ball then
+                state.ballPosition, state.sampleAt = ball.Position, os.clock()
+                state.velocity, state.groundAt = Vector3.zero, -math.huge
+            end
+            state.ball = ball
+            return ball
+        end
+        state.ball = nil
+        return nil
+    end
+    local function sampleBall(ball, now)
+        local position = ball.Position
+        local dt = now - state.sampleAt
+        local physics = ball.AssemblyLinearVelocity
+        if physics.Magnitude >= 1.25 then
+            state.velocity = physics
+        elseif state.ballPosition and dt > 0.001 and dt < 0.25 then
+            state.velocity = (position - state.ballPosition) / dt
+        else
+            state.velocity = physics
+        end
+        state.ballPosition, state.sampleAt = position, now
+        if now - state.groundAt >= 0.05 then
+            state.groundAt = now
+            groundParams.FilterDescendantsInstances = {state.char, ball}
+            local radius = math.max(ball.Size.Y * 0.5, 0.5)
+            local hit = ws:Raycast(position, Vector3.new(0, -(radius + 0.65), 0), groundParams)
+            state.inAir = hit == nil or state.velocity.Y > 2
+        end
+    end
+    local function updatePing(now)
+        if now - state.pingAt < 1 then return end
+        state.pingAt = now
+        local ok, value = pcall(function() return lp:GetNetworkPing() end)
+        if ok then state.ping = math.clamp(value, 0, 0.2) end
+    end
+    local function catchTiming(ball, profile)
+        local relative = ball.Position - (state.root.Position + Vector3.new(0, 2.25, 0))
+        local speed = state.velocity - state.root.AssemblyLinearVelocity
+        local speedSquared = speed:Dot(speed)
+        local time = speedSquared > 0.01 and math.max(0, -relative:Dot(speed) / speedSquared) or 0
+        local lead = profile.lead + state.ping
+        -- Short prediction only; long ballistic guesses were causing early/late activations.
+        local t = math.min(time, lead)
+        local predicted = relative + speed * t + Vector3.new(0, -0.5 * ws.Gravity * t * t, 0)
+        return relative.Magnitude <= state.skillRange
+            or (time <= lead and predicted.Magnitude <= state.skillRange)
+    end
+    stopLock = function(reason)
+        local active = state.active
+        if not active then return end
+        state.active = nil
+        rs:UnbindFromRenderStep(renderName)
+        if active.stopConnection then active.stopConnection:Disconnect() end
+        if active.humanoid and active.humanoid.Parent then
+            active.humanoid.AutoRotate = active.autoRotate
+        end
+        -- CameraType, CameraSubject and mouse mode are never changed by this engine.
+        if active.camera == ws.CurrentCamera and active.camera and active.camera.Parent
+            and active.camera.CameraType ~= Enum.CameraType.Scriptable and active.baseCFrame then
+            active.camera.CFrame, active.camera.Focus = active.baseCFrame, active.baseFocus
+        end
+        if reason then diagnostic(reason) end
+    end
+    local function faceBall(ball, dt)
+        local active = state.active
+        local root = state.root
+        if not active or not root then return end
+        local target = ball.Position
+        local position = root.Position
+        if active.kind == "helper" then
+            local delta = target - Vector3.new(0, 3, 0) - position
+            local distance = delta.Magnitude
+            if distance > 0.5 then
+                position = position + delta.Unit * math.min(distance - 0.5, state.helperSpeed * math.clamp(dt, 0, 0.04))
+            end
+        elseif state.mode == "Blatant" and active.confirmed then
+            local delta = Vector3.new(target.X - position.X, 0, target.Z - position.Z)
+            if delta.Magnitude > 0.65 then
+                position = position + delta.Unit * math.min(delta.Magnitude - 0.65, 92 * math.clamp(dt, 0, 0.04))
+            end
+        end
+        local flat = Vector3.new(target.X, position.Y, target.Z)
+        state.humanoid.AutoRotate = false
+        root.AssemblyAngularVelocity = Vector3.zero
+        if (flat - position).Magnitude > 0.001 then
+            root.CFrame = CFrame.lookAt(position, flat, Vector3.yAxis)
+        end
+    end
+    local function startLock(ball, kind, profile, flight)
+        if state.active and state.active.ball == ball and state.active.kind == kind then return state.active end
+        stopLock()
+        local active = {
+            ball = ball, kind = kind, profile = profile, flight = flight,
+            started = os.clock(), humanoid = state.humanoid,
+            autoRotate = state.humanoid.AutoRotate, confirmed = false,
+            sentAt = nil, deadline = os.clock() + (kind == "helper" and 2 or 0.65)
+        }
+        state.active = active
+        faceBall(ball, 0)
+        rs:BindToRenderStep(renderName, Enum.RenderPriority.Last.Value + 1, function()
+            if state.active ~= active then return end
+            local now = os.clock()
+            if not ball.Parent or not state.root or not state.root.Parent or not state.humanoid
+                or state.humanoid.Health <= 0 or heldByLocal() or now > active.deadline then
+                stopLock("Lock released")
+                return
+            end
+            local camera = ws.CurrentCamera
+            if not camera or camera.CameraType == Enum.CameraType.Scriptable then return end
+            active.camera = camera
+            active.baseCFrame, active.baseFocus = camera.CFrame, camera.Focus
+            local position = camera.CFrame.Position
+            if (ball.Position - position).Magnitude > 0.001 then
+                camera.CFrame = CFrame.lookAt(position, ball.Position, Vector3.yAxis)
+                camera.Focus = CFrame.new(ball.Position)
+            end
+        end)
+        return active
+    end
+    local function confirmAnimation(active, track)
+        if state.active ~= active then return end
+        active.confirmed = true
+        active.track = track
+        active.deadline = os.clock() + math.clamp(track.Length / math.max(math.abs(track.Speed), 0.1) + 0.1, 0.25, 2)
+        if active.stopConnection then active.stopConnection:Disconnect() end
+        active.stopConnection = track.Stopped:Connect(function()
+            if state.active == active then stopLock("Trap animation ended") end
+        end)
+        diagnostic(active.profile and (active.profile.name .. ": animation confirmed") or "Trap Helper active")
+    end
+    local function onAnimation(track)
+        if not track.Animation then return end
+        local id = track.Animation.AnimationId:match("%d+")
+        local profile = animationProfiles[id]
+        if profile then
+            state.learned, state.profile, state.profileAt = profile, profile, os.clock()
+        end
+        local active = state.active
+        if active and active.kind == "auto" and active.sentAt then
+            if profile == active.profile then
+                confirmAnimation(active, track)
+                return
+            end
+            -- Unknown IDs can confirm only the selected profile's new action, inside its acknowledgement window.
+            if not profile and #active.profile.animations == 0
+                and os.clock() - active.sentAt <= 0.25 + state.ping * 2
+                and track.Priority.Value >= Enum.AnimationPriority.Action.Value then
+                confirmAnimation(active, track)
+                return
+            end
+        end
+        if not state.helper or not helperAnimations[id] or active then return end
+        local ball = currentBall()
+        if not ball or not state.root or heldBall(ball) or (ball.Position - state.root.Position).Magnitude > state.helperRange then return end
+        active = startLock(ball, "helper", profile, nil)
+        confirmAnimation(active, track)
+    end
+    local function sendTrap(active, now)
+        local profile = active.profile
+        local humanoid = state.humanoid
+        if profile.jump then
+            if not active.jumpAt then
+                active.jumpAt = now
+                humanoid.Jump = true
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+            local airborne = humanoid.FloorMaterial == Enum.Material.Air
+                or humanoid:GetState() == Enum.HumanoidStateType.Jumping
+                or humanoid:GetState() == Enum.HumanoidStateType.Freefall
+            if not airborne then return end
+        end
+        -- Set before FireServer so synchronous test doubles/events cannot miss the acknowledgement.
+        active.sentAt = now
+        active.deadline = now + math.clamp(0.25 + state.ping * 2, 0.25, 0.6)
+        active.flight.attempts = active.flight.attempts + 1
+        active.flight.lastSend = now
+        active.flight.sentDistance = (active.ball.Position - state.root.Position).Magnitude
+        local ok, err = pcall(function()
+            remote:FireServer(packet, {profile.args(active.ball, state.root)})
+        end)
+        if not ok then
+            stopLock(profile.name .. ": remote error " .. tostring(err))
+        else
+            diagnostic(profile.name .. ": request sent; waiting for animation/cooldown")
+        end
+    end
+    evaluate = function(dt)
+        if not state.running or not state.root or not state.root.Parent or not state.humanoid or state.humanoid.Health <= 0 then
+            stopLock()
+            return
+        end
+        local now = os.clock()
+        local ball = currentBall()
+        if not ball or heldBall(ball) then
+            state.flight = nil
+            stopLock()
+            return
+        end
+        sampleBall(ball, now)
+        if not state.inAir then
+            state.flight = nil
+            stopLock()
+            return
+        end
+        local distance = (ball.Position - state.root.Position).Magnitude
+        local active = state.active
+        if active then
+            local limit = active.kind == "helper" and state.helperRange or state.range
+            if active.ball ~= ball or distance > limit + 3 then stopLock(); active = nil end
+        end
+        if active then
+            if now > active.deadline then
+                local unconfirmed = active.sentAt and not active.confirmed
+                stopLock(unconfirmed and (active.profile.name .. ": no animation/cooldown acknowledgement; check remote/conditions") or "Lock released")
+                return
+            end
+            if active.kind == "helper" then
+                faceBall(ball, dt)
+                return
+            end
+            if not state.enabled then stopLock(); return end
+            local selected = resolveProfile(false)
+            if selected ~= active.profile then stopLock("Style changed"); return end
+            if active.sentAt then
+                if not active.confirmed and onCooldown(active.profile) then
+                    active.confirmed = true
+                    active.deadline = now + 0.6
+                    diagnostic(active.profile.name .. ": cooldown acknowledged")
+                end
+            elseif onCooldown(active.profile) then
+                stopLock("Skill on cooldown")
+                return
+            elseif state.mode == "Blatant" or catchTiming(ball, active.profile) then
+                sendTrap(active, now)
+            end
+            faceBall(ball, dt)
+            return
+        end
+        if not state.enabled or distance > state.range then return end
+        updatePing(now)
+        local profile = resolveProfile(false)
+        if not profile then diagnostic("Style not identified: choose Auto Trap Character"); return end
+        if onCooldown(profile) then return end
+        local flight = state.flight
+        if not flight or flight.ball ~= ball or flight.profile ~= profile then
+            state.sequence = state.sequence + 1
+            flight = {ball = ball, profile = profile, attempts = 0, lastSend = -math.huge, sentDistance = math.huge}
+            state.flight = flight
+        end
+        -- One controlled retry when a rejected distant request becomes reachable; never spam every frame.
+        if flight.attempts >= 2 then return end
+        if flight.attempts > 0 then
+            if flight.confirmed or now - flight.lastSend < 0.35 then return end
+            if distance > state.skillRange or flight.sentDistance - distance < 3 then return end
+        end
+        if flight.finished then return end
+        if state.mode ~= "Blatant" and not catchTiming(ball, profile) then
+            -- Aim may start ahead of activation; avoid holding an unreachable camera target indefinitely.
+            local relative = ball.Position - state.root.Position
+            local velocity = state.velocity - state.root.AssemblyLinearVelocity
+            if relative:Dot(velocity) >= 0 then return end
+            local arrival = relative.Magnitude / math.max(velocity.Magnitude, 1)
+            if arrival > 0.65 then return end
+        end
+        active = startLock(ball, "auto", profile, flight)
+        if state.mode == "Blatant" or catchTiming(ball, profile) then sendTrap(active, now) end
+    end
+    -- A successful local animation/cooldown consumes this flight; retry only rejected requests.
+    local originalStop = stopLock
+    stopLock = function(reason)
+        local active = state.active
+        if active and active.flight then
+            if active.confirmed then active.flight.confirmed = true end
+            if not active.sentAt then active.flight.finished = true end
+        end
+        originalStop(reason)
+    end
+    local function hookCharacter(char)
+        state.generation = state.generation + 1
+        local generation = state.generation
+        stopLock()
+        disconnectAll(state.characterConnections)
+        state.char, state.root, state.humanoid = char, nil, nil
+        state.profile, state.learned, state.profileAt = nil, nil, -math.huge
+        state.flight = nil
         task.spawn(function()
             local humanoid = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+            local root = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 5)
             local animator = humanoid and (humanoid:FindFirstChildOfClass("Animator") or humanoid:WaitForChild("Animator", 5))
-            if not animator or not state.helperEnabled or generation ~= helperGeneration or char ~= character() then return end
-            helperAnimatorConnection = animator.AnimationPlayed:Connect(function(track)
-                local animation = track.Animation
-                local id = animation and string.match(animation.AnimationId, "%d+")
-                if not state.helperEnabled or not helperAnimations[id] then return end
-                -- Auto Trap owns its own lock; a manual helper never overrides it.
-                if state.lockActive and not state.helperActive then return end
-                local ball = currentBall()
-                local root = char:FindFirstChild("HumanoidRootPart")
-                if not ball or not root or hasBall() or (ball.Position - root.Position).Magnitude > state.helperRange then return end
-                stopHelper()
-                startLock(ball)
-                state.helperActive = true
-                state.lockConfirmed = true
-                state.lockDeadline = os.clock() + math.clamp(track.Length + 0.2, 0.5, 3)
-                helperStopConnection = track.Stopped:Connect(stopHelper)
-                helperFrameConnection = RunServiceService.PreSimulation:Connect(function(dt)
-                    if not state.helperActive or not track.IsPlaying or not state.helperEnabled then stopHelper(); return end
-                    if not state.enabled then physicsLock(dt) end
-                end)
+            if not state.running or generation ~= state.generation or lp.Character ~= char or not humanoid or not root then return end
+            state.humanoid, state.root = humanoid, root
+            state.characterConnections[#state.characterConnections + 1] = humanoid.Died:Connect(function() state.flight = nil; stopLock() end)
+            state.characterConnections[#state.characterConnections + 1] = char.ChildAdded:Connect(function(child)
+                if child.Name == "Ball" then state.flight = nil; stopLock() end
             end)
+            state.characterConnections[#state.characterConnections + 1] = char.AttributeChanged:Connect(function() state.profileAt = -math.huge end)
+            if animator then
+                state.characterConnections[#state.characterConnections + 1] = animator.AnimationPlayed:Connect(onAnimation)
+            end
         end)
     end
+    syncRuntime = function()
+        if state.destroyed then return end
+        local shouldRun = state.enabled or state.helper
+        if shouldRun == state.running then return end
+        state.running = shouldRun
+        if not shouldRun then
+            state.generation = state.generation + 1
+            stopLock()
+            disconnectAll(state.connections)
+            disconnectAll(state.characterConnections)
+            state.flight, state.ball = nil, nil
+            return
+        end
+        state.connections[#state.connections + 1] = lp.CharacterAdded:Connect(hookCharacter)
+        state.connections[#state.connections + 1] = lp.CharacterRemoving:Connect(function()
+            state.generation = state.generation + 1
+            stopLock(); state.flight = nil; state.root = nil
+            disconnectAll(state.characterConnections)
+        end)
+        state.connections[#state.connections + 1] = terrain.ChildAdded:Connect(function(child)
+            if child.Name == "Ball" and child:IsA("BasePart") then
+                state.ball = nil
+                currentBall()
+                evaluate(0)
+            end
+        end)
+        state.connections[#state.connections + 1] = terrain.ChildRemoved:Connect(function(child)
+            if child == state.ball then state.ball = nil; state.flight = nil; stopLock() end
+        end)
+        if holderValue then
+            state.connections[#state.connections + 1] = holderValue.Changed:Connect(function()
+                if heldByLocal() then state.flight = nil; stopLock() else evaluate(0) end
+            end)
+        end
+        state.connections[#state.connections + 1] = lp.AttributeChanged:Connect(function() state.profileAt = -math.huge end)
+        -- One physics callback covers all characters/actions; no enemy animator scans or polling tasks.
+        state.connections[#state.connections + 1] = rs.PreSimulation:Connect(function(dt)
+            if state.enabled or state.active then evaluate(dt) end
+        end)
+        if lp.Character then hookCharacter(lp.Character) end
+    end
+    -- Extension point: future profiles inherit the same detector, lock, cleanup and retry policy.
+    function runtime.registerProfile(name, definition)
+        if type(name) ~= "string" or name == "" or type(definition) ~= "table"
+            or type(definition.skill) ~= "string" or not definition.skill:match("^skill[1-5]$")
+            or type(definition.args) ~= "function" then
+            return false, "Expected name, skill1..skill5 and an args(ball, root) function"
+        end
+        local words, animations = {normalize(name)}, {}
+        for _, word in ipairs(definition.words or {}) do
+            if type(word) ~= "string" then return false, "Profile words must be strings" end
+            words[#words + 1] = normalize(word)
+        end
+        for _, id in ipairs(definition.animations or {}) do
+            local digits = tostring(id):match("%d+")
+            if not digits then return false, "Invalid animation ID" end
+            animations[#animations + 1] = digits
+        end
+        local previous = profiles[name]
+        if previous then
+            for _, id in ipairs(previous.animations) do
+                if animationProfiles[id] == previous then animationProfiles[id] = nil end
+            end
+        end
+        local profile = {
+            name = name, skill = definition.skill, args = definition.args,
+            words = words, animations = animations, jump = definition.jump == true,
+            lead = math.clamp(tonumber(definition.lead) or 0.18, 0, 0.8)
+        }
+        profiles[name] = profile
+        for _, id in ipairs(animations) do animationProfiles[id] = profile; helperAnimations[id] = true end
+        stopLock(); state.flight = nil; state.learned = nil; state.profileAt = -math.huge
+        return true
+    end
+    runtime.destroy = function()
+        if state.destroyed then return end
+        state.enabled, state.helper = false, false
+        syncRuntime()
+        state.destroyed = true
+        if env.CeleronTrapRuntime == runtime then env.CeleronTrapRuntime = nil end
+    end
+    at:Dropdown("Auto Trap Mode", {"Legit", "Blatant"}, function(value)
+        if value ~= "Legit" and value ~= "Blatant" then return end
+        stopLock(); state.flight = nil; state.mode = value
+    end)
+    at:Dropdown("Auto Trap Character", {"Auto", "Nagi", "Shidou", "Hiori", "DonLorenzo", "Kiyora"}, function(value)
+        if value ~= "Auto" and not profiles[value] then return end
+        stopLock(); state.selected = value; state.profileAt = -math.huge; state.flight = nil
+    end)
+    at:Slider("Auto Trap Range", 60, 5, 150, 1, function(value) state.range = value end)
+    at:Slider("Auto Trap Skill Range", 18, 5, 60, 1, function(value) state.skillRange = value end)
+    at:Toggle("Auto Trap Diagnostics", function(value) state.diagnostics = value == true end)
+    at:Toggle("Auto Trap", function(value)
+        state.enabled = value == true
+        if not state.enabled and state.active and state.active.kind == "auto" then stopLock() end
+        state.flight = nil
+        syncRuntime()
+    end)
     th:Toggle("Trap Helper", function(value)
-        state.helperEnabled = value == true
-        helperGeneration += 1
-        stopHelper()
-        disconnectList(helperConnections)
-        if helperAnimatorConnection then helperAnimatorConnection:Disconnect(); helperAnimatorConnection = nil end
-        if not state.helperEnabled then return end
-        helperConnections[#helperConnections + 1] = localPlayer.CharacterAdded:Connect(hookHelper)
-        if character() then hookHelper(character()) end
+        state.helper = value == true
+        if not state.helper and state.active and state.active.kind == "helper" then stopLock() end
+        syncRuntime()
     end)
     th:Slider("Trap Helper Max Distance", 50, 5, 200, 1, function(value) state.helperRange = value end)
     th:Slider("Trap Helper Speed", 50, 10, 1000, 1, function(value) state.helperSpeed = value end)
-
-    at:Dropdown(
-        "Auto Trap Mode",
-        {
-            "Legit",
-            "Blatant"
-        },
-        function(value)
-            if value == "Legit"
-                or value == "Blatant" then
-
-                state.mode = value
-            end
-        end
-    )
-
-    at:Slider(
-        "Auto Trap Range",
-        18,
-        5,
-        60,
-        1,
-        function(value)
-            state.range = value
-            state.pending = nil
-            state.attemptedBall = nil
-        end
-    )
-
-    at:Toggle("Auto Trap", function(value)
-        if value == true then
-            enable()
-        else
-            disable()
-        end
-    end)
 end
 
 local autoact = maintab2:Folder("Auto Activate Features.", Color3.fromRGB(24, 255, 228), true)
