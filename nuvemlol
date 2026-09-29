@@ -2875,21 +2875,20 @@ do
         ["rbxassetid://85349589701503"] = "Shidou"
     }
 
+    local CONFIRMED_TRAP_ANIMATIONS = {
+        ["rbxassetid://73387016994281"] = true,
+        ["rbxassetid://85349589701503"] = true,
+        ["rbxassetid://101043441232233"] = true,
+        ["rbxassetid://90734196141468"] = true
+    }
+
     local SUPER_THROW_ANIMATION =
         "rbxassetid://76979409962243"
 
     local AIR_KICK_ANIMATION =
         "rbxassetid://76587445975710"
 
-    local TRAPPABLE_RELEASE_ANIMATIONS = {
-        ["rbxassetid://113284951031775"] = true,
-        ["rbxassetid://134102760141398"] = true,
-        ["rbxassetid://99426023028221"] = true,
-        ["rbxassetid://136940491656183"] = true,
-        ["rbxassetid://82352266761422"] = true,
-        ["rbxassetid://138554810282359"] = true,
-        ["rbxassetid://76979409962243"] = true
-    }
+
 
     local function character()
         return lp.Character
@@ -3144,8 +3143,7 @@ do
                         local priorityValue =
                             track.Priority.Value
 
-                        if TRAPPABLE_RELEASE_ANIMATIONS[animationId]
-                            or animationId == AIR_KICK_ANIMATION
+                        if animationId == AIR_KICK_ANIMATION
                             or priorityValue
                                 >= Enum.AnimationPriority.Action.Value then
 
@@ -3234,8 +3232,7 @@ do
                         local priorityValue =
                             track.Priority.Value
 
-                        if TRAPPABLE_RELEASE_ANIMATIONS[animationId]
-                            or animationId == AIR_KICK_ANIMATION
+                        if animationId == AIR_KICK_ANIMATION
                             or priorityValue
                                 >= Enum.AnimationPriority.Action.Value then
 
@@ -3252,36 +3249,6 @@ do
         end)
     end
 
-    local function jumpButton()
-        local pg = lp:FindFirstChild("PlayerGui")
-        local touchGui =
-            pg and pg:FindFirstChild("TouchGui")
-
-        if not touchGui then
-            return nil
-        end
-
-        local button =
-            touchGui:FindFirstChild("JumpButton", true)
-
-        if button
-            and button:IsA("GuiButton")
-            and button.Visible then
-
-            return button
-        end
-    end
-
-    local function guiCenter(gui)
-        local position = gui.AbsolutePosition
-        local size = gui.AbsoluteSize
-
-        return Vector2.new(
-            position.X + size.X * 0.5,
-            position.Y + size.Y * 0.5
-        )
-    end
-
     local function releaseJump(expectedToken)
         if expectedToken
             and expectedToken ~= state.jumpHoldToken then
@@ -3289,29 +3256,13 @@ do
             return
         end
 
-        if state.jumpTouchActive
-            and state.jumpTouchPosition then
-
-            local point = state.jumpTouchPosition
-
-            pcall(function()
-                vim:SendTouchEvent(
-                    state.jumpTouchId,
-                    Enum.UserInputState.End.Value,
-                    point.X,
-                    point.Y
-                )
-            end)
-
-            state.jumpTouchActive = false
-            state.jumpTouchPosition = nil
-        end
-
         if not state.jumpHeld then
             return
         end
 
         state.jumpHeld = false
+        state.jumpTouchActive = false
+        state.jumpTouchPosition = nil
 
         pcall(function()
             vim:SendKeyEvent(
@@ -3330,46 +3281,20 @@ do
         if not state.jumpHeld then
             state.jumpHeld = true
 
-            local usedTouch = false
-
-            if uis.TouchEnabled then
-                local button = jumpButton()
-
-                if button then
-                    local point = guiCenter(button)
-
-                    local ok = pcall(function()
-                        vim:SendTouchEvent(
-                            state.jumpTouchId,
-                            Enum.UserInputState.Begin.Value,
-                            point.X,
-                            point.Y
-                        )
-                    end)
-
-                    if ok then
-                        usedTouch = true
-                        state.jumpTouchActive = true
-                        state.jumpTouchPosition = point
-                    end
-                end
-            end
-
-            if not usedTouch then
-                pcall(function()
-                    vim:SendKeyEvent(
-                        true,
-                        Enum.KeyCode.Space,
-                        false,
-                        game
-                    )
-                end)
-            end
+            pcall(function()
+                vim:SendKeyEvent(
+                    true,
+                    Enum.KeyCode.Space,
+                    false,
+                    game
+                )
+            end)
         end
 
-        -- Keep Roblox's real jump state asserted while the physical
-        -- jump input remains held. No forced ChangeState here.
         humanoid.Jump = true
+        humanoid:ChangeState(
+            Enum.HumanoidStateType.Jumping
+        )
 
         return token
     end
@@ -4468,32 +4393,21 @@ do
             return false
         end
 
-        local startY =
-            pending.jumpStartY
-            or root.Position.Y
-
         local rise =
-            root.Position.Y - startY
+            root.Position.Y
+            - (pending.jumpStartY or root.Position.Y)
 
         local elapsed =
             os.clock()
             - pending.jumpStartedAt
 
-        local realAir =
-            humanoid.FloorMaterial
-                == Enum.Material.Air
-
-        local verticalSpeed =
-            root.AssemblyLinearVelocity.Y
-
-        -- Formless must be pressed during a REAL airborne window.
-        -- This is still frame/event based; there is no fixed pre-skill wait.
-        return realAir
-            and (
-                rise >= 0.55
-                or verticalSpeed >= 5.5
+        return rise >= 0.06
+            or root.AssemblyLinearVelocity.Y >= 3
+            or (
+                elapsed >= 0.045
+                and humanoid.FloorMaterial
+                    == Enum.Material.Air
             )
-            and elapsed >= 0.045
     end
 
     local function airborneReady(profile, pending, humanoid, root)
@@ -4551,61 +4465,24 @@ do
         return best
     end
 
-    local function touchButton(button, touchId)
-        if not button
-            or not button.Visible then
-
-            return false
-        end
-
-        local point = guiCenter(button)
-
-        local ok = pcall(function()
-            vim:SendTouchEvent(
-                touchId,
-                Enum.UserInputState.Begin.Value,
-                point.X,
-                point.Y
-            )
-
-            task.defer(function()
-                pcall(function()
-                    vim:SendTouchEvent(
-                        touchId,
-                        Enum.UserInputState.End.Value,
-                        point.X,
-                        point.Y
-                    )
-                end)
-            end)
-        end)
-
-        return ok
-    end
-
     local function activateSkillInput(skillName)
-        local button =
-            hotbarButton(skillName)
-
-        if uis.TouchEnabled and button then
-            state.skillTouchId += 1
-
-            return touchButton(
-                button,
-                state.skillTouchId
-            )
-        end
-
         local activated = false
+        local button = hotbarButton(skillName)
 
         if button then
-            local point =
-                guiCenter(button)
+            local position = button.AbsolutePosition
+            local size = button.AbsoluteSize
+
+            local x =
+                position.X + size.X * 0.5
+
+            local y =
+                position.Y + size.Y * 0.5
 
             local ok = pcall(function()
                 vim:SendMouseButtonEvent(
-                    point.X,
-                    point.Y,
+                    x,
+                    y,
                     0,
                     true,
                     game,
@@ -4615,8 +4492,8 @@ do
                 task.defer(function()
                     pcall(function()
                         vim:SendMouseButtonEvent(
-                            point.X,
-                            point.Y,
+                            x,
+                            y,
                             0,
                             false,
                             game,
@@ -4681,34 +4558,49 @@ do
         elseif profile.style == "Shidou" then
             local dispatchAt = os.clock()
 
-            state.shidouDispatchAt = dispatchAt
+            state.shidouDispatchAt =
+                dispatchAt
 
-            local nativeInputWorked =
-                activateSkillInput("skill1")
+            activateSkillInput("skill1")
 
-            -- On mobile, never follow the real touch with a direct skill1
-            -- remote. Mixing both routes was able to select the normal Bike.
-            if not uis.TouchEnabled
-                and not nativeInputWorked then
+            -- This is the exact fallback family from the Shidou build that
+            -- previously worked. It only fires if no correct trap/cooldown
+            -- confirmation appeared first.
+            task.delay(0.075, function()
+                if not state.enabled
+                    or state.shidouDispatchAt
+                        ~= dispatchAt then
+
+                    return
+                end
+
+                if state.shidouTrapAt
+                    >= dispatchAt then
+
+                    return
+                end
+
+                if onCooldown("skill1") then
+                    return
+                end
 
                 remote:FireServer(
-                    buffer.fromstring(buffers["base"]),
+                    buffer.fromstring(
+                        buffers["base"]
+                    ),
                     {
                         {
                             "skill1"
                         }
                     }
                 )
-            end
+            end)
 
-            local token = state.jumpHoldToken
+            local token =
+                state.jumpHoldToken
 
-            -- Correct trap animation releases this much earlier.
-            -- This is only a stuck-input safety net.
-            task.delay(0.55, function()
-                if state.shidouTrapAt < dispatchAt then
-                    releaseJump(token)
-                end
+            task.delay(0.16, function()
+                releaseJump(token)
             end)
         end
     end
@@ -4968,13 +4860,24 @@ do
                 return
             end
 
-            local style = animationToStyle[track.Animation.AnimationId]
+            local animationId =
+                track.Animation.AnimationId
 
-            if not style then
+            local style =
+                animationToStyle[animationId]
+
+            local isConfirmedTrap =
+                CONFIRMED_TRAP_ANIMATIONS[
+                    animationId
+                ] == true
+
+            if not isConfirmedTrap then
                 return
             end
 
-            state.learnedStyle = style
+            if style then
+                state.learnedStyle = style
+            end
 
             if style == "Shidou" then
                 state.shidouTrapAt = os.clock()
@@ -4993,7 +4896,7 @@ do
             if style == "Shidou" and state.jumpHeld then
                 local token = state.jumpHoldToken
 
-                task.delay(0.045, function()
+                task.delay(0.035, function()
                     releaseJump(token)
                 end)
             end
