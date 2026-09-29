@@ -2822,7 +2822,16 @@ do
         lockSeenAir = false,
         lockLowSince = 0,
         lockHumanoid = nil,
-        lockPreviousAutoRotate = nil
+        lockPreviousAutoRotate = nil,
+        lockStyle = nil,
+        lockBodyReady = false,
+        lockAlign = nil,
+        lockCreatedAttachment = nil,
+        lockCamera = nil,
+        lockPreviousCameraType = nil,
+        lockPreviousCameraSubject = nil,
+        lockCameraOffset = nil,
+        lockLastTargetPosition = nil
     }
 
     local ps = game:GetService("Players")
@@ -2978,29 +2987,6 @@ do
             and os.clock() <= state.fastReleaseUntil
     end
 
-    local function faceRootAt(root, targetPosition)
-        if not root or not targetPosition then
-            return
-        end
-
-        local rootPosition = root.Position
-
-        local flatTarget = Vector3.new(
-            targetPosition.X,
-            rootPosition.Y,
-            targetPosition.Z
-        )
-
-        if (flatTarget - rootPosition).Magnitude <= 0.01 then
-            return
-        end
-
-        root.CFrame = CFrame.lookAt(
-            rootPosition,
-            flatTarget,
-            Vector3.yAxis
-        )
-    end
 
     local function armDefensiveRelease(char)
         if not isDefensivePassSource(char) then
@@ -3373,6 +3359,55 @@ do
         return cooldown and cooldown.Visible == true
     end
 
+    local function clearBodyLock()
+        if state.lockAlign then
+            state.lockAlign:Destroy()
+            state.lockAlign = nil
+        end
+
+        if state.lockCreatedAttachment then
+            state.lockCreatedAttachment:Destroy()
+            state.lockCreatedAttachment = nil
+        end
+
+        local humanoid = state.lockHumanoid
+
+        if humanoid and humanoid.Parent
+            and state.lockPreviousAutoRotate ~= nil then
+
+            humanoid.AutoRotate =
+                state.lockPreviousAutoRotate
+        end
+
+        state.lockHumanoid = nil
+        state.lockPreviousAutoRotate = nil
+        state.lockBodyReady = false
+    end
+
+    local function restoreCamera()
+        local camera = state.lockCamera
+
+        if camera and camera.Parent then
+            if state.lockPreviousCameraSubject then
+                pcall(function()
+                    camera.CameraSubject =
+                        state.lockPreviousCameraSubject
+                end)
+            end
+
+            pcall(function()
+                camera.CameraType =
+                    state.lockPreviousCameraType
+                    or Enum.CameraType.Custom
+            end)
+        end
+
+        state.lockCamera = nil
+        state.lockPreviousCameraType = nil
+        state.lockPreviousCameraSubject = nil
+        state.lockCameraOffset = nil
+    end
+
     local function stopLock()
         if not state.lockActive then
             return
@@ -3384,19 +3419,8 @@ do
             run:UnbindFromRenderStep(lockName)
         end)
 
-        local humanoid = state.lockHumanoid
-
-        if humanoid and humanoid.Parent then
-            if state.lockPreviousAutoRotate ~= nil then
-                humanoid.AutoRotate =
-                    state.lockPreviousAutoRotate
-            end
-
-            humanoid:Move(
-                Vector3.zero,
-                false
-            )
-        end
+        clearBodyLock()
+        restoreCamera()
 
         state.lockBall = nil
         state.lockTrack = nil
@@ -3405,30 +3429,411 @@ do
         state.lockConfirmDeadline = 0
         state.lockSeenAir = false
         state.lockLowSince = 0
-        state.lockHumanoid = nil
-        state.lockPreviousAutoRotate = nil
+        state.lockStyle = nil
+        state.lockLastTargetPosition = nil
+    end
+
+    local function ensureBodyLock(root, humanoid)
+        if not state.lockBodyReady then
+            return
+        end
+
+        if state.lockHumanoid ~= humanoid then
+            clearBodyLock()
+            state.lockBodyReady = true
+        end
+
+        if state.lockPreviousAutoRotate == nil then
+            state.lockPreviousAutoRotate =
+                humanoid.AutoRotate
+        end
+
+        state.lockHumanoid = humanoid
+        humanoid.AutoRotate = false
+
+        if state.lockAlign
+            and state.lockAlign.Parent == root then
+
+            return
+        end
+
+        if state.lockAlign then
+            state.lockAlign:Destroy()
+            state.lockAlign = nil
+        end
+
+        local attachment =
+            root:FindFirstChild("RootAttachment")
+
+        if not attachment then
+            attachment = Instance.new("Attachment")
+            attachment.Name =
+                "CeleronAutoTrapAttachment"
+            attachment.Parent = root
+            state.lockCreatedAttachment = attachment
+        end
+
+        local align = Instance.new("AlignOrientation")
+        align.Name = "CeleronAutoTrapHardAlign"
+        align.Mode =
+            Enum.OrientationAlignmentMode.OneAttachment
+        align.Attachment0 = attachment
+        align.RigidityEnabled = true
+        align.MaxTorque = math.huge
+        align.Responsiveness = 2000
+        align.Parent = root
+
+        state.lockAlign = align
+    end
+
+    local function hardFaceBall(
+        root,
+        humanoid,
+        targetPosition
+    )
+        if not state.lockBodyReady then
+            return
+        end
+
+        ensureBodyLock(root, humanoid)
+
+        local rootPosition = root.Position
+
+        local flatDelta = Vector3.new(
+            targetPosition.X - rootPosition.X,
+            0,
+            targetPosition.Z - rootPosition.Z
+        )
+
+        if flatDelta.Magnitude <= 0.01 then
+            return
+        end
+
+        local direction = flatDelta.Unit
+
+        local facing =
+            CFrame.lookAt(
+                rootPosition,
+                rootPosition + direction,
+                Vector3.yAxis
+            )
+
+        if state.lockAlign then
+            state.lockAlign.CFrame =
+                CFrame.lookAt(
+                    Vector3.zero,
+                    direction,
+                    Vector3.yAxis
+                )
+        end
+
+        root.AssemblyAngularVelocity =
+            Vector3.zero
+
+        -- Immediate local correction + rigid AlignOrientation.
+        -- This is applied in physics and render passes.
+        root.CFrame = facing
+    end
+
+    local function pullTowardBall(
+        root,
+        targetPosition,
+        dt
+    )
+        if not state.lockConfirmed then
+            return
+        end
+
+        local current = root.Position
+
+        local horizontal = Vector3.new(
+            targetPosition.X - current.X,
+            0,
+            targetPosition.Z - current.Z
+        )
+
+        local distance = horizontal.Magnitude
+
+        if distance <= 0.65
+            or distance > state.range + 20 then
+
+            return
+        end
+
+        local speed = 92
+
+        local step =
+            math.min(
+                math.max(distance - 0.65, 0),
+                speed
+                    * math.clamp(
+                        dt or (1 / 60),
+                        0,
+                        0.04
+                    )
+            )
+
+        if step <= 0 then
+            return
+        end
+
+        local newPosition =
+            current + horizontal.Unit * step
+
+        root.CFrame =
+            CFrame.lookAt(
+                newPosition,
+                Vector3.new(
+                    targetPosition.X,
+                    newPosition.Y,
+                    targetPosition.Z
+                ),
+                Vector3.yAxis
+            )
+    end
+
+    local function bestBallNear(position)
+        local best = nil
+        local bestDistance = math.huge
+
+        for _, object in ipairs(ws:GetDescendants()) do
+            if object:IsA("BasePart")
+                and object.Name == "Ball" then
+
+                local distance =
+                    position
+                    and (object.Position - position).Magnitude
+                    or 0
+
+                if not best
+                    or distance < bestDistance then
+
+                    best = object
+                    bestDistance = distance
+                end
+            end
+        end
+
+        return best
     end
 
     local function lockTarget()
         local target = state.lockBall
 
-        if target and target.Parent and target:IsA("BasePart") then
+        if target
+            and target.Parent
+            and target:IsA("BasePart") then
+
+            state.lockLastTargetPosition =
+                target.Position
+
             return target
         end
 
-        if ballHolder and ballHolder.Value ~= nil then
-            return nil
-        end
-
-        target = findBall()
+        target =
+            bestBallNear(
+                state.lockLastTargetPosition
+            )
 
         if target then
             state.lockBall = target
+            state.lockLastTargetPosition =
+                target.Position
+
             return target
         end
     end
 
-    local function startLock(ball, track, confirmed)
+    local function setupScriptableCamera(root)
+        local camera = ws.CurrentCamera
+
+        if not camera then
+            return
+        end
+
+        if state.lockCamera ~= camera then
+            state.lockCamera = camera
+            state.lockPreviousCameraType =
+                camera.CameraType
+            state.lockPreviousCameraSubject =
+                camera.CameraSubject
+        end
+
+        if not state.lockCameraOffset then
+            state.lockCameraOffset =
+                camera.CFrame.Position
+                - root.Position
+        end
+
+        camera.CameraType =
+            Enum.CameraType.Scriptable
+    end
+
+    local function updateLockedCamera(
+        root,
+        targetPosition
+    )
+        local camera = ws.CurrentCamera
+
+        if not camera then
+            return
+        end
+
+        setupScriptableCamera(root)
+
+        local offset =
+            state.lockCameraOffset
+            or (
+                camera.CFrame.Position
+                - root.Position
+            )
+
+        local cameraPosition =
+            root.Position + offset
+
+        if (targetPosition - cameraPosition).Magnitude
+            <= 0.001 then
+
+            return
+        end
+
+        camera.CFrame =
+            CFrame.lookAt(
+                cameraPosition,
+                targetPosition,
+                Vector3.yAxis
+            )
+
+        camera.Focus =
+            CFrame.new(targetPosition)
+    end
+
+    local function enforceHardLock(
+        dt,
+        allowPull
+    )
+        if not state.lockActive then
+            return
+        end
+
+        local target = lockTarget()
+
+        if not target then
+            return
+        end
+
+        local char = character()
+        local humanoid =
+            char
+            and char:FindFirstChildOfClass("Humanoid")
+        local root =
+            char
+            and char:FindFirstChild("HumanoidRootPart")
+
+        if not humanoid or not root then
+            return
+        end
+
+        local targetPosition =
+            target.Position
+
+        state.lockLastTargetPosition =
+            targetPosition
+
+        if state.lockBodyReady then
+            hardFaceBall(
+                root,
+                humanoid,
+                targetPosition
+            )
+
+            if allowPull then
+                pullTowardBall(
+                    root,
+                    targetPosition,
+                    dt
+                )
+
+                hardFaceBall(
+                    root,
+                    humanoid,
+                    targetPosition
+                )
+            end
+        end
+
+        updateLockedCamera(
+            root,
+            targetPosition
+        )
+    end
+
+    local function shouldEndAsMiss(
+        target,
+        char
+    )
+        local position = target.Position
+        local velocity =
+            target.AssemblyLinearVelocity
+
+        local rayParams =
+            RaycastParams.new()
+
+        rayParams.FilterType =
+            Enum.RaycastFilterType.Exclude
+
+        rayParams.FilterDescendantsInstances = {
+            char,
+            target
+        }
+
+        local groundHit = ws:Raycast(
+            position,
+            Vector3.new(0, -3.5, 0),
+            rayParams
+        )
+
+        local groundDistance =
+            groundHit
+            and (position - groundHit.Position).Magnitude
+            or math.huge
+
+        local airborne =
+            groundDistance > 1.15
+            or velocity.Y > 1.2
+
+        if airborne then
+            state.lockSeenAir = true
+            state.lockLowSince = 0
+            return false
+        end
+
+        if not state.lockSeenAir then
+            return false
+        end
+
+        if velocity.Y > 0.35 then
+            state.lockLowSince = 0
+            return false
+        end
+
+        if state.lockLowSince == 0 then
+            state.lockLowSince =
+                os.clock()
+
+            return false
+        end
+
+        return os.clock()
+            - state.lockLowSince >= 0.22
+    end
+
+    local function startLock(
+        ball,
+        track,
+        confirmed,
+        style
+    )
         if not state.enabled then
             return
         end
@@ -3445,26 +3850,8 @@ do
             run:UnbindFromRenderStep(lockName)
         end)
 
-        local char = character()
-        local humanoid =
-            char and char:FindFirstChildOfClass("Humanoid")
-        local root =
-            char and char:FindFirstChild("HumanoidRootPart")
-
-        if not humanoid or not root then
-            return
-        end
-
-        if not state.lockActive then
-            state.lockPreviousAutoRotate =
-                humanoid.AutoRotate
-        end
-
-        state.lockHumanoid = humanoid
-        humanoid.AutoRotate = false
-
-        -- Face the ball BEFORE the trap request is sent.
-        faceRootAt(root, ball.Position)
+        clearBodyLock()
+        restoreCamera()
 
         state.lockActive = true
         state.lockBall = ball
@@ -3474,11 +3861,24 @@ do
         state.lockConfirmDeadline = 0
         state.lockSeenAir = false
         state.lockLowSince = 0
+        state.lockStyle = style
+        state.lockLastTargetPosition =
+            ball.Position
+
+        -- Shidou must finish choosing the aerial Formless variant before
+        -- any body rotation/pull is allowed. Camera stays unlocked too until
+        -- the trap animation confirms, so nothing interferes with selection.
+        state.lockBodyReady =
+            style ~= "Shidou"
+
+        if state.lockBodyReady then
+            enforceHardLock(0, false)
+        end
 
         run:BindToRenderStep(
             lockName,
-            Enum.RenderPriority.Last.Value,
-            function()
+            Enum.RenderPriority.Last.Value + 100,
+            function(dt)
                 if not state.enabled then
                     stopLock()
                     return
@@ -3489,163 +3889,103 @@ do
                     return
                 end
 
-                local target = state.lockBall
+                local target = lockTarget()
 
-                if not target or not target.Parent then
-                    local replacement = findBall()
-
-                    if replacement then
-                        state.lockBall = replacement
-                        target = replacement
-                    else
-                        stopLock()
-                        return
-                    end
+                if not target then
+                    stopLock()
+                    return
                 end
 
-                local currentChar = character()
-                local currentHumanoid =
-                    currentChar
-                    and currentChar:FindFirstChildOfClass("Humanoid")
+                local currentChar =
+                    character()
+
                 local currentRoot =
                     currentChar
-                    and currentChar:FindFirstChild("HumanoidRootPart")
+                    and currentChar:FindFirstChild(
+                        "HumanoidRootPart"
+                    )
 
-                if not currentHumanoid or not currentRoot then
+                if not currentRoot then
                     stopLock()
                     return
                 end
-
-                state.lockHumanoid = currentHumanoid
-                currentHumanoid.AutoRotate = false
 
                 local holder =
-                    ballHolder and ballHolder.Value
+                    ballHolder
+                    and ballHolder.Value
 
-                if holder and holder ~= currentChar then
+                if holder
+                    and holder ~= currentChar then
+
                     stopLock()
                     return
                 end
 
-                local targetPosition = target.Position
-                local rootPosition = currentRoot.Position
-                local velocity = target.AssemblyLinearVelocity
+                -- Shidou has no camera/body interference until its real trap
+                -- animation confirms. Everyone else gets the hard lock now.
+                if state.lockStyle ~= "Shidou"
+                    or state.lockConfirmed then
 
-                -- Hard body aim. Sideways/backwards movement cannot turn the
-                -- character away from the ball while the trap is active.
-                faceRootAt(
-                    currentRoot,
-                    targetPosition
-                )
-
-                -- Legit movement assist: normal Humanoid movement toward the
-                -- ball, no teleport or BodyVelocity.
-                local horizontalDelta = Vector3.new(
-                    targetPosition.X - rootPosition.X,
-                    0,
-                    targetPosition.Z - rootPosition.Z
-                )
-
-                local horizontalDistance =
-                    horizontalDelta.Magnitude
-
-                if horizontalDistance > 1.1
-                    and horizontalDistance <= state.range + 12 then
-
-                    currentHumanoid:Move(
-                        horizontalDelta.Unit,
-                        false
-                    )
-                else
-                    currentHumanoid:Move(
-                        Vector3.zero,
-                        false
+                    enforceHardLock(
+                        dt,
+                        true
                     )
                 end
 
-                -- Lock remains through the whole flight. Only a real landed
-                -- ball can end it without possession changing.
-                local rayParams = RaycastParams.new()
-                rayParams.FilterType =
-                    Enum.RaycastFilterType.Exclude
-
-                rayParams.FilterDescendantsInstances = {
-                    currentChar,
-                    target
-                }
-
-                local groundHit = ws:Raycast(
-                    targetPosition,
-                    Vector3.new(0, -3.25, 0),
-                    rayParams
-                )
-
-                local groundDistance =
-                    groundHit
-                    and (targetPosition - groundHit.Position).Magnitude
-                    or math.huge
-
-                local clearlyAirborne =
-                    groundDistance > 1.35
-                    or velocity.Y > 1.1
-
-                if clearlyAirborne then
-                    state.lockSeenAir = true
-                    state.lockLowSince = 0
-
-                elseif state.lockSeenAir
-                    and velocity.Y <= 0.4 then
-
-                    if state.lockLowSince == 0 then
-                        state.lockLowSince = os.clock()
-
-                    elseif os.clock() - state.lockLowSince >= 0.16 then
-                        stopLock()
-                        return
-                    end
-                end
-
-                local camera = ws.CurrentCamera
-
-                if not camera then
+                if shouldEndAsMiss(
+                    target,
+                    currentChar
+                ) then
+                    stopLock()
                     return
                 end
-
-                local cameraPosition =
-                    camera.CFrame.Position
-
-                if (targetPosition - cameraPosition).Magnitude
-                    <= 0.001 then
-
-                    return
-                end
-
-                -- Camera points at the REAL ball, not a predicted position.
-                camera.CFrame = CFrame.lookAt(
-                    cameraPosition,
-                    targetPosition,
-                    Vector3.yAxis
-                )
             end
         )
     end
 
     local function confirmLock(track)
-        local ball = lockTarget() or findBall()
+        local ball =
+            lockTarget()
+            or findBall()
 
         if not ball then
             return
         end
 
-        if not state.lockActive then
-            startLock(ball, track, true)
-            return
+        local style = nil
+
+        if track
+            and track.Animation then
+
+            style =
+                animationToStyle[
+                    track.Animation.AnimationId
+                ]
         end
 
-        state.lockBall = ball
-        state.lockTrack = track
-        state.lockConfirmed = true
-        state.lockConfirmDeadline = 0
+        if not state.lockActive then
+            startLock(
+                ball,
+                track,
+                true,
+                style
+            )
+        else
+            state.lockBall = ball
+            state.lockTrack = track
+            state.lockConfirmed = true
+            state.lockConfirmDeadline = 0
+
+            if style then
+                state.lockStyle = style
+            end
+        end
+
+        state.lockBodyReady = true
+
+        -- As soon as the trap animation is real, camera/body hard lock becomes
+        -- authoritative and remains until catch or a confirmed miss.
+        enforceHardLock(0, false)
     end
 
     local function oneWayPing()
@@ -3846,23 +4186,46 @@ do
         }
     end
 
-    local function shidouLiftReady(pending, humanoid, root)
+    local function shidouLiftReady(
+        pending,
+        humanoid,
+        root
+    )
         if not pending.jumpStartedAt then
             return false
         end
 
+        local startY =
+            pending.jumpStartY
+            or root.Position.Y
+
         local rise =
-            root.Position.Y
-            - (pending.jumpStartY or root.Position.Y)
+            root.Position.Y - startY
 
         local elapsed =
-            os.clock() - pending.jumpStartedAt
+            os.clock()
+            - pending.jumpStartedAt
 
-        return rise >= 0.06
-            or root.AssemblyLinearVelocity.Y >= 3
+        local realAir =
+            humanoid.FloorMaterial
+                == Enum.Material.Air
+
+        local rising =
+            root.AssemblyLinearVelocity.Y
+                >= 2.5
+
+        -- Avoid sending Formless during the tiny state transition where
+        -- Roblox says "Jumping" but the character is effectively grounded.
+        return rise >= 0.32
             or (
-                elapsed >= 0.045
-                and humanoid.FloorMaterial == Enum.Material.Air
+                realAir
+                and rising
+                and elapsed >= 0.055
+            )
+            or (
+                realAir
+                and rise >= 0.16
+                and elapsed >= 0.075
             )
     end
 
@@ -4144,8 +4507,18 @@ do
         state.pending = nil
         state.attemptedBall = ball
 
-        startLock(ball, nil, false)
-        sendTrap(profile)
+        if profile.style == "Shidou" then
+            sendTrap(profile)
+        else
+            startLock(
+                ball,
+                nil,
+                false,
+                profile.style
+            )
+
+            sendTrap(profile)
+        end
     end
 
     local function resetAttempt()
@@ -4581,12 +4954,30 @@ do
         end
     end)
 
-    run.PreSimulation:Connect(function()
+    run.PreSimulation:Connect(function(dt)
+        if state.lockActive
+            and state.lockBodyReady then
+
+            enforceHardLock(
+                dt,
+                false
+            )
+        end
+
         tryPending()
         evaluate()
     end)
 
-    run.PostSimulation:Connect(function()
+    run.PostSimulation:Connect(function(dt)
+        if state.lockActive
+            and state.lockBodyReady then
+
+            enforceHardLock(
+                dt,
+                false
+            )
+        end
+
         tryPending()
         evaluate()
     end)
