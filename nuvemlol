@@ -2799,6 +2799,8 @@ do
         learnedStyle = nil,
         animatorConnection = nil,
         humanoidStateConnection = nil,
+        rootVelocityConnection = nil,
+        floorConnection = nil,
         lockActive = false,
         lockBall = nil,
         lockTrack = nil,
@@ -3017,7 +3019,7 @@ do
         if state.lockConfirmed then
             state.lockConfirmDeadline = 0
         else
-            state.lockConfirmDeadline = state.lockStarted + 0.55
+            state.lockConfirmDeadline = state.lockStarted + 0.8
         end
 
         run:BindToRenderStep(
@@ -3163,22 +3165,38 @@ do
 
         local gravity = Vector3.new(0, -ws.Gravity, 0)
         local rootVelocity = root.AssemblyLinearVelocity
-        local lead = oneWayPing() + (1 / 60)
         local catchOffset = Vector3.new(0, 2.25, 0)
+        local catchPosition = root.Position + catchOffset
+        local relative = ball.Position - catchPosition
+        local relativeVelocity = velocity - rootVelocity
+        local relativeSpeedSq = relativeVelocity:Dot(relativeVelocity)
+
+        local lead = oneWayPing() + (1 / 120)
+
+        local timeToClosest = lead
+
+        if relativeSpeedSq > 0.001 then
+            timeToClosest = math.max(
+                lead,
+                -relative:Dot(relativeVelocity) / relativeSpeedSq
+            )
+        end
+
+        local currentDistance = relative.Magnitude
+        local travelEstimate =
+            currentDistance / math.max(relativeVelocity.Magnitude, 1)
+
+        local horizon = math.clamp(
+            math.max(timeToClosest + 0.18, travelEstimate + 0.12),
+            0.28,
+            0.9
+        )
+
         local bestDistance = math.huge
         local highEnough = false
 
-        local currentDistance =
-            (ball.Position - (root.Position + catchOffset)).Magnitude
-
-        local horizon = math.clamp(
-            currentDistance / math.max(velocity.Magnitude, 1) + 0.16,
-            0.22,
-            0.65
-        )
-
-        for index = 0, 15 do
-            local t = lead + horizon * (index / 15)
+        for index = 0, 20 do
+            local t = lead + (horizon - lead) * (index / 20)
 
             local ballPosition =
                 ball.Position
@@ -3202,26 +3220,35 @@ do
             end
         end
 
-        local relative =
-            ball.Position - (root.Position + catchOffset)
-
         local approaching =
-            relative:Dot(velocity) < 0
-            or relative.Magnitude <= state.range
+            relative:Dot(relativeVelocity) < 0
+            or currentDistance <= state.range
 
         return highEnough
             and approaching
             and bestDistance <= state.range
     end
 
-    local function airborne(humanoid, root)
+    local function airborneReady(profile, humanoid, root)
         local humanoidState = humanoid:GetState()
+
+        if profile.style == "Shidou" then
+            return root.AssemblyLinearVelocity.Y > 1
+                or (
+                    humanoid.FloorMaterial == Enum.Material.Air
+                    and (
+                        humanoidState == Enum.HumanoidStateType.Jumping
+                        or humanoidState == Enum.HumanoidStateType.Freefall
+                    )
+                )
+        end
 
         return humanoidState == Enum.HumanoidStateType.Jumping
             or humanoidState == Enum.HumanoidStateType.Freefall
             or humanoid.FloorMaterial == Enum.Material.Air
             or root.AssemblyLinearVelocity.Y > 0.5
     end
+
 
     local function sendTrap(profile)
         if profile.style == "Nagi" then
@@ -3280,7 +3307,7 @@ do
             return
         end
 
-        if airborne(humanoid, root) then
+        if airborneReady(pending.profile, humanoid, root) then
             local profile = pending.profile
             local ball = pending.ball
 
@@ -3326,7 +3353,7 @@ do
             profile = profile
         }
 
-        if airborne(humanoid, root) then
+        if airborneReady(profile, humanoid, root) then
             tryPending()
             return
         end
@@ -3336,7 +3363,9 @@ do
         humanoid.Jump = true
         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 
-        tryPending()
+        if profile.style ~= "Shidou" then
+            tryPending()
+        end
     end
 
     local function evaluate()
@@ -3416,8 +3445,21 @@ do
             state.humanoidStateConnection = nil
         end
 
+        if state.rootVelocityConnection then
+            state.rootVelocityConnection:Disconnect()
+            state.rootVelocityConnection = nil
+        end
+
+        if state.floorConnection then
+            state.floorConnection:Disconnect()
+            state.floorConnection = nil
+        end
+
         local humanoid = char:FindFirstChildOfClass("Humanoid")
             or char:WaitForChild("Humanoid")
+
+        local root = char:FindFirstChild("HumanoidRootPart")
+            or char:WaitForChild("HumanoidRootPart")
 
         local animator = humanoid:FindFirstChildOfClass("Animator")
             or humanoid:WaitForChild("Animator")
@@ -3450,6 +3492,22 @@ do
             humanoid.StateChanged:Connect(function(_, newState)
                 if newState == Enum.HumanoidStateType.Jumping
                     or newState == Enum.HumanoidStateType.Freefall then
+
+                    tryPending()
+                end
+            end)
+
+        state.rootVelocityConnection =
+            root:GetPropertyChangedSignal("AssemblyLinearVelocity"):Connect(function()
+                if state.pending and root.AssemblyLinearVelocity.Y > 0 then
+                    tryPending()
+                end
+            end)
+
+        state.floorConnection =
+            humanoid:GetPropertyChangedSignal("FloorMaterial"):Connect(function()
+                if state.pending
+                    and humanoid.FloorMaterial == Enum.Material.Air then
 
                     tryPending()
                 end
@@ -3559,6 +3617,10 @@ do
         if ball then
             watchBall(ball)
         end
+    end)
+
+    run.PreSimulation:Connect(function()
+        tryPending()
     end)
 
     run.PostSimulation:Connect(function()
