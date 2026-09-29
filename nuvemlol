@@ -84,6 +84,145 @@ local exploittab = win:Tab("Exploits")
 local misctab = win:Tab("Others")
 local helptab = win:Tab("Info")
 
+do
+    task.defer(function()
+        task.wait()
+
+        local localPlayer = game:GetService("Players").LocalPlayer
+        local tweenService = game:GetService("TweenService")
+        local soundService = game:GetService("SoundService")
+        local debris = game:GetService("Debris")
+
+        local darkUI = game:GetService("CoreGui"):FindFirstChild("dark_UI")
+            or localPlayer.PlayerGui:FindFirstChild("dark_UI")
+
+        local main = darkUI and darkUI:FindFirstChild("main")
+        local tabs = main and main:FindFirstChild("tabContainer")
+
+        if not main or not tabs then
+            return
+        end
+
+        local mainScale = main:FindFirstChild("celeronscale")
+
+        if not mainScale then
+            mainScale = Instance.new("UIScale")
+            mainScale.Name = "celeronscale"
+            mainScale.Scale = 1
+            mainScale.Parent = main
+        end
+
+        local openTween
+
+        local function playOpen()
+            if openTween then
+                openTween:Cancel()
+            end
+
+            mainScale.Scale = 0.965
+
+            openTween = tweenService:Create(
+                mainScale,
+                TweenInfo.new(
+                    0.22,
+                    Enum.EasingStyle.Back,
+                    Enum.EasingDirection.Out
+                ),
+                {
+                    Scale = 1
+                }
+            )
+
+            openTween:Play()
+        end
+
+        local function playOpenSound()
+            local sound = Instance.new("Sound")
+            sound.SoundId = "rbxassetid://6895079853"
+            sound.Volume = 0.12
+            sound.PlaybackSpeed = 0.95
+            sound.Parent = soundService
+            sound:Play()
+            debris:AddItem(sound, 1)
+        end
+
+        local function hookTab(button)
+            if not button:IsA("TextButton")
+                or button:GetAttribute("celeronanimated") then
+                return
+            end
+
+            button:SetAttribute("celeronanimated", true)
+
+            local scale = Instance.new("UIScale")
+            scale.Name = "tabscale"
+            scale.Scale = 1
+            scale.Parent = button
+
+            button.Activated:Connect(function()
+                tweenService:Create(
+                    scale,
+                    TweenInfo.new(
+                        0.055,
+                        Enum.EasingStyle.Quad,
+                        Enum.EasingDirection.Out
+                    ),
+                    {
+                        Scale = 0.9
+                    }
+                ):Play()
+
+                task.delay(0.055, function()
+                    if not scale.Parent then
+                        return
+                    end
+
+                    tweenService:Create(
+                        scale,
+                        TweenInfo.new(
+                            0.14,
+                            Enum.EasingStyle.Back,
+                            Enum.EasingDirection.Out
+                        ),
+                        {
+                            Scale = 1
+                        }
+                    ):Play()
+                end)
+            end)
+        end
+
+        for _, button in ipairs(tabs:GetChildren()) do
+            hookTab(button)
+        end
+
+        tabs.ChildAdded:Connect(function(child)
+            task.defer(function()
+                hookTab(child)
+            end)
+        end)
+
+        playOpen()
+
+        local wasHidden = main.Position.Y.Scale > 1
+
+        main:GetPropertyChangedSignal("Position"):Connect(function()
+            local y = main.Position.Y.Scale
+
+            if y > 1 then
+                wasHidden = true
+                return
+            end
+
+            if wasHidden and y < 0.95 then
+                wasHidden = false
+                playOpen()
+                playOpenSound()
+            end
+        end)
+    end)
+end
+
 hometab:Label("Script Made By Celeron! Check Info For Additional Credits.")
 hometab:Label("Join The Discord Server In Info For Updates / Suggestions.")
 helptab:Label("Show / Hide GUI: Right Alt")
@@ -4048,17 +4187,14 @@ end)
 
 local autoact = maintab2:Folder("Auto Activate Features.", Color3.fromRGB(24, 255, 228), true)
 autoact:Label("Auto Activate: Activates The Move When Ball Within Range.")
-autoact:Label("Mobile stays armed automatically. PC still uses M2.")
 
 do
     local autoActivateState = {
         enabled = false,
         distance = 10,
         moveNumber = 1,
-        minHeight = 0,
         m2Held = false,
         armed = true,
-        inside = false,
         waitingCooldown = false,
         cooldownSeen = false,
         cooldownObject = nil,
@@ -4074,22 +4210,28 @@ do
     local autoActivateRemote = autoActivateReplicatedStorage:WaitForChild("ByteNetReliable")
     local autoActivatePlayer = autoActivatePlayers.LocalPlayer
 
-    local MIN_FIRE_GAP = 0.12
-
     local function isMobile()
+        local ok, preferred = pcall(function()
+            return autoActivateUIS.PreferredInput
+        end)
+
+        if ok then
+            return preferred == Enum.PreferredInput.Touch
+        end
+
         return autoActivateUIS.TouchEnabled
+            and not autoActivateUIS.KeyboardEnabled
     end
 
     local function resetCycle()
         autoActivateState.armed = true
-        autoActivateState.inside = false
         autoActivateState.waitingCooldown = false
         autoActivateState.cooldownSeen = false
         autoActivateState.lastBall = nil
         autoActivateState.lastFire = 0
     end
 
-    local function invalidateCooldown()
+    local function clearCooldown()
         autoActivateState.cooldownObject = nil
         autoActivateState.cooldownSkill = nil
     end
@@ -4104,7 +4246,7 @@ do
             return autoActivateState.cooldownObject
         end
 
-        invalidateCooldown()
+        clearCooldown()
 
         local playerGui = autoActivatePlayer:FindFirstChild("PlayerGui")
         local hotbar = playerGui and playerGui:FindFirstChild("Hotbar")
@@ -4118,8 +4260,6 @@ do
             autoActivateState.cooldownSkill = skillName
             return cooldown
         end
-
-        return nil
     end
 
     local function cooldownState()
@@ -4132,7 +4272,7 @@ do
         return true, cooldown.Visible == true
     end
 
-    local function gateActive()
+    local function canActivate()
         if not autoActivateState.enabled then
             return false
         end
@@ -4144,17 +4284,8 @@ do
         return autoActivateState.m2Held
     end
 
-    local function ballIsHighEnough(root, ball)
-        if autoActivateState.minHeight <= 0 then
-            return true
-        end
-
-        local relativeHeight = ball.Position.Y - (root.Position.Y - 2)
-        return relativeHeight >= autoActivateState.minHeight
-    end
-
     local function fireMove(now)
-        if now - autoActivateState.lastFire < MIN_FIRE_GAP then
+        if now - autoActivateState.lastFire < 0.12 then
             return
         end
 
@@ -4173,57 +4304,26 @@ do
         )
     end
 
-    autoact:Toggle(
-        "Auto Activate",
-        "Mobile stays ready automatically. PC activates while M2 is held.",
-        function(value)
-            autoActivateState.enabled = value == true
-            autoActivateState.m2Held = false
-            invalidateCooldown()
+    autoact:Textbox("Auto Activate Move Number", "Example: 1, 2, 3, 4, 5.", function(value)
+        local number = tonumber(value)
+
+        if number and number >= 1 and number <= 5 then
+            autoActivateState.moveNumber = number
+            clearCooldown()
             resetCycle()
         end
-    )
+    end)
 
-    autoact:Textbox(
-        "Auto Activate Move Number",
-        "Example: 1, 2, 3, 4, 5.",
-        function(value)
-            local number = tonumber(value)
+    autoact:Slider("Auto Activate Distance", 10, 3, 70, 0.5, function(value)
+        autoActivateState.distance = value
+    end)
 
-            if number
-                and number >= 1
-                and number <= 5 then
-
-                autoActivateState.moveNumber = number
-                invalidateCooldown()
-                resetCycle()
-            end
-        end
-    )
-
-    autoact:Slider(
-        "Auto Activate Distance",
-        10,
-        3,
-        70,
-        0.5,
-        function(value)
-            autoActivateState.distance = value
-            autoActivateState.inside = false
-        end
-    )
-
-    autoact:Slider(
-        "Auto Activate Ball Height",
-        0,
-        0,
-        50,
-        0.5,
-        function(value)
-            autoActivateState.minHeight = value
-            autoActivateState.inside = false
-        end
-    )
+    autoact:Toggle("Auto Activate", function(value)
+        autoActivateState.enabled = value == true
+        autoActivateState.m2Held = false
+        clearCooldown()
+        resetCycle()
+    end)
 
     autoActivateUIS.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed or isMobile() then
@@ -4250,7 +4350,7 @@ do
     end)
 
     autoActivatePlayer.CharacterAdded:Connect(function()
-        invalidateCooldown()
+        clearCooldown()
         resetCycle()
     end)
 
@@ -4259,7 +4359,6 @@ do
             return
         end
 
-        local now = os.clock()
         local character = autoActivatePlayer.Character
         local root = character and character:FindFirstChild("HumanoidRootPart")
 
@@ -4267,6 +4366,7 @@ do
             return
         end
 
+        local now = os.clock()
         local ball = workspace.Terrain:FindFirstChild("Ball")
         local cooldownKnown, cooldownActive = cooldownState()
 
@@ -4283,45 +4383,6 @@ do
 
         if not ball then
             autoActivateState.lastBall = nil
-            autoActivateState.inside = false
-
-            if autoActivateState.waitingCooldown
-                and not cooldownKnown
-                and now - autoActivateState.lastFire >= 0.2 then
-
-                autoActivateState.waitingCooldown = false
-                autoActivateState.armed = true
-            elseif not autoActivateState.waitingCooldown then
-                autoActivateState.armed = true
-            end
-
-            return
-        end
-
-        if autoActivateState.lastBall ~= ball then
-            autoActivateState.lastBall = ball
-            autoActivateState.inside = false
-
-            if not autoActivateState.waitingCooldown then
-                autoActivateState.armed = true
-            end
-        end
-
-        local distance = (root.Position - ball.Position).Magnitude
-        local heightOkay = ballIsHighEnough(root, ball)
-        local insideNow = distance <= autoActivateState.distance and heightOkay
-
-        local exitPadding = math.max(
-            1.5,
-            autoActivateState.distance * 0.08
-        )
-
-        local outsideNow =
-            distance > autoActivateState.distance + exitPadding
-            or not heightOkay
-
-        if outsideNow then
-            autoActivateState.inside = false
 
             if autoActivateState.waitingCooldown
                 and not autoActivateState.cooldownSeen
@@ -4333,12 +4394,38 @@ do
             elseif not autoActivateState.waitingCooldown then
                 autoActivateState.armed = true
             end
-        elseif insideNow then
-            autoActivateState.inside = true
+
+            return
         end
 
-        if not gateActive()
-            or not insideNow
+        if autoActivateState.lastBall ~= ball then
+            autoActivateState.lastBall = ball
+
+            if not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        end
+
+        local distance = (root.Position - ball.Position).Magnitude
+        local inRange = distance <= autoActivateState.distance
+        local exitDistance = autoActivateState.distance
+            + math.max(1.5, autoActivateState.distance * 0.08)
+
+        if distance > exitDistance then
+            if autoActivateState.waitingCooldown
+                and not autoActivateState.cooldownSeen
+                and now - autoActivateState.lastFire >= 0.2 then
+
+                autoActivateState.waitingCooldown = false
+                autoActivateState.armed = true
+
+            elseif not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        end
+
+        if not canActivate()
+            or not inRange
             or not autoActivateState.armed
             or autoActivateState.waitingCooldown
             or cooldownActive then
