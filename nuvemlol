@@ -4048,119 +4048,307 @@ end)
 
 local autoact = maintab2:Folder("Auto Activate Features.", Color3.fromRGB(24, 255, 228), true)
 autoact:Label("Auto Activate: Activates The Move When Ball Within Range.")
+autoact:Label("Mobile stays armed automatically. PC still uses M2.")
 
-local autoActivateState = { 
-    distance = 10, 
-    toggleState = false, 
-    moveNumber = 1, 
-    db = true, 
-    mode = "Hold",
-    minHeight = 0
-} 
+do
+    local autoActivateState = {
+        enabled = false,
+        distance = 10,
+        moveNumber = 1,
+        minHeight = 0,
+        m2Held = false,
+        armed = true,
+        inside = false,
+        waitingCooldown = false,
+        cooldownSeen = false,
+        cooldownObject = nil,
+        cooldownSkill = nil,
+        lastBall = nil,
+        lastFire = 0
+    }
 
-autoact:Toggle("Auto Activate", "Toggles The Feature On.", function(v) 
-    autoActivateState.toggleState = v 
-end) 
+    local autoActivateUIS = game:GetService("UserInputService")
+    local autoActivateRunService = game:GetService("RunService")
+    local autoActivatePlayers = game:GetService("Players")
+    local autoActivateReplicatedStorage = game:GetService("ReplicatedStorage")
+    local autoActivateRemote = autoActivateReplicatedStorage:WaitForChild("ByteNetReliable")
+    local autoActivatePlayer = autoActivatePlayers.LocalPlayer
 
-autoact:Textbox("Auto Activate Move Number", "Example: 1, 2, 3, 4, 5.", function(v) 
-    nsdv = tonumber(v) 
-    if nsdv and nsdv <= 5 and nsdv > 0 then 
-        autoActivateState.moveNumber = nsdv 
-    end 
-end) 
+    local MIN_FIRE_GAP = 0.12
 
-autoact:Slider("Auto Activate Distance", 10, 3, 70, 0.5, function(v) 
-    autoActivateState.distance = v 
-end) 
+    local function isMobile()
+        return autoActivateUIS.TouchEnabled
+    end
 
-autoact:Slider("Auto Activate Ball Height", 0, 0, 50, 0.5, function(v)
-    autoActivateState.minHeight = v
-end)
+    local function resetCycle()
+        autoActivateState.armed = true
+        autoActivateState.inside = false
+        autoActivateState.waitingCooldown = false
+        autoActivateState.cooldownSeen = false
+        autoActivateState.lastBall = nil
+        autoActivateState.lastFire = 0
+    end
 
-autoact:Dropdown("Auto Activate Mode", {"Hold", "Toggle"}, function(v) 
-    autoActivateState.mode = v 
-    if autoActivateState.toggleState ~= nil then 
-        game:GetService("StarterGui"):SetCore("SendNotification", { 
-            Title = "Auto Activate Mode", 
-            Text = "Current Mode: " .. autoActivateState.mode, 
-            Duration = 3 
-        }) 
-    end 
-end) 
+    local function invalidateCooldown()
+        autoActivateState.cooldownObject = nil
+        autoActivateState.cooldownSkill = nil
+    end
 
-game.UserInputService.InputBegan:Connect(function(input, bg) 
-    if bg then return end 
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then 
-        if autoActivateState.mode == "Hold" then 
-            autoActivateState.db = false 
-        else 
-            autoActivateState.db = not autoActivateState.db 
-        end 
-    end 
-end) 
+    local function getCooldown()
+        local skillName = "skill" .. tostring(autoActivateState.moveNumber)
 
-game.UserInputService.InputEnded:Connect(function(input, bg) 
-    if bg then return end 
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then 
-        if autoActivateState.mode == "Hold" then 
-            autoActivateState.db = true 
-        end 
-    end 
-end) 
+        if autoActivateState.cooldownObject
+            and autoActivateState.cooldownObject.Parent
+            and autoActivateState.cooldownSkill == skillName then
 
-game:GetService("RunService").RenderStepped:Connect(function() 
-    if not autoActivateState.toggleState or autoActivateState.db then 
-        if game.CoreGui:FindFirstChild("AutoActGui") then 
-            game.CoreGui.AutoActGui:Destroy() 
-        end 
-        return 
-    end 
-    
-    if not game.CoreGui:FindFirstChild("AutoActGui") then 
-        gui = Instance.new("ScreenGui") 
-        gui.Name = "AutoActGui" 
-        
-        dot = Instance.new("Frame") 
-        dot.Name = "IndicatorDot" 
-        dot.Size = UDim2.new(0, 20, 0, 20) 
-        dot.Position = UDim2.new(0, 20, 1, -40) 
-        dot.BackgroundColor3 = Color3.fromRGB(0, 255, 0) 
-        dot.BorderSizePixel = 0 
-        dot.Parent = gui 
-        
-        corner = Instance.new("UICorner") 
-        corner.CornerRadius = UDim.new(1, 0) 
-        corner.Parent = dot 
-        
-        gui.Parent = game.CoreGui 
-    end 
-    
-    char = game.Players.LocalPlayer.Character 
-    hrp = char and char:FindFirstChild("HumanoidRootPart") 
-    if not hrp then return end 
-    
-    ball = game.Workspace.Terrain:FindFirstChild("Ball") 
-    if not ball then return end 
-    
-    distance = (hrp.Position - ball.Position).Magnitude 
-    
-    if distance <= autoActivateState.distance then 
-        if autoActivateState.minHeight > 0 then
-            local relativeHeight = ball.Position.Y - (hrp.Position.Y - 2)
-            if relativeHeight < autoActivateState.minHeight then
-                return
+            return autoActivateState.cooldownObject
+        end
+
+        invalidateCooldown()
+
+        local playerGui = autoActivatePlayer:FindFirstChild("PlayerGui")
+        local hotbar = playerGui and playerGui:FindFirstChild("Hotbar")
+        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+        local slots = backpack and backpack:FindFirstChild("Hotbar")
+        local slot = slots and slots:FindFirstChild(skillName)
+        local cooldown = slot and slot:FindFirstChild("Cooldown", true)
+
+        if cooldown and cooldown:IsA("GuiObject") then
+            autoActivateState.cooldownObject = cooldown
+            autoActivateState.cooldownSkill = skillName
+            return cooldown
+        end
+
+        return nil
+    end
+
+    local function cooldownState()
+        local cooldown = getCooldown()
+
+        if not cooldown then
+            return false, false
+        end
+
+        return true, cooldown.Visible == true
+    end
+
+    local function gateActive()
+        if not autoActivateState.enabled then
+            return false
+        end
+
+        if isMobile() then
+            return true
+        end
+
+        return autoActivateState.m2Held
+    end
+
+    local function ballIsHighEnough(root, ball)
+        if autoActivateState.minHeight <= 0 then
+            return true
+        end
+
+        local relativeHeight = ball.Position.Y - (root.Position.Y - 2)
+        return relativeHeight >= autoActivateState.minHeight
+    end
+
+    local function fireMove(now)
+        if now - autoActivateState.lastFire < MIN_FIRE_GAP then
+            return
+        end
+
+        autoActivateState.lastFire = now
+        autoActivateState.armed = false
+        autoActivateState.waitingCooldown = true
+        autoActivateState.cooldownSeen = false
+
+        autoActivateRemote:FireServer(
+            buffer.fromstring(buffers["base"]),
+            {
+                {
+                    "skill" .. autoActivateState.moveNumber
+                }
+            }
+        )
+    end
+
+    autoact:Toggle(
+        "Auto Activate",
+        "Mobile stays ready automatically. PC activates while M2 is held.",
+        function(value)
+            autoActivateState.enabled = value == true
+            autoActivateState.m2Held = false
+            invalidateCooldown()
+            resetCycle()
+        end
+    )
+
+    autoact:Textbox(
+        "Auto Activate Move Number",
+        "Example: 1, 2, 3, 4, 5.",
+        function(value)
+            local number = tonumber(value)
+
+            if number
+                and number >= 1
+                and number <= 5 then
+
+                autoActivateState.moveNumber = number
+                invalidateCooldown()
+                resetCycle()
             end
         end
-        
-        args = { 
-            buffer.fromstring(buffers["base"]), 
-            { 
-                { "skill" .. autoActivateState.moveNumber } 
-            } 
-        } 
-        game.ReplicatedStorage:WaitForChild("ByteNetReliable"):FireServer(unpack(args)) 
-    end 
-end)
+    )
+
+    autoact:Slider(
+        "Auto Activate Distance",
+        10,
+        3,
+        70,
+        0.5,
+        function(value)
+            autoActivateState.distance = value
+            autoActivateState.inside = false
+        end
+    )
+
+    autoact:Slider(
+        "Auto Activate Ball Height",
+        0,
+        0,
+        50,
+        0.5,
+        function(value)
+            autoActivateState.minHeight = value
+            autoActivateState.inside = false
+        end
+    )
+
+    autoActivateUIS.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed or isMobile() then
+            return
+        end
+
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+            autoActivateState.m2Held = true
+
+            if not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        end
+    end)
+
+    autoActivateUIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton2 then
+            autoActivateState.m2Held = false
+
+            if not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        end
+    end)
+
+    autoActivatePlayer.CharacterAdded:Connect(function()
+        invalidateCooldown()
+        resetCycle()
+    end)
+
+    autoActivateRunService.Heartbeat:Connect(function()
+        if not autoActivateState.enabled then
+            return
+        end
+
+        local now = os.clock()
+        local character = autoActivatePlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+
+        if not root then
+            return
+        end
+
+        local ball = workspace.Terrain:FindFirstChild("Ball")
+        local cooldownKnown, cooldownActive = cooldownState()
+
+        if autoActivateState.waitingCooldown then
+            if cooldownKnown and cooldownActive then
+                autoActivateState.cooldownSeen = true
+
+            elseif autoActivateState.cooldownSeen and not cooldownActive then
+                autoActivateState.waitingCooldown = false
+                autoActivateState.cooldownSeen = false
+                autoActivateState.armed = true
+            end
+        end
+
+        if not ball then
+            autoActivateState.lastBall = nil
+            autoActivateState.inside = false
+
+            if autoActivateState.waitingCooldown
+                and not cooldownKnown
+                and now - autoActivateState.lastFire >= 0.2 then
+
+                autoActivateState.waitingCooldown = false
+                autoActivateState.armed = true
+            elseif not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+
+            return
+        end
+
+        if autoActivateState.lastBall ~= ball then
+            autoActivateState.lastBall = ball
+            autoActivateState.inside = false
+
+            if not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        end
+
+        local distance = (root.Position - ball.Position).Magnitude
+        local heightOkay = ballIsHighEnough(root, ball)
+        local insideNow = distance <= autoActivateState.distance and heightOkay
+
+        local exitPadding = math.max(
+            1.5,
+            autoActivateState.distance * 0.08
+        )
+
+        local outsideNow =
+            distance > autoActivateState.distance + exitPadding
+            or not heightOkay
+
+        if outsideNow then
+            autoActivateState.inside = false
+
+            if autoActivateState.waitingCooldown
+                and not autoActivateState.cooldownSeen
+                and now - autoActivateState.lastFire >= 0.2 then
+
+                autoActivateState.waitingCooldown = false
+                autoActivateState.armed = true
+
+            elseif not autoActivateState.waitingCooldown then
+                autoActivateState.armed = true
+            end
+        elseif insideNow then
+            autoActivateState.inside = true
+        end
+
+        if not gateActive()
+            or not insideNow
+            or not autoActivateState.armed
+            or autoActivateState.waitingCooldown
+            or cooldownActive then
+
+            return
+        end
+
+        fireMove(now)
+    end)
+end
 
 local autoline = maintab2:Folder("Auto Line Up Features.", Color3.fromRGB(24, 255, 228), true)
 autoline:Label("Auto Line Ups: Helps You Aim At Certain Areas.")
@@ -7001,31 +7189,74 @@ mobilessss:Button("Create Mobile PC Key", "Creates A Mobile PC Key.", function()
     btn.AnchorPoint = Vector2.new(0.5, 0.5)
 
     btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    btn.BackgroundTransparency = 0.4
     btn.BorderSizePixel = 0
     btn.Text = key
-	btn.Transparency = 0.4
     btn.TextColor3 = Color3.fromRGB(220, 220, 220)
     btn.Font = Enum.Font.GothamSemibold
     btn.TextSize = 20
+    btn.AutoButtonColor = false
     btn.Parent = sg
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = btn
 
-    btn.MouseEnter:Connect(function()
-        btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    end)
+    local vim = game:GetService("VirtualInputManager")
+    local pressed = false
+    local activeInput = nil
 
-    btn.MouseLeave:Connect(function()
-        btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-    end)
+    local function pressKey()
+        if pressed then
+            return
+        end
 
-    btn.Activated:Connect(function()
-        local vim = game:GetService("VirtualInputManager")
+        pressed = true
+        btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+        btn.BackgroundTransparency = 0.2
         vim:SendKeyEvent(true, key, false, game)
-        task.wait()
+    end
+
+    local function releaseKey()
+        if not pressed then
+            return
+        end
+
+        pressed = false
+        activeInput = nil
+        btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        btn.BackgroundTransparency = 0.4
         vim:SendKeyEvent(false, key, false, game)
+    end
+
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.Touch
+            and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+            return
+        end
+
+        if activeInput then
+            return
+        end
+
+        activeInput = input
+        pressKey()
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                releaseKey()
+            end
+        end)
+    end)
+
+    btn.InputEnded:Connect(function(input)
+        if input == activeInput then
+            releaseKey()
+        end
+    end)
+
+    sg.Destroying:Connect(function()
+        releaseKey()
     end)
 
     makeDraggable(btn)
