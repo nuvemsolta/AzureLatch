@@ -3249,6 +3249,8 @@ do
     local pendingWildSide = nil
     local pendingWildPacket = nil
     local pendingWildAt = 0
+    local forcedWildSide = nil
+    local forcedWildUntil = 0
     local lastWildAnimationAt = 0
     local generation = 0
 
@@ -3415,12 +3417,24 @@ do
             side = captureWildSide()
         end
 
-        if side == 1 or side == -1 then
-            pendingWildSide = side
+        if type(packetBoolean) == "boolean" then
+            side =
+                packetBoolean
+                and -1
+                or 1
+
+            pendingWildPacket =
+                packetBoolean
+
+            forcedWildSide =
+                side
+
+            forcedWildUntil =
+                os.clock() + 1.25
         end
 
-        if type(packetBoolean) == "boolean" then
-            pendingWildPacket = packetBoolean
+        if side == 1 or side == -1 then
+            pendingWildSide = side
         end
 
         pendingWildAt = os.clock()
@@ -3444,6 +3458,12 @@ do
             return nil
         end
 
+        if intentSide == 1
+            or intentSide == -1 then
+
+            return right * intentSide
+        end
+
         if type(packetBoolean) == "boolean" then
             return right
                 * (
@@ -3451,12 +3471,6 @@ do
                     and -1
                     or 1
                 )
-        end
-
-        if intentSide == 1
-            or intentSide == -1 then
-
-            return right * intentSide
         end
 
         local startPosition =
@@ -3624,10 +3638,17 @@ do
         local packetBoolean =
             nil
 
-        if now - pendingWildAt <= 1.0 then
+        if forcedWildSide
+            and now <= forcedWildUntil then
+
+            intentSide =
+                forcedWildSide
+        elseif now - pendingWildAt <= 1.0 then
             intentSide =
                 pendingWildSide
+        end
 
+        if now - pendingWildAt <= 1.0 then
             packetBoolean =
                 pendingWildPacket
         end
@@ -3635,6 +3656,8 @@ do
         pendingWildSide = nil
         pendingWildPacket = nil
         pendingWildAt = 0
+        forcedWildSide = nil
+        forcedWildUntil = 0
 
         local _, humanoid, root =
             getCharacter()
@@ -3874,13 +3897,113 @@ do
             ReplicatedStorage:
             FindFirstChild("ByteNetReliable")
 
+        local function inspectWildPacket(...)
+            local args =
+                table.pack(...)
+
+            local packet =
+                args[1]
+
+            local payload =
+                args[2]
+
+            local okLength, length =
+                pcall(
+                    buffer.len,
+                    packet
+                )
+
+            if not okLength
+                or length ~= 2 then
+                return
+            end
+
+            local okA, byteA =
+                pcall(
+                    buffer.readu8,
+                    packet,
+                    0
+                )
+
+            local okB, byteB =
+                pcall(
+                    buffer.readu8,
+                    packet,
+                    1
+                )
+
+            if not okA
+                or not okB
+                or byteA ~= 25
+                or byteB ~= 1 then
+                return
+            end
+
+            local move =
+                type(payload) == "table"
+                and payload[1]
+                or nil
+
+            if type(move) ~= "table"
+                or move[1] ~= "skill3"
+                or type(move[2]) ~= "boolean" then
+                return
+            end
+
+            rememberWildIntent(
+                move[2]
+                    and -1
+                    or 1,
+                move[2]
+            )
+        end
+
+        if remote
+            and type(hookfunction) == "function" then
+
+            local oldFire
+            local directReplacement
+
+            directReplacement =
+                function(self, ...)
+                    if self == remote then
+                        inspectWildPacket(...)
+                    end
+
+                    return oldFire(
+                        self,
+                        ...
+                    )
+                end
+
+            if type(newcclosure) == "function" then
+                directReplacement =
+                    newcclosure(
+                        directReplacement
+                    )
+            end
+
+            local okDirect, originalDirect =
+                pcall(
+                    hookfunction,
+                    remote.FireServer,
+                    directReplacement
+                )
+
+            if okDirect and originalDirect then
+                oldFire =
+                    originalDirect
+            end
+        end
+
         if remote
             and type(hookmetamethod) == "function"
             and type(getnamecallmethod) == "function" then
 
             local oldNamecall
+            local namecallReplacement
 
-            local replacement =
+            namecallReplacement =
                 function(self, ...)
                     local method =
                         getnamecallmethod()
@@ -3891,61 +4014,7 @@ do
                             or method == "fireServer"
                         ) then
 
-                        local args =
-                            table.pack(...)
-
-                        local packet =
-                            args[1]
-
-                        local payload =
-                            args[2]
-
-                        local okLength, length =
-                            pcall(
-                                buffer.len,
-                                packet
-                            )
-
-                        if okLength
-                            and length == 2 then
-
-                            local okA, byteA =
-                                pcall(
-                                    buffer.readu8,
-                                    packet,
-                                    0
-                                )
-
-                            local okB, byteB =
-                                pcall(
-                                    buffer.readu8,
-                                    packet,
-                                    1
-                                )
-
-                            if okA
-                                and okB
-                                and byteA == 25
-                                and byteB == 1 then
-
-                                local move =
-                                    type(payload) == "table"
-                                    and payload[1]
-                                    or nil
-
-                                if type(move) == "table"
-                                    and move[1] == "skill3"
-                                    and type(move[2]) == "boolean" then
-
-                                    rememberWildIntent(
-                                        move[2]
-                                            and -1
-                                            or 1,
-                                        move[2]
-                                    )
-                                end
-                            end
-                        end
+                        inspectWildPacket(...)
                     end
 
                     return oldNamecall(
@@ -3955,23 +4024,23 @@ do
                 end
 
             if type(newcclosure) == "function" then
-                replacement =
+                namecallReplacement =
                     newcclosure(
-                        replacement
+                        namecallReplacement
                     )
             end
 
-            local okHook, original =
+            local okNamecall, originalNamecall =
                 pcall(
                     hookmetamethod,
                     game,
                     "__namecall",
-                    replacement
+                    namecallReplacement
                 )
 
-            if okHook and original then
+            if okNamecall and originalNamecall then
                 oldNamecall =
-                    original
+                    originalNamecall
             end
         end
     end
