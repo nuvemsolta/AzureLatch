@@ -2803,6 +2803,8 @@ do
         learnedStyle = nil,
         jumpHeld = false,
         jumpHoldToken = 0,
+        shidouDispatchAt = 0,
+        shidouTrapAt = 0,
         enemyAnimationConnections = {},
         enemyCharacterConnections = {},
         animatorConnection = nil,
@@ -2814,7 +2816,9 @@ do
         lockTrack = nil,
         lockConfirmed = false,
         lockStarted = 0,
-        lockConfirmDeadline = 0
+        lockConfirmDeadline = 0,
+        lockSeenAir = false,
+        lockLowSince = 0
     }
 
     local ps = game:GetService("Players")
@@ -3301,6 +3305,8 @@ do
         state.lockConfirmed = false
         state.lockStarted = 0
         state.lockConfirmDeadline = 0
+        state.lockSeenAir = false
+        state.lockLowSince = 0
     end
 
     local function lockTarget()
@@ -3335,27 +3341,22 @@ do
             return
         end
 
-        if state.lockActive then
-            pcall(function()
-                run:UnbindFromRenderStep(lockName)
-            end)
-        end
+        pcall(function()
+            run:UnbindFromRenderStep(lockName)
+        end)
 
         state.lockActive = true
         state.lockBall = ball
         state.lockTrack = track
         state.lockConfirmed = confirmed == true
         state.lockStarted = os.clock()
-
-        if state.lockConfirmed then
-            state.lockConfirmDeadline = 0
-        else
-            state.lockConfirmDeadline = state.lockStarted + 0.8
-        end
+        state.lockConfirmDeadline = 0
+        state.lockSeenAir = false
+        state.lockLowSince = 0
 
         run:BindToRenderStep(
             lockName,
-            Enum.RenderPriority.Camera.Value + 1,
+            Enum.RenderPriority.Last.Value - 1,
             function()
                 if not state.enabled then
                     stopLock()
@@ -3367,36 +3368,64 @@ do
                     return
                 end
 
-                if ballHolder and ballHolder.Value ~= nil then
+                local target = state.lockBall
+
+                if not target or not target.Parent then
+                    local replacement = findBall()
+
+                    if replacement then
+                        state.lockBall = replacement
+                        target = replacement
+                    else
+                        stopLock()
+                        return
+                    end
+                end
+
+                local char = character()
+                local root =
+                    char and char:FindFirstChild("HumanoidRootPart")
+
+                if not root then
                     stopLock()
                     return
                 end
 
-                if not state.lockConfirmed
-                    and os.clock() > state.lockConfirmDeadline then
+                local holder =
+                    ballHolder and ballHolder.Value
+
+                if holder
+                    and holder ~= char
+                    and not target:IsDescendantOf(terrain) then
 
                     stopLock()
                     return
                 end
 
-                if state.lockConfirmed
-                    and state.lockTrack
-                    and not state.lockTrack.IsPlaying then
+                local targetPosition = target.Position
+                local rootPosition = root.Position
+                local velocity = target.AssemblyLinearVelocity
+                local relativeHeight =
+                    targetPosition.Y - rootPosition.Y
 
-                    stopLock()
-                    return
-                end
+                local airborne =
+                    relativeHeight > 0.8
+                    or velocity.Y > 1.25
 
-                if os.clock() - state.lockStarted > 3.5 then
-                    stopLock()
-                    return
-                end
+                if airborne then
+                    state.lockSeenAir = true
+                    state.lockLowSince = 0
 
-                local target = lockTarget()
+                elseif state.lockSeenAir
+                    and velocity.Y <= 0.5 then
 
-                if not target then
-                    stopLock()
-                    return
+                    if state.lockLowSince == 0 then
+                        state.lockLowSince = os.clock()
+
+                    elseif os.clock() - state.lockLowSince >= 0.12 then
+                        stopLock()
+                        return
+                    end
                 end
 
                 local camera = ws.CurrentCamera
@@ -3405,10 +3434,12 @@ do
                     return
                 end
 
-                local cameraPosition = camera.CFrame.Position
-                local targetPosition = target.Position
+                local cameraPosition =
+                    camera.CFrame.Position
 
-                if (targetPosition - cameraPosition).Magnitude <= 0.001 then
+                if (targetPosition - cameraPosition).Magnitude
+                    <= 0.001 then
+
                     return
                 end
 
@@ -3655,36 +3686,80 @@ do
 
     local function hotbarButton(skillName)
         local slots = getSlots()
-        local slot = slots and slots:FindFirstChild(skillName)
+        local slot =
+            slots and slots:FindFirstChild(skillName)
 
         if not slot then
             return nil
         end
 
-        if slot:IsA("GuiButton") then
-            return slot
+        local best = nil
+        local bestArea = -1
+
+        local function consider(object)
+            if not object:IsA("GuiButton")
+                or not object.Visible then
+
+                return
+            end
+
+            local size = object.AbsoluteSize
+            local area = size.X * size.Y
+
+            if area > bestArea then
+                best = object
+                bestArea = area
+            end
         end
 
-        return slot:FindFirstChildWhichIsA("GuiButton", true)
+        consider(slot)
+
+        for _, object in ipairs(slot:GetDescendants()) do
+            consider(object)
+        end
+
+        return best
     end
 
     local function activateSkillInput(skillName)
+        local activated = false
         local button = hotbarButton(skillName)
 
         if button then
-            local fireSignal =
-                rawget(getgenv(), "firesignal")
-                or firesignal
+            local position = button.AbsolutePosition
+            local size = button.AbsoluteSize
 
-            if typeof(fireSignal) == "function" then
-                local ok = pcall(function()
-                    fireSignal(button.Activated)
+            local x =
+                position.X + size.X * 0.5
+
+            local y =
+                position.Y + size.Y * 0.5
+
+            local ok = pcall(function()
+                vim:SendMouseButtonEvent(
+                    x,
+                    y,
+                    0,
+                    true,
+                    game,
+                    0
+                )
+
+                task.defer(function()
+                    pcall(function()
+                        vim:SendMouseButtonEvent(
+                            x,
+                            y,
+                            0,
+                            false,
+                            game,
+                            0
+                        )
+                    end)
                 end)
+            end)
 
-                if ok then
-                    return true
-                end
-            end
+            activated = activated or ok
         end
 
         local keyMap = {
@@ -3699,21 +3774,29 @@ do
 
         if key then
             local ok = pcall(function()
-                vim:SendKeyEvent(true, key, false, game)
+                vim:SendKeyEvent(
+                    true,
+                    key,
+                    false,
+                    game
+                )
 
                 task.defer(function()
                     pcall(function()
-                        vim:SendKeyEvent(false, key, false, game)
+                        vim:SendKeyEvent(
+                            false,
+                            key,
+                            false,
+                            game
+                        )
                     end)
                 end)
             end)
 
-            if ok then
-                return true
-            end
+            activated = activated or ok
         end
 
-        return false
+        return activated
     end
 
     local function sendTrap(profile)
@@ -3729,10 +3812,27 @@ do
             )
 
         elseif profile.style == "Shidou" then
-            local usedGameInput =
-                activateSkillInput("skill1")
+            local dispatchAt = os.clock()
 
-            if not usedGameInput then
+            state.shidouDispatchAt = dispatchAt
+
+            activateSkillInput("skill1")
+
+            task.delay(0.075, function()
+                if not state.enabled
+                    or state.shidouDispatchAt ~= dispatchAt then
+
+                    return
+                end
+
+                if state.shidouTrapAt >= dispatchAt then
+                    return
+                end
+
+                if onCooldown("skill1") then
+                    return
+                end
+
                 remote:FireServer(
                     buffer.fromstring(buffers["base"]),
                     {
@@ -3741,11 +3841,11 @@ do
                         }
                     }
                 )
-            end
+            end)
 
             local token = state.jumpHoldToken
 
-            task.delay(0.12, function()
+            task.delay(0.16, function()
                 releaseJump(token)
             end)
         end
@@ -4004,6 +4104,10 @@ do
 
             state.learnedStyle = style
 
+            if style == "Shidou" then
+                state.shidouTrapAt = os.clock()
+            end
+
             if state.enabled
                 and (
                     state.lockActive
@@ -4017,16 +4121,12 @@ do
             if style == "Shidou" and state.jumpHeld then
                 local token = state.jumpHoldToken
 
-                task.delay(0.04, function()
+                task.delay(0.035, function()
                     releaseJump(token)
                 end)
             end
 
             track.Stopped:Connect(function()
-                if state.lockTrack == track and not hasBall() then
-                    stopLock()
-                end
-
                 if style == "Shidou" then
                     releaseJump()
                 end
