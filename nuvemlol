@@ -2204,7 +2204,7 @@ do
     )
 end
 
--- Auto Trap rewrite v2. Ground rejection is checked again immediately before send.
+-- Auto Trap aerial update: predictive jump and first-entry catch window. Hiori path preserved.
 do
     local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
     local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
@@ -2262,7 +2262,8 @@ do
         profile = nil, profileAt = -math.huge, slots = {}, slotAt = -math.huge,
         connections = {}, characters = {}, players = {}, attacks = {}, botThrows = {},
         generation = 0, filterAt = -math.huge, pingAt = -math.huge, ping = 0,
-        reason = "disabled", sends = 0, predictionAt = nil
+        reason = "disabled", sends = 0, predictionAt = nil,
+        aerialSmartJump = true, aerialJumpLead = 0.35, aerialSkillLead = 0.08
     }
     local timingCache = env.CeleronTrapTimings
     if type(timingCache) ~= "table" or timingCache.version ~= 2 or timingCache.place ~= game.PlaceId then
@@ -2274,7 +2275,7 @@ do
     groundParams.FilterType = Enum.RaycastFilterType.Exclude
     groundParams.IgnoreWater = true
     groundParams.RespectCanCollide = true
-    local runtime = {version = 2}
+    local runtime = {version = 3}
     env.CeleronTrapRuntime = runtime
     local stopLock, tick, syncRuntime, localAnimation
     local function disconnect(list)
@@ -2487,8 +2488,65 @@ do
         local apex = clearance + up * up / (2 * math.max(gravity, 1))
         return apex >= height
     end
+    -- Aerial-only validation. Hiori continues using its original ground path.
+    local aerialParams = RaycastParams.new()
+    aerialParams.FilterType = Enum.RaycastFilterType.Exclude
+    aerialParams.IgnoreWater = true
+    aerialParams.RespectCanCollide = false
+    local function strictAirEligible(sample, height, gravity)
+        if not sample then return false end
+        local known = sample.aerialGroundKnown
+        if known == nil then known = sample.groundKnown end
+        if not known or sample.samples < 2 then return false end
+        local clearance = sample.aerialClearance or sample.clearance
+        local previous = sample.aerialPreviousClearance or sample.previousClearance
+        -- Height alone is never launch evidence: some ground passes float above the collider.
+        if clearance <= 0.65 or not previous then return false end
+        if sample.aerialEvidence then return true end -- Still subject to the live floor gate above.
+        local measuredY = sample.measuredY
+        if not measuredY then return false end
+        local up = sample.physics.Y
+        if measuredY > 2 and clearance > previous and up > 4 then
+            return clearance + up * up / (2 * math.max(gravity, 1)) >= height
+        end
+        -- Support position-driven balls, but require sustained ascent instead of one snap.
+        if sample.samples >= 3 and measuredY > 4 and clearance - previous > 0.08
+            and (sample.aerialRisingFrames or 0) >= 2 and math.abs(up) <= 4 then
+            return clearance >= height
+        end
+        -- Falling catches require actual vertical travel and a third continuous sample.
+        return sample.samples >= 3 and clearance >= height and measuredY < -2
+            and clearance < previous and (up < -4 or (sample.aerialFallingFrames or 0) >= 2)
+    end
+    local function prepareAerialSample(release, sample)
+        local evidence = release.aerial
+        if not evidence or sample.samples < 2 then
+            evidence = {certified = false, risingFrames = 0, fallingFrames = 0}
+            release.aerial = evidence
+        end
+        -- Include queryable pitch surfaces; the original Hiori raycast is unchanged.
+        aerialParams.FilterDescendantsInstances = groundParams.FilterDescendantsInstances
+        local depth = math.max(256, state.vertical + sample.ball.Size.Y + 32)
+        local hit = ws:Raycast(sample.position + Vector3.new(0, 2, 0), Vector3.new(0, -depth, 0), aerialParams)
+        local known = hit ~= nil and hit.Normal.Y >= 0.65
+        local clearance = known and math.max(0, sample.position.Y - hit.Position.Y - math.max(sample.ball.Size.Y * 0.5, 0.1)) or 0
+        sample.aerialGroundKnown = known
+        sample.aerialClearance = clearance
+        sample.aerialPreviousClearance = evidence.previousClearance
+        local delta = sample.measuredY or 0
+        evidence.risingFrames = delta > 2 and evidence.risingFrames + 1 or 0
+        evidence.fallingFrames = delta < -2 and evidence.fallingFrames + 1 or 0
+        sample.aerialRisingFrames, sample.aerialFallingFrames = evidence.risingFrames, evidence.fallingFrames
+        if not known or clearance <= 0.65 then evidence.certified = false end
+        sample.aerialEvidence = evidence.certified
+        if strictAirEligible(sample, state.airHeight, ws.Gravity) then
+            evidence.certified = true
+            sample.aerialEvidence = true
+        end
+        evidence.previousClearance = known and clearance or nil
+    end
     local function profileAirEligible(profile, sample)
-        return profile.allowGround == true or airEligible(sample, state.airHeight, ws.Gravity)
+        return profile.allowGround == true or strictAirEligible(sample, state.airHeight, ws.Gravity)
     end
     local function inside(relative)
         return relative.X * relative.X + relative.Z * relative.Z <= state.range * state.range
@@ -2510,6 +2568,59 @@ do
             if sample.clearance + sample.velocity.Y * t - 0.5 * ws.Gravity * t * t <= 0.35 then return false end
         end
         return inside(future)
+    end
+    -- Find the first usable point inside the catch envelope, rather than the
+    -- closest horizontal point (which can occur after the ball has landed).
+    local function aerialWindow(sample, horizon)
+        if not strictAirEligible(sample, state.airHeight, ws.Gravity) then return nil end
+        local relative = sample.position - state.root.Position
+        local velocity = sample.velocity - state.root.AssemblyLinearVelocity
+        local a = velocity.X * velocity.X + velocity.Z * velocity.Z
+        local b = 2 * (relative.X * velocity.X + relative.Z * velocity.Z)
+        local c = relative.X * relative.X + relative.Z * relative.Z - state.range * state.range
+        local first, last = 0, horizon
+        if a <= 0.01 then
+            if c > 0 then return nil end
+        else
+            local discriminant = b * b - 4 * a * c
+            if discriminant < 0 then return nil end
+            local root = math.sqrt(discriminant)
+            first = math.max(0, (-b - root) / (2 * a))
+            last = math.min(horizon, (-b + root) / (2 * a))
+            if first > last then return nil end
+        end
+        local clearance = sample.aerialClearance or sample.clearance
+        local playerAirborne = state.humanoid.FloorMaterial == Enum.Material.Air
+        local relativeGravity = playerAirborne and 0 or ws.Gravity
+        for index = 0, 8 do
+            local t = first + (last - first) * index / 8
+            local relativeHeight = relative.Y + velocity.Y * t - 0.5 * relativeGravity * t * t
+            local groundHeight = clearance + sample.velocity.Y * t - 0.5 * ws.Gravity * t * t
+            if math.abs(relativeHeight) <= state.vertical and groundHeight > 0.65 then
+                return t
+            end
+        end
+        return nil
+    end
+    local function profileInterception(sample, profile)
+        if profile.allowGround then return interception(sample, profile) end -- Hiori unchanged.
+        local horizon = state.trajectoryPredict and math.min(state.trajectoryLookahead,
+            state.aerialSkillLead + math.min(state.ping, 0.08)) or 0
+        return aerialWindow(sample, horizon) ~= nil
+    end
+    local function smartAerialJump(release, sample, profile, now)
+        if not state.aerialSmartJump or profile.allowGround or not (profile.jump or state.useJump)
+            or release.preJumpAt or release.attempts > 0 or release.confirmed or onCooldown(profile) then return end
+        local humanoid = state.humanoid
+        if humanoid.FloorMaterial == Enum.Material.Air or humanoid.Sit or humanoid.PlatformStand then return end
+        if humanoid.GetStateEnabled and not humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping) then return end
+        local entry = aerialWindow(sample, state.aerialJumpLead + math.min(state.ping, 0.08))
+        if not entry then return end
+        release.preJumpAt = now
+        release.entryTime = entry
+        humanoid.Jump = true
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        state.reason = "smart jump prepared for incoming aerial ball"
     end
     stopLock = function()
         local active = state.active
@@ -2606,7 +2717,7 @@ do
         if active.sentAt or state.active ~= active then return end
         if not state.enabled or not releaseValid(release, now) or release.ball ~= sample.ball
             or resolveProfile(now, true) ~= profile or onCooldown(profile)
-            or not profileAirEligible(profile, sample) or not interception(sample, profile) then
+            or not profileAirEligible(profile, sample) or not profileInterception(sample, profile) then
             state.reason = "send rejected by live validation"; stopLock(); return
         end
         if profile.jump or state.useJump then
@@ -2713,7 +2824,16 @@ do
         else release.landedAt = nil end
         local profile = resolveProfile(now, false)
         if not profile then state.reason = "unsupported style"; stopLock(); return end
-        if airEligible(sample, state.airHeight, ws.Gravity) then release.seenAir = true end
+        if profile.allowGround then
+            -- Preserve Hiori's existing classification, confirmation and landing behavior.
+            if airEligible(sample, state.airHeight, ws.Gravity) then release.seenAir = true end
+        else
+            prepareAerialSample(release, sample)
+            if sample.aerialEvidence then release.seenAir = true end
+            if release.seenAir and sample.aerialGroundKnown and sample.aerialClearance <= 0.65 then
+                invalidate("aerial release landed"); return
+            end
+        end
         if not profileAirEligible(profile, sample) then state.reason = sample.groundKnown and "ground ball rejected" or "ground unknown; blocked"; stopLock(); return end
         if sample.velocity.Magnitude < state.minSpeed and not (active and active.confirmed) then state.reason = "below minimum speed"; stopLock(); return end
         if active then
@@ -2728,7 +2848,8 @@ do
         end
         if onCooldown(profile) or release.confirmed or release.attempts >= 2 then return end
         if release.attempts > 0 and (now - release.lastSend < 0.35 or release.sentDistance - (sample.position - state.root.Position).Magnitude < 2) then return end
-        if not interception(sample, profile) then state.reason = "outside interception window"; return end
+        if not profile.allowGround then smartAerialJump(release, sample, profile, now) end
+        if not profileInterception(sample, profile) then state.reason = "outside interception window"; return end
         active = startLock(ball, "auto", profile, release, now)
         sendTrap(active, sample, now)
     end
@@ -2892,7 +3013,9 @@ do
     end
     function runtime.getDiagnostics()
         local sample, release = state.sample, state.release
-        return {version = 2, reason = state.reason, sends = state.sends,
+        return {version = 3, reason = state.reason, sends = state.sends,
+            smartJumpPrepared = release and release.preJumpAt ~= nil or false,
+            aerialEntryTime = release and release.entryTime,
             profile = state.profile and state.profile.name, clearance = sample and sample.clearance,
             groundKnown = sample and sample.groundKnown, samples = sample and sample.samples,
             verticalSpeed = sample and sample.physics.Y, attempts = release and release.attempts or 0,
@@ -2921,6 +3044,9 @@ do
         if state.owner and not state.owner:FindFirstChild("Ball") then state.owner = nil end
         syncRuntime()
     end)
+    at:Toggle("Aerial Smart Jump", nil, true, function(value) state.aerialSmartJump = value == true end)
+    at:Slider("Aerial Jump Lead", 0.35, 0.05, 0.6, 0.01, function(value) state.aerialJumpLead = math.clamp(value, 0.05, 0.6) end)
+    at:Slider("Aerial Skill Lead", 0.08, 0, 0.3, 0.01, function(value) state.aerialSkillLead = math.clamp(value, 0, 0.3) end)
     th:Toggle("Trap Helper", function(value)
         state.helper = value == true
         if not state.helper and state.active and state.active.kind == "helper" then stopLock() end
