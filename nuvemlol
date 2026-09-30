@@ -2204,7 +2204,7 @@ do
     )
 end
 
--- Auto Trap aerial update: predictive jump and first-entry catch window. Hiori path preserved.
+-- Auto Trap v4: free-ball headers and real-height ground-shot rejection. Hiori path preserved.
 do
     local at = maintab:Folder("Auto Trap.", Color3.fromRGB(24, 255, 228), true)
     local th = maintab:Folder("Trap Helper.", Color3.fromRGB(24, 255, 228), true)
@@ -2263,7 +2263,8 @@ do
         connections = {}, characters = {}, players = {}, attacks = {}, botThrows = {},
         generation = 0, filterAt = -math.huge, pingAt = -math.huge, ping = 0,
         reason = "disabled", sends = 0, predictionAt = nil,
-        aerialSmartJump = true, aerialJumpLead = 0.35, aerialSkillLead = 0.08
+        aerialSmartJump = true, aerialJumpLead = 0.35, aerialSkillLead = 0.08,
+        headerFollow = true, headerSample = nil, headerCooldown = 0
     }
     local timingCache = env.CeleronTrapTimings
     if type(timingCache) ~= "table" or timingCache.version ~= 2 or timingCache.place ~= game.PlaceId then
@@ -2275,7 +2276,7 @@ do
     groundParams.FilterType = Enum.RaycastFilterType.Exclude
     groundParams.IgnoreWater = true
     groundParams.RespectCanCollide = true
-    local runtime = {version = 3}
+    local runtime = {version = 4}
     env.CeleronTrapRuntime = runtime
     local stopLock, tick, syncRuntime, localAnimation
     local function disconnect(list)
@@ -2318,7 +2319,7 @@ do
         state.epoch = state.epoch + 1
         state.owner = char
         state.predictionAt = nil
-        state.sample = nil
+        state.sample, state.headerSample = nil, nil
         invalidate("held")
     end
     local function releaseValid(release, now)
@@ -2326,6 +2327,9 @@ do
             or not release.source.Parent or release.source:FindFirstChild("Ball") then return false end
         local holder = holderValue and characterOf(holderValue.Value)
         if holder then return false end
+        if release.localHeader then
+            return release.source == state.char and release.player == lp and lp.Team == release.team
+        end
         if release.player then
             return enemy(release.source) == release.player and release.player.Team == release.team
         end
@@ -2502,12 +2506,18 @@ do
         local previous = sample.aerialPreviousClearance or sample.previousClearance
         -- Height alone is never launch evidence: some ground passes float above the collider.
         if clearance <= 0.65 or not previous then return false end
-        if sample.aerialEvidence then return true end -- Still subject to the live floor gate above.
+        -- Never authorize from projected apex alone: a strong low shot can have
+        -- an upward physics spike while staying below the required real height.
+        if sample.aerialEvidence then return clearance >= math.max(0.9, height * 0.5) end
+        if clearance < height then return false end
         local measuredY = sample.measuredY
         if not measuredY then return false end
         local up = sample.physics.Y
-        if measuredY > 2 and clearance > previous and up > 4 then
-            return clearance + up * up / (2 * math.max(gravity, 1)) >= height
+        if measuredY > 2 and clearance - previous >= 0.08 and up > 4
+            and (sample.aerialRiseDistance or 0) >= 0.3 then
+            -- Reject a vertical property spike that positional replication does
+            -- not confirm. This check is independent of horizontal shot power.
+            return math.abs(up - measuredY) <= math.max(12, math.abs(measuredY) * 0.75)
         end
         -- Support position-driven balls, but require sustained ascent instead of one snap.
         if sample.samples >= 3 and measuredY > 4 and clearance - previous > 0.08
@@ -2515,7 +2525,9 @@ do
             return clearance >= height
         end
         -- Falling catches require actual vertical travel and a third continuous sample.
-        return sample.samples >= 3 and clearance >= height and measuredY < -2
+        local settled = sample.aerialHeader == true or (sample.aerialReleasedAge or 0) >= 0.075
+            or clearance >= math.max(height + 2, 6)
+        return settled and sample.samples >= 3 and clearance >= height and measuredY < -2
             and clearance < previous and (up < -4 or (sample.aerialFallingFrames or 0) >= 2)
     end
     local function prepareAerialSample(release, sample)
@@ -2534,10 +2546,15 @@ do
         sample.aerialClearance = clearance
         sample.aerialPreviousClearance = evidence.previousClearance
         local delta = sample.measuredY or 0
+        if delta <= 2 then evidence.riseOrigin = nil
+        elseif evidence.riseOrigin == nil then evidence.riseOrigin = evidence.previousClearance or clearance end
+        sample.aerialRiseDistance = evidence.riseOrigin and math.max(0, clearance - evidence.riseOrigin) or 0
+        sample.aerialReleasedAge = sample.at - release.started
+        sample.aerialHeader = release.header == true
         evidence.risingFrames = delta > 2 and evidence.risingFrames + 1 or 0
         evidence.fallingFrames = delta < -2 and evidence.fallingFrames + 1 or 0
         sample.aerialRisingFrames, sample.aerialFallingFrames = evidence.risingFrames, evidence.fallingFrames
-        if not known or clearance <= 0.65 then evidence.certified = false end
+        if not known or clearance < math.max(0.9, state.airHeight * 0.5) then evidence.certified = false end
         sample.aerialEvidence = evidence.certified
         if strictAirEligible(sample, state.airHeight, ws.Gravity) then
             evidence.certified = true
@@ -2770,6 +2787,59 @@ do
         -- Warm the profile cache at attack start. Never send from animation alone.
         if state.root then resolveProfile(os.clock(), true) end
     end
+    -- Headers redirect an already free ball, so possession events are not enough.
+    -- This watcher is called only for aerial profiles; Hiori never enters it.
+    local function detectHeaderContact(sample, now)
+        local previous = state.headerSample
+        state.headerSample = sample
+        if not state.headerFollow or not previous or now - previous.at > 0.1
+            or now <= (state.headerCooldown or 0) then return false end
+        local holder = holderValue and characterOf(holderValue.Value)
+        if holder then return false end
+        local dt = now - previous.at
+        if dt <= 0.001 then return false end
+        local observed = (sample.position - previous.position) / dt
+        if observed.Magnitude > 600 or (sample.position - previous.position).Magnitude > 20 then return false end
+        local impulse = sample.velocity - previous.velocity + Vector3.new(0, ws.Gravity * dt, 0)
+        if impulse.Magnitude < math.max(18, previous.velocity.Magnitude * 0.2) then return false end
+        -- Replicated velocity alone is insufficient: require displacement consistent
+        -- with the outgoing velocity, allowing one frame of old-direction travel.
+        if observed.Magnitude > 2 and sample.physics.Magnitude > 2 and previous.physics.Magnitude > 2
+            and observed.Unit:Dot(sample.physics.Unit) < 0.25
+            and observed.Unit:Dot(previous.physics.Unit) < 0.25 then return false end
+        local candidate, best = nil, math.huge
+        for char, record in pairs(state.characters) do
+            local player = ps:GetPlayerFromCharacter(char)
+            local humanoid = record.humanoid or char:FindFirstChildOfClass("Humanoid")
+            local head = char:FindFirstChild("Head")
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if (char == state.char or enemy(char)) and player and humanoid and humanoid.Health > 0
+                and humanoid.FloorMaterial == Enum.Material.Air and head and head:IsA("BasePart")
+                and root and not char:FindFirstChild("Ball") then
+                local radius = math.max(sample.ball.Size.Y * 0.5, 0.1) + math.max(head.Size.Y * 0.5, 0.5) + 1
+                local distance = math.min((previous.position - head.Position).Magnitude, (sample.position - head.Position).Magnitude)
+                local contactHeight = math.min(previous.position.Y, sample.position.Y)
+                if distance <= radius and contactHeight > root.Position.Y + 0.5 and distance < best then
+                    candidate, best = char, distance
+                end
+            end
+        end
+        if not candidate then return false end
+        local isLocal = candidate == state.char
+        local player = isLocal and lp or enemy(candidate)
+        if not player then return false end
+        state.epoch = state.epoch + 1
+        state.releasedEpoch = state.epoch
+        state.owner = candidate
+        invalidate("free ball header contact")
+        state.release = {source = candidate, player = player, team = player.Team,
+            localHeader = isLocal, header = true, epoch = state.epoch, started = now,
+            expires = now + 6, attempts = 0, lastSend = -math.huge,
+            confirmed = false, ball = sample.ball}
+        state.headerCooldown = now + 0.2
+        state.reason = isLocal and "local header trajectory acquired" or "enemy header trajectory acquired"
+        return true
+    end
     local function predictAttack(now)
         state.predictionAt = nil
         if not state.trajectoryPredict or not state.owner then return end
@@ -2813,6 +2883,12 @@ do
             faceBall(active, dt); return
         end
         if not state.enabled then stopLock(); return end
+        local profile = resolveProfile(now, false)
+        if profile and not profile.allowGround then
+            if detectHeaderContact(sample, now) then active = state.active end
+        else
+            state.headerSample = nil
+        end
         local release = state.release
         if not releaseValid(release, now) then invalidate("no valid enemy release"); return end
         release.ball = release.ball or ball
@@ -2822,7 +2898,6 @@ do
             if release.seenAir then invalidate("aerial release landed"); return end
             release.landedAt = release.landedAt or now
         else release.landedAt = nil end
-        local profile = resolveProfile(now, false)
         if not profile then state.reason = "unsupported style"; stopLock(); return end
         if profile.allowGround then
             -- Preserve Hiori's existing classification, confirmation and landing behavior.
@@ -2899,6 +2974,7 @@ do
         state.char, state.root, state.humanoid = char, nil, nil
         state.profileAt, state.slotAt = -math.huge, -math.huge
         state.owner, state.sample, state.ball = nil, nil, nil
+        state.headerSample, state.headerCooldown = nil, 0
         invalidate("respawn")
         watchCharacter(char)
         task.spawn(function()
@@ -2952,6 +3028,7 @@ do
             for _, record in pairs(state.characters) do disconnect(record.connections) end
             state.players, state.characters, state.attacks, state.botThrows = {}, {}, {}, {}
             state.owner, state.release, state.sample, state.ball = nil, nil, nil, nil
+            state.headerSample, state.headerCooldown = nil, 0
             state.root, state.humanoid, state.char = nil, nil, nil
             state.reason = "disabled"
             return
@@ -3013,7 +3090,11 @@ do
     end
     function runtime.getDiagnostics()
         local sample, release = state.sample, state.release
-        return {version = 3, reason = state.reason, sends = state.sends,
+        return {version = 4, reason = state.reason, sends = state.sends,
+            aerialClearance = sample and sample.aerialClearance,
+            measuredVerticalSpeed = sample and sample.measuredY,
+            header = release and release.header == true or false,
+            localHeader = release and release.localHeader == true or false,
             smartJumpPrepared = release and release.preJumpAt ~= nil or false,
             aerialEntryTime = release and release.entryTime,
             profile = state.profile and state.profile.name, clearance = sample and sample.clearance,
@@ -3044,6 +3125,7 @@ do
         if state.owner and not state.owner:FindFirstChild("Ball") then state.owner = nil end
         syncRuntime()
     end)
+    at:Toggle("Aerial Header Follow", nil, true, function(value) state.headerFollow = value == true; state.headerSample = nil end)
     at:Toggle("Aerial Smart Jump", nil, true, function(value) state.aerialSmartJump = value == true end)
     at:Slider("Aerial Jump Lead", 0.35, 0.05, 0.6, 0.01, function(value) state.aerialJumpLead = math.clamp(value, 0.05, 0.6) end)
     at:Slider("Aerial Skill Lead", 0.08, 0, 0.3, 0.01, function(value) state.aerialSkillLead = math.clamp(value, 0, 0.3) end)
