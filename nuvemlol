@@ -2817,33 +2817,58 @@ do
     local function sendTrap(active, now)
         state.slotAt = -math.huge
         local profile = resolveProfile(true)
-        if not profile or onCooldown(profile) then stopLock(); return end
-        active.profile = profile
+        if not profile or onCooldown(profile) then
+            stopLock()
+            return
+        end
+
         local humanoid = state.humanoid
-        if profile.jump or state.useJump then
+        if not humanoid or humanoid.Health <= 0 then
+            stopLock()
+            return
+        end
+
+        active.profile = profile
+
+        local humanoidState = humanoid:GetState()
+        local airborne = humanoid.FloorMaterial == Enum.Material.Air
+            or humanoidState == Enum.HumanoidStateType.Jumping
+            or humanoidState == Enum.HumanoidStateType.Freefall
+
+        if (profile.jump or state.useJump) and not airborne then
             if not active.jumpAt then
                 active.jumpAt = now
                 humanoid.Jump = true
                 humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
             end
-            local airborne = humanoid.FloorMaterial == Enum.Material.Air
-                or humanoid:GetState() == Enum.HumanoidStateType.Jumping
-                or humanoid:GetState() == Enum.HumanoidStateType.Freefall
-            if not airborne then return end
+            return
         end
+
+        if not airborne then
+            return
+        end
+
         aimLock(active)
         if state.active ~= active then return end
         if active.needsTurn and state.physicsFrame <= active.acquireFrame and not state.afterPhysics then return end
+
         active.sentAt = now
         active.deadline = now + math.clamp(0.25 + state.ping * 2, 0.25, 0.6)
         active.flight.attempts = active.flight.attempts + 1
         active.flight.lastSend = now
         active.flight.sentDistance = (active.ball.Position - state.root.Position).Magnitude
-        if profile.name == "DonLorenzo" then active.deadline = now + 0.35 end
+
+        if profile.name == "DonLorenzo" then
+            active.deadline = now + 0.35
+        end
+
         local ok = pcall(function()
             remote:FireServer(packet, {profile.args(active.ball, state.root)})
         end)
-        if not ok then stopLock() end
+
+        if not ok then
+            stopLock()
+        end
     end
     evaluate = function(dt)
         if not state.running or not state.root or not state.root.Parent or not state.humanoid or state.humanoid.Health <= 0 then
@@ -5527,6 +5552,437 @@ othersil:Button("Fix Duplicate Ball", "I Don't Know If This Is Still An Issue Bu
         if obj:IsA("MeshPart") and obj.Name == "Ball" then
             obj:Destroy()
         end
+    end
+end)
+
+local formlessBindKey = Enum.KeyCode.Y
+
+local formlessState = {
+    enabled = false,
+    inputConnection = nil,
+    track = nil,
+    trackHumanoid = nil
+}
+
+local formlessRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
+local formlessPacket = buffer.fromstring(buffers["base"])
+local formlessAnimation = Instance.new("Animation")
+formlessAnimation.AnimationId = "rbxassetid://76587445975710"
+
+local function notifyFormless(text)
+    StarterGui:SetCore("SendNotification", {
+        Title = "Auto Formless",
+        Text = text,
+        Duration = 2
+    })
+end
+
+local function getFormlessTrack(humanoid)
+    if formlessState.track and formlessState.trackHumanoid == humanoid then
+        return formlessState.track
+    end
+
+    if formlessState.track then
+        pcall(function()
+            formlessState.track:Stop(0)
+        end)
+        formlessState.track = nil
+        formlessState.trackHumanoid = nil
+    end
+
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then
+        animator = Instance.new("Animator")
+        animator.Parent = humanoid
+    end
+
+    local ok, track = pcall(function()
+        return animator:LoadAnimation(formlessAnimation)
+    end)
+
+    if not ok then
+        return nil
+    end
+
+    formlessState.track = track
+    formlessState.trackHumanoid = humanoid
+    return track
+end
+
+local function performFormless()
+    if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+        return
+    end
+
+    local localPlayer = Players.LocalPlayer
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+    if not root or not humanoid or humanoid.Health <= 0 then
+        return
+    end
+
+    humanoid.AutoRotate = false
+
+    local camera = workspace.CurrentCamera
+    local originalType = camera.CameraType
+    local originalSubject = camera.CameraSubject
+    local flipped = camera.CFrame * CFrame.Angles(0, math.rad(180), 0)
+
+    camera.CameraType = Enum.CameraType.Scriptable
+    camera.CFrame = flipped
+
+    task.delay(0.1, function()
+        local currentCharacter = localPlayer.Character
+        local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+
+        if currentHumanoid then
+            camera.CameraSubject = currentHumanoid
+            camera.CameraType = Enum.CameraType.Custom
+        else
+            camera.CameraSubject = originalSubject
+            camera.CameraType = originalType
+        end
+
+        if humanoid.Parent then
+            humanoid.AutoRotate = true
+        end
+    end)
+
+    task.wait(0.15)
+
+    if not root.Parent or not humanoid.Parent or humanoid.Health <= 0 then
+        return
+    end
+
+    local track = getFormlessTrack(humanoid)
+    if track then
+        track:Play(0)
+    end
+
+    local direction = root.CFrame.LookVector
+    local kickVector = Vector3.new(direction.X * 0.5, 1, direction.Z * 0.5)
+
+    formlessRemote:FireServer(formlessPacket, {
+        {"kick", 25, false, kickVector}
+    })
+
+    formlessRemote:FireServer(formlessPacket, {
+        {"skill1"}
+    })
+end
+
+othersil:Toggle("Auto Formless", "Shidou Only Formless Macro.", function(value)
+    if type(value) == "boolean" then
+        formlessState.enabled = value
+    else
+        formlessState.enabled = not formlessState.enabled
+    end
+
+    if formlessState.inputConnection then
+        formlessState.inputConnection:Disconnect()
+        formlessState.inputConnection = nil
+    end
+
+    if formlessState.enabled then
+        formlessState.inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if gameProcessed or input.KeyCode ~= formlessBindKey then
+                return
+            end
+
+            performFormless()
+        end)
+    end
+
+    notifyFormless(formlessState.enabled and "Enabled." or "Disabled.")
+end)
+
+othersil:Textbox("Formless Keybind", "Enter Key (Example: Y, V, L.)", function(text)
+    if typeof(text) ~= "string" then
+        formlessBindKey = Enum.KeyCode.Y
+        notifyFormless("Invalid Key. Bind Is Now Y.")
+        return
+    end
+
+    local formatted = text:gsub("%s+", "")
+    local ok, keyCode = pcall(function()
+        return Enum.KeyCode[formatted]
+    end)
+
+    if ok and keyCode then
+        formlessBindKey = keyCode
+        notifyFormless("Bind Set To: " .. keyCode.Name)
+        return
+    end
+
+    formlessBindKey = Enum.KeyCode.Y
+    notifyFormless("Invalid Key. Bind Is Now Y.")
+end)
+
+local function makeMobileButtonDraggable(button)
+    local dragging = false
+    local dragInput = nil
+    local dragStart = nil
+    local startPosition = nil
+
+    button.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+
+        dragging = true
+        dragStart = input.Position
+        startPosition = button.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end)
+
+    button.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    local moveConnection
+    moveConnection = UserInputService.InputChanged:Connect(function(input)
+        if not dragging or input ~= dragInput or not button.Parent then
+            return
+        end
+
+        local delta = input.Position - dragStart
+        button.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end)
+
+    button.Destroying:Connect(function()
+        if moveConnection then
+            moveConnection:Disconnect()
+            moveConnection = nil
+        end
+    end)
+end
+
+local mobileSilent = maintab2:Folder("Mobile Silent Features.", Color3.fromRGB(24, 255, 228), true)
+mobileSilent:Label("Mobile Silent Features: Silent Features Ported To Mobile.")
+
+local mobileFormlessState = {
+    gui = nil,
+    active = false
+}
+
+local function hideMobileFormless()
+    if mobileFormlessState.gui then
+        mobileFormlessState.gui:Destroy()
+        mobileFormlessState.gui = nil
+    end
+end
+
+local function showMobileFormless()
+    if mobileFormlessState.gui then
+        return
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FormlessMobile"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+    mobileFormlessState.gui = screenGui
+
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 60, 0, 60)
+    button.Position = UDim2.new(0.5, -50, 0.5, -50)
+    button.AnchorPoint = Vector2.new(0.5, 0.5)
+    button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    button.BorderSizePixel = 0
+    button.Text = "Formless"
+    button.TextColor3 = Color3.fromRGB(220, 220, 220)
+    button.Font = Enum.Font.GothamSemibold
+    button.TextSize = 20
+    button.AutoButtonColor = true
+    button.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = button
+
+    button.MouseEnter:Connect(function()
+        button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    end)
+
+    button.MouseLeave:Connect(function()
+        button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    end)
+
+    button.Activated:Connect(performFormless)
+    makeMobileButtonDraggable(button)
+end
+
+mobileSilent:Button("Auto Formless (Mobile Button.)", "Click Again To Remove Button.", function()
+    mobileFormlessState.active = not mobileFormlessState.active
+
+    if mobileFormlessState.active then
+        showMobileFormless()
+    else
+        hideMobileFormless()
+    end
+end)
+
+local mobileSimulation = maintab2:Folder("Mobile Simulation Keys.", Color3.fromRGB(24, 255, 228), true)
+mobileSimulation:Label("Mobile Simulation Keys: Creates Draggable Buttons That Simulate PC Keys.")
+
+local mobileKeySystem = getgenv().MobileKeySystem
+
+if type(mobileKeySystem) ~= "table" then
+    mobileKeySystem = {}
+    getgenv().MobileKeySystem = mobileKeySystem
+end
+
+mobileKeySystem.keyCode = mobileKeySystem.keyCode or nil
+mobileKeySystem.keyName = mobileKeySystem.keyName or ""
+mobileKeySystem.buttons = mobileKeySystem.buttons or {}
+
+local mobileKeyAliases = {
+    leftalt = "LeftAlt",
+    rightalt = "RightAlt",
+    leftshift = "LeftShift",
+    rightshift = "RightShift",
+    leftctrl = "LeftControl",
+    rightctrl = "RightControl",
+    leftcontrol = "LeftControl",
+    rightcontrol = "RightControl",
+    enter = "Return",
+    returnkey = "Return",
+    space = "Space",
+    backspace = "Backspace",
+    delete = "Delete",
+    tab = "Tab",
+    escape = "Escape"
+}
+
+local mobileNumberKeys = {
+    ["0"] = "Zero",
+    ["1"] = "One",
+    ["2"] = "Two",
+    ["3"] = "Three",
+    ["4"] = "Four",
+    ["5"] = "Five",
+    ["6"] = "Six",
+    ["7"] = "Seven",
+    ["8"] = "Eight",
+    ["9"] = "Nine"
+}
+
+local function resolveMobileKey(value)
+    if typeof(value) ~= "string" then
+        return nil
+    end
+
+    local cleaned = value:gsub("%s+", "")
+    if cleaned == "" then
+        return nil
+    end
+
+    local lower = cleaned:lower()
+    local enumName = mobileKeyAliases[lower] or mobileNumberKeys[lower]
+
+    if not enumName then
+        if #cleaned == 1 and cleaned:match("%a") then
+            enumName = cleaned:upper()
+        else
+            enumName = cleaned:sub(1, 1):upper() .. cleaned:sub(2)
+        end
+    end
+
+    local ok, keyCode = pcall(function()
+        return Enum.KeyCode[enumName]
+    end)
+
+    if ok and keyCode then
+        return keyCode
+    end
+
+    return nil
+end
+
+mobileSimulation:Textbox("Key To Simulate", "Enter Key To Simulate (Example: C, Z, LeftAlt.)", function(value)
+    local keyCode = resolveMobileKey(value)
+    mobileKeySystem.keyCode = keyCode
+    mobileKeySystem.keyName = keyCode and keyCode.Name or ""
+
+    if not keyCode then
+        StarterGui:SetCore("SendNotification", {
+            Title = "Mobile Simulation",
+            Text = "Invalid Key.",
+            Duration = 2
+        })
+    end
+end)
+
+mobileSimulation:Button("Create Mobile PC Key", "Creates A Mobile PC Key.", function()
+    local keyCode = mobileKeySystem.keyCode
+    if not keyCode then
+        return
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "MobileKey_" .. keyCode.Name
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(0, 60, 0, 60)
+    button.Position = UDim2.new(0.5, math.random(-150, 150), 0.5, math.random(-150, 150))
+    button.AnchorPoint = Vector2.new(0.5, 0.5)
+    button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    button.BackgroundTransparency = 0.4
+    button.BorderSizePixel = 0
+    button.Text = keyCode.Name
+    button.TextColor3 = Color3.fromRGB(220, 220, 220)
+    button.Font = Enum.Font.GothamSemibold
+    button.TextSize = 20
+    button.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = button
+
+    button.MouseEnter:Connect(function()
+        button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    end)
+
+    button.MouseLeave:Connect(function()
+        button.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    end)
+
+    button.Activated:Connect(function()
+        local virtualInputManager = game:GetService("VirtualInputManager")
+        virtualInputManager:SendKeyEvent(true, keyCode, false, game)
+        task.wait()
+        virtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
+
+    makeMobileButtonDraggable(button)
+    table.insert(mobileKeySystem.buttons, screenGui)
+end)
+
+mobileSimulation:Button("Remove Mobile PC Keys", "Removes All Mobile PC Keys.", function()
+    for index = #mobileKeySystem.buttons, 1, -1 do
+        local screenGui = mobileKeySystem.buttons[index]
+        if screenGui then
+            screenGui:Destroy()
+        end
+        mobileKeySystem.buttons[index] = nil
     end
 end)
 
