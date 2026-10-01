@@ -1439,12 +1439,12 @@ ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.",
     end)
 end)
 
--- Auto Counter V3.2
+-- Auto Counter V3.3
 -- IMPORTANT: isolated in its own function because Luau limits locals per function.
 task.spawn(function()
     local bootOK, bootError = pcall(function()
         local autodrib = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
-        autodrib:Label("Auto Counter V3.2: threat timing + Luau 200-local fix.")
+        autodrib:Label("Auto Counter V3.3: threat timing + reliable style/counter detection.")
 
         local counterPlayers = game:GetService("Players")
         local counterRS = game:GetService("RunService")
@@ -1474,7 +1474,11 @@ task.spawn(function()
         }
 
         local styleToCounter = {
-            sae = "toggleCounter1",
+            -- User-verified:
+            sae = "toggleCounter2",
+            kaiser = "toggleCounter4",
+
+            -- Existing mappings from the original counter script:
             rin = "toggleCounter1",
             nagi = "toggleCounter2",
             isagi = "toggleCounter3",
@@ -1487,6 +1491,7 @@ task.spawn(function()
         -- They do not change any skill or counter behavior.
         local styleFingerprints = {
             sae = {"rabonanutmeg", "beautifuldestruction", "heelflick"},
+            kaiser = {"kaiserimpact", "kaiserimpactmagnus", "emperorspath", "imperialbreak", "instakillflash"},
             rin = {"occlusionbreak", "fakeshot", "finalmatchup"},
             nagi = {"control"},
             isagi = {"naruhayafootwork", "naruhaya", "directshot"},
@@ -1495,7 +1500,7 @@ task.spawn(function()
             bachira = {"stepovers", "monstertrance"},
         }
 
-        local styleOrder = {"sae", "rin", "nagi", "isagi", "barou", "shidou", "bachira"}
+        local styleOrder = {"sae", "kaiser", "rin", "nagi", "isagi", "barou", "shidou", "bachira"}
 
         local counterState = {
             destroyed = false,
@@ -1544,7 +1549,7 @@ task.spawn(function()
             lastDetectedStyle = nil,
         }
 
-        local counterRuntime = {version = 3.2}
+        local counterRuntime = {version = 3.3}
         counterEnv.CeleronCounterRuntime = counterRuntime
 
         local function now()
@@ -1565,7 +1570,7 @@ task.spawn(function()
             if not ok then
                 local message = tostring(result)
                 trace("ERROR", tostring(tag) .. " | " .. message)
-                warn("[AutoCounter V3.2][" .. tostring(tag) .. "] " .. message)
+                warn("[AutoCounter V3.3][" .. tostring(tag) .. "] " .. message)
                 return false, result
             end
 
@@ -1666,6 +1671,68 @@ task.spawn(function()
             return table.concat(parts, " ")
         end
 
+        local function hotbarCounterKey()
+            local hotbar = hotbarRoot()
+            if not hotbar then return nil, "hotbar-missing" end
+
+            local matches = {}
+
+            for _, slot in ipairs(hotbar:GetChildren()) do
+                local number = slot.Name:lower():match("^skill(%d+)$")
+                if number then
+                    local clean = normalize(textOf(slot))
+
+                    -- Strongest generic signal: the real equipped skill is literally
+                    -- named as a Counter. Example from the user's Kaiser diagnostics:
+                    -- skill4 = "Imperial Break Counter".
+                    if clean:find("counter", 1, true) then
+                        matches[#matches + 1] = {
+                            key = "toggleCounter" .. number,
+                            slot = slot.Name,
+                            text = clean,
+                        }
+                    end
+                end
+            end
+
+            if #matches == 1 and counterState.autoSkills[matches[1].key] then
+                return matches[1].key, "hotbar-counter:" .. matches[1].slot
+            end
+
+            return nil, #matches > 1 and "hotbar-counter-ambiguous" or "hotbar-counter-none"
+        end
+
+        local function hotbarStyle()
+            local hotbar = hotbarRoot()
+            if not hotbar then return nil, "hotbar-missing" end
+
+            local hotbarText = normalize(textOf(hotbar))
+            local bestStyle, bestScore, tied = nil, 0, false
+
+            for _, candidate in ipairs(styleOrder) do
+                local score = 0
+                local fingerprints = styleFingerprints[candidate] or {}
+
+                for _, word in ipairs(fingerprints) do
+                    if hotbarText:find(word, 1, true) then
+                        score = score + 1
+                    end
+                end
+
+                if score > bestScore then
+                    bestStyle, bestScore, tied = candidate, score, false
+                elseif score > 0 and score == bestScore then
+                    tied = true
+                end
+            end
+
+            if bestStyle and bestScore > 0 and not tied then
+                return bestStyle, "hotbar-fingerprint(" .. tostring(bestScore) .. ")"
+            end
+
+            return nil, tied and "hotbar-fingerprint-tie" or "hotbar-fingerprint-none"
+        end
+
         local function styleFromString(value)
             local raw = tostring(value or ""):lower():gsub("[^%w]+", " ")
 
@@ -1744,14 +1811,42 @@ task.spawn(function()
         local function detectStyle()
             local char = counterPlayer.Character
 
-            -- 1) Strongest source: attributes/names on player + character.
-            local style, source = inspectAttributes(char)
+            -- 1) The visible equipped hotbar is the freshest evidence.
+            -- It changes with the moveset, while Character attributes can stay stale.
+            local style, source = hotbarStyle()
             if style then return style, source end
 
+            -- 2) Player.style is preferred over Character.style.
+            -- User diagnostics proved PlayerAttr style=kaiser while the old
+            -- Character still incorrectly said style=sae.
+            local playerStyle =
+                styleFromString(counterPlayer:GetAttribute("style"))
+                or styleFromString(counterPlayer:GetAttribute("Style"))
+
+            if playerStyle then
+                return playerStyle, "player-attribute:style="
+                    .. tostring(counterPlayer:GetAttribute("style") or counterPlayer:GetAttribute("Style"))
+            end
+
+            -- 3) Other Player attributes.
             style, source = inspectAttributes(counterPlayer)
             if style then return style, source end
 
-            -- 2) Look at StringValues / object names actually attached to the character.
+            -- 4) Character attributes are only fallback because they may be stale.
+            local charStyle = char and (
+                styleFromString(char:GetAttribute("style"))
+                or styleFromString(char:GetAttribute("Style"))
+            )
+
+            if charStyle then
+                return charStyle, "character-attribute:style="
+                    .. tostring(char:GetAttribute("style") or char:GetAttribute("Style"))
+            end
+
+            style, source = inspectAttributes(char)
+            if style then return style, source end
+
+            -- 5) Last fallback: explicit style-like values/names inside character.
             if char then
                 for _, object in ipairs(char:GetDescendants()) do
                     local found = styleFromInstanceName(object.Name)
@@ -1763,35 +1858,6 @@ task.spawn(function()
                     if found then
                         return found, "character-descendant:" .. object:GetFullName()
                     end
-                end
-            end
-
-            -- 3) Hotbar fingerprint. This avoids scanning our own Celeron UI, which
-            -- contains character names and would create false detections.
-            local hotbar = hotbarRoot()
-            if hotbar then
-                local hotbarText = normalize(textOf(hotbar))
-                local bestStyle, bestScore, tied = nil, 0, false
-
-                for _, candidate in ipairs(styleOrder) do
-                    local score = 0
-                    local fingerprints = styleFingerprints[candidate]
-
-                    for _, word in ipairs(fingerprints) do
-                        if hotbarText:find(word, 1, true) then
-                            score = score + 1
-                        end
-                    end
-
-                    if score > bestScore then
-                        bestStyle, bestScore, tied = candidate, score, false
-                    elseif score > 0 and score == bestScore then
-                        tied = true
-                    end
-                end
-
-                if bestStyle and bestScore > 0 and not tied then
-                    return bestStyle, "hotbar-fingerprint(" .. tostring(bestScore) .. ")"
                 end
             end
 
@@ -2368,8 +2434,17 @@ task.spawn(function()
         end))
 
         local function selectStyle(style, source)
-            local key = style and styleToCounter[style]
-            if not key then return false end
+            local key, keySource = hotbarCounterKey()
+
+            if not key then
+                key = style and styleToCounter[style]
+                keySource = key and ("style-map:" .. tostring(style)) or keySource
+            end
+
+            if not key or not counterState.autoSkills[key] then
+                trace("COUNTER_SLOT_FAIL", tostring(style) .. " | " .. tostring(keySource))
+                return false
+            end
 
             for stateKey in pairs(counterState.autoSkills) do
                 counterState[stateKey] = false
@@ -2378,10 +2453,19 @@ task.spawn(function()
             counterState[key] = true
             counterState.lastDetectedStyle = style
 
-            trace("STYLE", style .. " via " .. tostring(source))
+            trace(
+                "STYLE",
+                tostring(style)
+                    .. " via " .. tostring(source)
+                    .. " | counter=" .. tostring(counterState.autoSkills[key])
+                    .. " via " .. tostring(keySource)
+            )
+
             notifyCounter(
                 "Auto Counter",
-                style:upper() .. " detected → " .. counterState.autoSkills[key],
+                tostring(style):upper()
+                    .. " detected → "
+                    .. counterState.autoSkills[key],
                 2
             )
 
@@ -2398,7 +2482,7 @@ task.spawn(function()
             end
 
             trace("STYLE_FAIL", source)
-            warn("[AutoCounter V3] Could not detect equipped style.\n" .. counterState.lastStyleReport)
+            warn("[AutoCounter V3.3] Could not detect equipped style.\n" .. counterState.lastStyleReport)
 
             notifyCounter(
                 "Auto Counter",
@@ -2411,7 +2495,7 @@ task.spawn(function()
 
         local function counterDiagnostics()
             local lines = {
-                "========== AUTO COUNTER V3.2 DIAGNOSTICS ==========",
+                "========== AUTO COUNTER V3.3 DIAGNOSTICS ==========",
                 "style=" .. tostring(counterState.lastDetectedStyle),
                 "mcd=" .. tostring(counterState.mCD),
                 string.format("ping=%.0fms", pingSeconds() * 1000),
@@ -2569,6 +2653,23 @@ task.spawn(function()
             end))
         end
 
+        -- Re-detect automatically when Azure Latch swaps the equipped style.
+        -- Small delay lets PlayerGui.Hotbar rebuild before we inspect it.
+        addGeneral(counterPlayer.AttributeChanged:Connect(function(attributeName)
+            local lower = tostring(attributeName):lower()
+            if lower ~= "style" and lower ~= "character" and lower ~= "class" then
+                return
+            end
+
+            task.delay(0.20, function()
+                if not counterState.destroyed then
+                    safeCounterCall("StyleAttributeChanged", function()
+                        autoDetectCharacter()
+                    end)
+                end
+            end)
+        end))
+
         -- Detect again after respawn, when the real hotbar has had time to rebuild.
         addGeneral(counterPlayer.CharacterAdded:Connect(function()
             counterState.lastHadBallAt = -math.huge
@@ -2591,7 +2692,7 @@ task.spawn(function()
 
         function counterRuntime.getState()
             return {
-                version = 3.2,
+                version = 3.3,
                 style = counterState.lastDetectedStyle,
                 mCD = counterState.mCD,
                 ping = pingSeconds(),
@@ -2633,12 +2734,12 @@ task.spawn(function()
             end
         end
 
-        warn("[AutoCounter V3.2] READY | no global unpack dependency | threat tracker armed")
+        warn("[AutoCounter V3.3] READY | style priority fixed | hotbar counter resolver armed")
         updateCounterUI()
     end)
 
     if not bootOK then
-        warn("[AutoCounter V3.2][BOOT] " .. tostring(bootError))
+        warn("[AutoCounter V3.3][BOOT] " .. tostring(bootError))
     end
 end)
 
