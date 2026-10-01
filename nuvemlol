@@ -1439,70 +1439,28 @@ ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.",
     end)
 end)
 
--- Auto Counter V3.3
--- IMPORTANT: isolated in its own function because Luau limits locals per function.
+-- Auto Counter V4 - isolated so it does not hit Luau's per-function local limit.
 task.spawn(function()
     local bootOK, bootError = pcall(function()
         local autodrib = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
-        autodrib:Label("Auto Counter V3.3: threat timing + reliable style/counter detection.")
 
-        local counterPlayers = game:GetService("Players")
-        local counterRS = game:GetService("RunService")
-        local counterUIS = game:GetService("UserInputService")
-        local counterStarterGui = game:GetService("StarterGui")
-        local counterStorage = game:GetService("ReplicatedStorage")
+        local P = game:GetService("Players")
+        local RS = game:GetService("RunService")
+        local UIS = game:GetService("UserInputService")
+        local SG = game:GetService("StarterGui")
+        local Rep = game:GetService("ReplicatedStorage")
 
-        local counterPlayer = counterPlayers.LocalPlayer
-        local counterRemote = counterStorage:WaitForChild("ByteNetReliable")
-        local counterEnv = (getgenv and getgenv()) or _G
+        local lp = P.LocalPlayer
+        local remote = Rep:WaitForChild("ByteNetReliable")
+        local packet = buffer.fromstring(buffers["base"])
+        local env = (getgenv and getgenv()) or _G
 
-        if type(counterEnv.CeleronCounterRuntime) == "table"
-            and type(counterEnv.CeleronCounterRuntime.destroy) == "function" then
-            pcall(counterEnv.CeleronCounterRuntime.destroy)
+        if type(env.CeleronCounterRuntime) == "table"
+            and type(env.CeleronCounterRuntime.destroy) == "function" then
+            pcall(env.CeleronCounterRuntime.destroy)
         end
 
-        local counterPacket = buffer.fromstring(buffers["base"])
-
-        -- All five are from the existing Celeron steal-animation list.
-        -- Known names are filled where we have evidence from the hub.
-        local threatProfiles = {
-            ["109744655458082"] = {name = "Tackle", duration = 0.45, radius = 4.35},
-            ["113088324958896"] = {name = "Reflex Tackle", duration = 0.28, radius = 4.75},
-            ["96801747244950"]  = {name = "Steal Skill A", duration = 0.85, radius = 4.60},
-            ["130345228612384"] = {name = "Steal Skill B", duration = 0.85, radius = 4.60},
-            ["82417661349987"]  = {name = "Hero's Instinct", duration = 1.35, radius = 4.85},
-        }
-
-        local styleToCounter = {
-            -- User-verified:
-            sae = "toggleCounter2",
-            kaiser = "toggleCounter4",
-
-            -- Existing mappings from the original counter script:
-            rin = "toggleCounter1",
-            nagi = "toggleCounter2",
-            isagi = "toggleCounter3",
-            barou = "toggleCounter4",
-            shidou = "toggleCounter5",
-            bachira = "toggleDribble",
-        }
-
-        -- These are only fingerprints for recognizing the equipped hotbar.
-        -- They do not change any skill or counter behavior.
-        local styleFingerprints = {
-            sae = {"rabonanutmeg", "beautifuldestruction", "heelflick"},
-            kaiser = {"kaiserimpact", "kaiserimpactmagnus", "emperorspath", "imperialbreak", "instakillflash"},
-            rin = {"occlusionbreak", "fakeshot", "finalmatchup"},
-            nagi = {"control"},
-            isagi = {"naruhayafootwork", "naruhaya", "directshot"},
-            barou = {"devour", "chopdribble", "kingspath"},
-            shidou = {"formless", "draconic"},
-            bachira = {"stepovers", "monstertrance"},
-        }
-
-        local styleOrder = {"sae", "kaiser", "rin", "nagi", "isagi", "barou", "shidou", "bachira"}
-
-        local counterState = {
+        local state = {
             destroyed = false,
 
             autoSkills = {
@@ -1523,352 +1481,54 @@ task.spawn(function()
             toggleCounter5 = false,
             toggleTSpecial = false,
 
-            keybindsEnabled = false,
-            keybindSetup = false,
             showActiveCounters = false,
+            keybindsEnabled = false,
             useClosestTeammate = false,
-            suppressNotifs = false,
 
-            -- MCD is now ONLY the maximum distance at which an already-known threat
-            -- is worth evaluating. It never causes a counter by itself.
-            mCD = 65,
-
-            -- The actual counter moment is automatic.
-            verticalTolerance = 7,
-            possessionGrace = 0.105,
-            duplicateThreatWindow = 0.10,
+            range = 5.0,
+            verticalRange = 6.5,
+            possessionGrace = 0.12,
+            duplicateWindow = 0.10,
 
             threats = {},
             playerRecords = {},
-            generalConnections = {},
-            recentThreatStart = {},
+            connections = {},
+            recentStart = {},
             lastHadBallAt = -math.huge,
 
-            diagnostics = {},
-            lastStyleReport = "No style scan yet.",
-            lastDetectedStyle = nil,
+            lastStyle = nil,
+            lastStyleSource = nil,
+            events = {},
         }
 
-        local counterRuntime = {version = 3.3}
-        counterEnv.CeleronCounterRuntime = counterRuntime
+        local runtime = {version = 4}
+        env.CeleronCounterRuntime = runtime
 
-        local function now()
-            return os.clock()
-        end
+        -- Same steal/attack animation set that Celeron's working counter used.
+        local steal = {
+            ["109744655458082"] = {name = "Tackle", extra = 0.00},
+            ["113088324958896"] = {name = "Reflex Tackle", extra = 0.35},
+            ["96801747244950"]  = {name = "Steal Skill 1", extra = 0.35},
+            ["130345228612384"] = {name = "Steal Skill 2", extra = 0.35},
+            ["82417661349987"]  = {name = "Hero's Instinct", extra = 0.55},
+        }
 
-        local function trace(tag, message)
-            local list = counterState.diagnostics
-            list[#list + 1] = string.format("%.3f | %-10s | %s", now(), tag, tostring(message))
-            if #list > 70 then
-                table.remove(list, 1)
-            end
-        end
+        -- Fallback only. If the equipped hotbar has a unique skill with
+        -- "Counter" in the name, the hotbar wins automatically.
+        local styleFallback = {
+            sae = "toggleCounter2",      -- user confirmed
+            kaiser = "toggleCounter4",   -- Imperial Break Counter
+            rin = "toggleCounter1",
+            nagi = "toggleCounter2",
+            isagi = "toggleCounter3",
+            barou = "toggleCounter4",
+            shidou = "toggleCounter5",
+            bachira = "toggleDribble",
+        }
 
-        local function safeCounterCall(tag, callback)
-            local ok, result = pcall(callback)
-
-            if not ok then
-                local message = tostring(result)
-                trace("ERROR", tostring(tag) .. " | " .. message)
-                warn("[AutoCounter V3.3][" .. tostring(tag) .. "] " .. message)
-                return false, result
-            end
-
-            return true, result
-        end
-
-        local function notifyCounter(title, text, duration)
-            if counterState.suppressNotifs then return end
-            pcall(function()
-                counterStarterGui:SetCore("SendNotification", {
-                    Title = title,
-                    Text = text,
-                    Duration = duration or 2
-                })
-            end)
-        end
-
-        local function disconnectOne(conn)
-            if typeof(conn) == "RBXScriptConnection" then
-                pcall(function() conn:Disconnect() end)
-            end
-        end
-
-        local function addGeneral(conn)
-            if conn then
-                counterState.generalConnections[#counterState.generalConnections + 1] = conn
-            end
-            return conn
-        end
-
-        local function hasBall()
-            local char = counterPlayer.Character
-            if not char then return false end
-
-            return char:FindFirstChild("Ball") ~= nil
-                or char:FindFirstChild("Football") ~= nil
-                or char:GetAttribute("HasBall") == true
-        end
-
-        local function ballRecentlyHeld(t)
-            if hasBall() then
-                counterState.lastHadBallAt = t
-                return true, false
-            end
-
-            return t - counterState.lastHadBallAt <= counterState.possessionGrace, true
-        end
-
-        local function strictEnemy(plr)
-            if not plr or plr == counterPlayer then return false end
-            if plr.Neutral or counterPlayer.Neutral then return false end
-            if not plr.Team or not counterPlayer.Team then return false end
-            return plr.Team ~= counterPlayer.Team
-        end
-
-        local function rootsFor(plr)
-            local myChar = counterPlayer.Character
-            local enemyChar = plr and plr.Character
-            return myChar and myChar:FindFirstChild("HumanoidRootPart"),
-                enemyChar and enemyChar:FindFirstChild("HumanoidRootPart")
-        end
-
-        local function normalize(value)
-            return tostring(value or "")
-                :lower()
-                :gsub("<[^>]*>", "")
-                :gsub("[^%w]", "")
-        end
-
-        local function hotbarRoot()
-            local pg = counterPlayer:FindFirstChild("PlayerGui")
-            local top = pg and pg:FindFirstChild("Hotbar")
-            local backpack = top and top:FindFirstChild("Backpack")
-            return backpack and backpack:FindFirstChild("Hotbar")
-        end
-
-        local function textOf(root)
-            if not root then return "" end
-            local parts = {}
-
-            local function append(object)
-                if object:IsA("TextLabel")
-                    or object:IsA("TextButton")
-                    or object:IsA("TextBox") then
-
-                    local value = object.Text
-                    if value and value ~= "" then
-                        parts[#parts + 1] = value
-                    end
-                end
-            end
-
-            append(root)
-            for _, object in ipairs(root:GetDescendants()) do
-                append(object)
-            end
-
-            return table.concat(parts, " ")
-        end
-
-        local function hotbarCounterKey()
-            local hotbar = hotbarRoot()
-            if not hotbar then return nil, "hotbar-missing" end
-
-            local matches = {}
-
-            for _, slot in ipairs(hotbar:GetChildren()) do
-                local number = slot.Name:lower():match("^skill(%d+)$")
-                if number then
-                    local clean = normalize(textOf(slot))
-
-                    -- Strongest generic signal: the real equipped skill is literally
-                    -- named as a Counter. Example from the user's Kaiser diagnostics:
-                    -- skill4 = "Imperial Break Counter".
-                    if clean:find("counter", 1, true) then
-                        matches[#matches + 1] = {
-                            key = "toggleCounter" .. number,
-                            slot = slot.Name,
-                            text = clean,
-                        }
-                    end
-                end
-            end
-
-            if #matches == 1 and counterState.autoSkills[matches[1].key] then
-                return matches[1].key, "hotbar-counter:" .. matches[1].slot
-            end
-
-            return nil, #matches > 1 and "hotbar-counter-ambiguous" or "hotbar-counter-none"
-        end
-
-        local function hotbarStyle()
-            local hotbar = hotbarRoot()
-            if not hotbar then return nil, "hotbar-missing" end
-
-            local hotbarText = normalize(textOf(hotbar))
-            local bestStyle, bestScore, tied = nil, 0, false
-
-            for _, candidate in ipairs(styleOrder) do
-                local score = 0
-                local fingerprints = styleFingerprints[candidate] or {}
-
-                for _, word in ipairs(fingerprints) do
-                    if hotbarText:find(word, 1, true) then
-                        score = score + 1
-                    end
-                end
-
-                if score > bestScore then
-                    bestStyle, bestScore, tied = candidate, score, false
-                elseif score > 0 and score == bestScore then
-                    tied = true
-                end
-            end
-
-            if bestStyle and bestScore > 0 and not tied then
-                return bestStyle, "hotbar-fingerprint(" .. tostring(bestScore) .. ")"
-            end
-
-            return nil, tied and "hotbar-fingerprint-tie" or "hotbar-fingerprint-none"
-        end
-
-        local function styleFromString(value)
-            local raw = tostring(value or ""):lower():gsub("[^%w]+", " ")
-
-            for token in raw:gmatch("%w+") do
-                for _, style in ipairs(styleOrder) do
-                    if token == style
-                        or token == ("style" .. style)
-                        or token:sub(1, #style) == style and token:sub(#style + 1) == "mastery" then
-                        return style
-                    end
-                end
-            end
-        end
-
-        local function styleFromInstanceName(value)
-            local clean = normalize(value)
-
-            for _, style in ipairs(styleOrder) do
-                if clean == style
-                    or clean == ("style" .. style)
-                    or clean == (style .. "mastery") then
-                    return style
-                end
-            end
-        end
-
-        local function inspectAttributes(instance)
-            if not instance then return nil end
-
-            local ok, attributes = pcall(function() return instance:GetAttributes() end)
-            if ok and type(attributes) == "table" then
-                for key, value in pairs(attributes) do
-                    local style = styleFromString(value)
-                    if style then
-                        return style, "attribute:" .. tostring(key) .. "=" .. tostring(value)
-                    end
-                end
-            end
-        end
-
-        local function buildStyleReport()
-            local lines = {"AUTO COUNTER STYLE REPORT"}
-
-            local char = counterPlayer.Character
-            if char then
-                lines[#lines + 1] = "Character=" .. char:GetFullName()
-                local ok, attrs = pcall(function() return char:GetAttributes() end)
-                if ok then
-                    for key, value in pairs(attrs) do
-                        lines[#lines + 1] = "CharAttr " .. tostring(key) .. "=" .. tostring(value)
-                    end
-                end
-            end
-
-            local ok, attrs = pcall(function() return counterPlayer:GetAttributes() end)
-            if ok then
-                for key, value in pairs(attrs) do
-                    lines[#lines + 1] = "PlayerAttr " .. tostring(key) .. "=" .. tostring(value)
-                end
-            end
-
-            local hotbar = hotbarRoot()
-            if hotbar then
-                for _, slot in ipairs(hotbar:GetChildren()) do
-                    if slot.Name:lower():match("^skill%d+$") then
-                        lines[#lines + 1] = slot.Name .. "=" .. textOf(slot):gsub("%s+", " ")
-                    end
-                end
-            else
-                lines[#lines + 1] = "Hotbar=<missing>"
-            end
-
-            return table.concat(lines, "\n")
-        end
-
-        local function detectStyle()
-            local char = counterPlayer.Character
-
-            -- 1) The visible equipped hotbar is the freshest evidence.
-            -- It changes with the moveset, while Character attributes can stay stale.
-            local style, source = hotbarStyle()
-            if style then return style, source end
-
-            -- 2) Player.style is preferred over Character.style.
-            -- User diagnostics proved PlayerAttr style=kaiser while the old
-            -- Character still incorrectly said style=sae.
-            local playerStyle =
-                styleFromString(counterPlayer:GetAttribute("style"))
-                or styleFromString(counterPlayer:GetAttribute("Style"))
-
-            if playerStyle then
-                return playerStyle, "player-attribute:style="
-                    .. tostring(counterPlayer:GetAttribute("style") or counterPlayer:GetAttribute("Style"))
-            end
-
-            -- 3) Other Player attributes.
-            style, source = inspectAttributes(counterPlayer)
-            if style then return style, source end
-
-            -- 4) Character attributes are only fallback because they may be stale.
-            local charStyle = char and (
-                styleFromString(char:GetAttribute("style"))
-                or styleFromString(char:GetAttribute("Style"))
-            )
-
-            if charStyle then
-                return charStyle, "character-attribute:style="
-                    .. tostring(char:GetAttribute("style") or char:GetAttribute("Style"))
-            end
-
-            style, source = inspectAttributes(char)
-            if style then return style, source end
-
-            -- 5) Last fallback: explicit style-like values/names inside character.
-            if char then
-                for _, object in ipairs(char:GetDescendants()) do
-                    local found = styleFromInstanceName(object.Name)
-
-                    if not found and object:IsA("StringValue") then
-                        found = styleFromString(object.Value)
-                    end
-
-                    if found then
-                        return found, "character-descendant:" .. object:GetFullName()
-                    end
-                end
-            end
-
-            return nil, "unknown"
-        end
-
-        local counterStatusFrame = nil
-        local counterScreenGui = nil
-        local counterStatusLabels = {}
-
-        local counterDefinitions = {
+        local statusGui, statusFrame = nil, nil
+        local statusLabels = {}
+        local definitions = {
             {name = "Auto Dribble", key = "toggleDribble", bind = "Z"},
             {name = "Auto Counter (Move One)", key = "toggleCounter1", bind = "X"},
             {name = "Auto Counter (Move Two)", key = "toggleCounter2", bind = "C"},
@@ -1878,116 +1538,320 @@ task.spawn(function()
             {name = "T Special", key = "toggleTSpecial", bind = "L"},
         }
 
-        local function ensureCounterUI()
-            if counterStatusFrame and counterStatusFrame.Parent then return end
+        local function clock()
+            return os.clock()
+        end
 
-            local pg = counterPlayer:WaitForChild("PlayerGui")
+        local function log(tag, msg)
+            local events = state.events
+            events[#events + 1] = string.format("%.3f | %s | %s", clock(), tag, tostring(msg))
+            if #events > 60 then
+                table.remove(events, 1)
+            end
+        end
+
+        local function notify(title, msg, duration)
+            pcall(function()
+                SG:SetCore("SendNotification", {
+                    Title = title,
+                    Text = msg,
+                    Duration = duration or 2,
+                })
+            end)
+        end
+
+        local function addConnection(conn)
+            if conn then
+                state.connections[#state.connections + 1] = conn
+            end
+            return conn
+        end
+
+        local function disconnect(conn)
+            if typeof(conn) == "RBXScriptConnection" then
+                pcall(function() conn:Disconnect() end)
+            end
+        end
+
+        local function hasBall()
+            local char = lp.Character
+            if not char then return false end
+
+            return char:FindFirstChild("Ball") ~= nil
+                or char:FindFirstChild("Football") ~= nil
+                or char:GetAttribute("HasBall") == true
+        end
+
+        local function possessionOK(t)
+            if hasBall() then
+                state.lastHadBallAt = t
+                return true, false
+            end
+
+            return t - state.lastHadBallAt <= state.possessionGrace, true
+        end
+
+        -- Azure Latch exposes a custom player "team" attribute.
+        -- Use that first. Roblox Team is only a fallback.
+        local function teamKey(plr)
+            if not plr then return nil end
+
+            local attr =
+                plr:GetAttribute("team")
+                or plr:GetAttribute("Team")
+
+            if attr ~= nil and tostring(attr) ~= "" then
+                return "attr:" .. tostring(attr)
+            end
+
+            if plr.Team then
+                return "team:" .. tostring(plr.Team.Name)
+            end
+
+            return nil
+        end
+
+        local function isEnemy(plr)
+            if not plr or plr == lp then return false end
+
+            local mine = teamKey(lp)
+            local theirs = teamKey(plr)
+
+            -- Unknown team = do nothing. Better to miss one counter than
+            -- counter on a teammate.
+            if not mine or not theirs then return false end
+            return mine ~= theirs
+        end
+
+        local function roots(plr)
+            local myChar = lp.Character
+            local theirChar = plr and plr.Character
+
+            return myChar and myChar:FindFirstChild("HumanoidRootPart"),
+                theirChar and theirChar:FindFirstChild("HumanoidRootPart")
+        end
+
+        local function hotbar()
+            local pg = lp:FindFirstChild("PlayerGui")
+            local top = pg and pg:FindFirstChild("Hotbar")
+            local backpack = top and top:FindFirstChild("Backpack")
+            return backpack and backpack:FindFirstChild("Hotbar")
+        end
+
+        local function slotText(slot)
+            if not slot then return "" end
+            local parts = {}
+
+            local function add(obj)
+                if obj:IsA("TextLabel")
+                    or obj:IsA("TextButton")
+                    or obj:IsA("TextBox") then
+
+                    if obj.Text and obj.Text ~= "" then
+                        parts[#parts + 1] = obj.Text
+                    end
+                end
+            end
+
+            add(slot)
+            for _, obj in ipairs(slot:GetDescendants()) do
+                add(obj)
+            end
+
+            return table.concat(parts, " ")
+        end
+
+        local function clean(s)
+            return tostring(s or ""):lower():gsub("[^%w]", "")
+        end
+
+        local function hotbarCounterKey()
+            local bar = hotbar()
+            if not bar then return nil, "hotbar missing" end
+
+            local foundKey, foundSlot, count = nil, nil, 0
+
+            for _, slot in ipairs(bar:GetChildren()) do
+                local number = slot.Name:lower():match("^skill(%d+)$")
+
+                if number then
+                    local txt = clean(slotText(slot))
+
+                    if txt:find("counter", 1, true) then
+                        local key = "toggleCounter" .. number
+
+                        if state.autoSkills[key] then
+                            count += 1
+                            foundKey = key
+                            foundSlot = slot.Name
+                        end
+                    end
+                end
+            end
+
+            if count == 1 then
+                return foundKey, foundSlot
+            end
+
+            return nil, count > 1 and "multiple counter skills" or "no counter-named skill"
+        end
+
+        local function currentStyle()
+            -- Player style is authoritative; user's diagnostics proved
+            -- Character.style can stay stale after swapping.
+            local value =
+                lp:GetAttribute("style")
+                or lp:GetAttribute("Style")
+
+            if value ~= nil and tostring(value) ~= "" then
+                return tostring(value):lower(), "Player.style"
+            end
+
+            local char = lp.Character
+            value = char and (
+                char:GetAttribute("style")
+                or char:GetAttribute("Style")
+            )
+
+            if value ~= nil and tostring(value) ~= "" then
+                return tostring(value):lower(), "Character.style"
+            end
+
+            return nil, "unknown"
+        end
+
+        local function selectCounter()
+            local style, source = currentStyle()
+            local key, slot = hotbarCounterKey()
+
+            if not key and style then
+                key = styleFallback[clean(style)]
+                slot = key and "style fallback" or slot
+            end
+
+            if not key or not state.autoSkills[key] then
+                log("AUTO_DETECT_FAIL", tostring(style) .. " | " .. tostring(slot))
+                notify("Auto Counter", "Counter not found. Use Copy Counter Debug.", 3)
+                return false
+            end
+
+            for stateKey in pairs(state.autoSkills) do
+                state[stateKey] = false
+            end
+
+            state[key] = true
+            state.lastStyle = style
+            state.lastStyleSource = source
+
+            log(
+                "AUTO_DETECT",
+                tostring(style) .. " -> " .. state.autoSkills[key] .. " (" .. tostring(slot) .. ")"
+            )
+
+            notify(
+                "Auto Counter",
+                tostring(style or "style"):upper() .. " -> " .. state.autoSkills[key],
+                2
+            )
+
+            return true
+        end
+
+        local function ensureStatusUI()
+            if statusFrame and statusFrame.Parent then return end
+
+            local pg = lp:WaitForChild("PlayerGui")
             local old = pg:FindFirstChild("AutoCounterStatus")
             if old then old:Destroy() end
 
-            counterScreenGui = Instance.new("ScreenGui")
-            counterScreenGui.Name = "AutoCounterStatus"
-            counterScreenGui.ResetOnSpawn = false
-            counterScreenGui.Parent = pg
+            statusGui = Instance.new("ScreenGui")
+            statusGui.Name = "AutoCounterStatus"
+            statusGui.ResetOnSpawn = false
+            statusGui.Parent = pg
 
-            counterStatusFrame = Instance.new("Frame")
-            counterStatusFrame.Size = UDim2.new(0, 320, 0, 360)
-            counterStatusFrame.Position = UDim2.new(1, -340, 0.5, -180)
-            counterStatusFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            counterStatusFrame.BackgroundTransparency = 0.1
-            counterStatusFrame.BorderSizePixel = 0
-            counterStatusFrame.Parent = counterScreenGui
+            statusFrame = Instance.new("Frame")
+            statusFrame.Size = UDim2.new(0, 320, 0, 360)
+            statusFrame.Position = UDim2.new(1, -340, 0.5, -180)
+            statusFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            statusFrame.BackgroundTransparency = 0.1
+            statusFrame.BorderSizePixel = 0
+            statusFrame.Parent = statusGui
 
-            Instance.new("UICorner", counterStatusFrame).CornerRadius = UDim.new(0, 10)
+            Instance.new("UICorner", statusFrame).CornerRadius = UDim.new(0, 10)
 
-            local stroke = Instance.new("UIStroke")
-            stroke.Thickness = 2
-            stroke.Parent = counterStatusFrame
-
-            local list = Instance.new("UIListLayout")
-            list.SortOrder = Enum.SortOrder.LayoutOrder
-            list.Padding = UDim.new(0, 6)
-            list.Parent = counterStatusFrame
+            local layout = Instance.new("UIListLayout")
+            layout.SortOrder = Enum.SortOrder.LayoutOrder
+            layout.Padding = UDim.new(0, 6)
+            layout.Parent = statusFrame
 
             local title = Instance.new("TextLabel")
             title.Size = UDim2.new(1, 0, 0, 40)
             title.BackgroundTransparency = 1
-            title.Text = "Auto Counters V3"
+            title.Text = "Auto Counters"
             title.TextColor3 = Color3.fromRGB(255, 255, 255)
             title.TextScaled = true
             title.Font = Enum.Font.GothamBold
-            title.Parent = counterStatusFrame
+            title.Parent = statusFrame
 
-            for index, definition in ipairs(counterDefinitions) do
+            for index, def in ipairs(definitions) do
                 local label = Instance.new("TextLabel")
                 label.Size = UDim2.new(1, 0, 0, 28)
                 label.BackgroundTransparency = 1
-                label.TextXAlignment = Enum.TextXAlignment.Center
-                label.Font = Enum.Font.GothamSemibold
                 label.TextScaled = true
+                label.Font = Enum.Font.GothamSemibold
                 label.LayoutOrder = index
-                label.Parent = counterStatusFrame
-                counterStatusLabels[index] = label
+                label.Parent = statusFrame
+                statusLabels[index] = label
             end
         end
 
-        local function updateCounterUI()
-            if not counterState.showActiveCounters then
-                if counterStatusFrame then counterStatusFrame.Visible = false end
+        local function updateStatus()
+            if not state.showActiveCounters then
+                if statusFrame then statusFrame.Visible = false end
                 return
             end
 
-            ensureCounterUI()
-            counterStatusFrame.Visible = true
+            ensureStatusUI()
+            statusFrame.Visible = true
 
-            for index, definition in ipairs(counterDefinitions) do
-                local enabled = counterState[definition.key] == true
-                local label = counterStatusLabels[index]
+            for index, def in ipairs(definitions) do
+                local enabled = state[def.key] == true
+                local label = statusLabels[index]
 
-                label.Text = definition.name .. " [" .. definition.bind .. "]"
+                label.Text = def.name .. " [" .. def.bind .. "]"
                 label.TextColor3 = enabled
                     and Color3.fromRGB(0, 255, 100)
                     or Color3.fromRGB(255, 80, 80)
             end
         end
 
-        local function anyCounterEnabled()
-            for key in pairs(counterState.autoSkills) do
-                if counterState[key] then return true end
+        local function anyCounter()
+            for key in pairs(state.autoSkills) do
+                if state[key] then return true end
             end
             return false
         end
 
-        local function activeSkillNames()
-            local result = {}
-            for key, skillName in pairs(counterState.autoSkills) do
-                if counterState[key] then
-                    result[#result + 1] = skillName
-                end
-            end
-            return result
-        end
+        local function closestTeammate()
+            local myRoot = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+            if not myRoot then return nil end
 
-        local function getClosestTeammate()
-            local char = counterPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if not root or counterPlayer.Neutral or not counterPlayer.Team then return nil end
+            local mine = teamKey(lp)
+            if not mine then return nil end
 
             local best, bestSq = nil, math.huge
 
-            for _, plr in ipairs(counterPlayers:GetPlayers()) do
-                if plr ~= counterPlayer
-                    and not plr.Neutral
-                    and plr.Team == counterPlayer.Team
-                    and plr.Character then
+            for _, plr in ipairs(P:GetPlayers()) do
+                if plr ~= lp and teamKey(plr) == mine and plr.Character then
+                    local root = plr.Character:FindFirstChild("HumanoidRootPart")
 
-                    local otherRoot = plr.Character:FindFirstChild("HumanoidRootPart")
-                    if otherRoot then
-                        local delta = otherRoot.Position - root.Position
-                        local sq = delta:Dot(delta)
+                    if root then
+                        local d = root.Position - myRoot.Position
+                        local sq = d:Dot(d)
 
                         if sq < bestSq then
-                            bestSq, best = sq, plr
+                            bestSq = sq
+                            best = plr
                         end
                     end
                 end
@@ -1996,16 +1860,30 @@ task.spawn(function()
             return best
         end
 
-        local function counterCooldownVisible()
-            local hotbar = hotbarRoot()
-            if not hotbar then return false end
+        local function activeSkills()
+            local skills = {}
 
-            for _, skillName in ipairs(activeSkillNames()) do
+            for key, skillName in pairs(state.autoSkills) do
+                if state[key] then
+                    skills[#skills + 1] = skillName
+                end
+            end
+
+            return skills
+        end
+
+        local function counterOnCooldown()
+            local bar = hotbar()
+            if not bar then return false end
+
+            for _, skillName in ipairs(activeSkills()) do
                 if skillName:match("^skill%d+$") then
-                    local slot = hotbar:FindFirstChild(skillName)
+                    local slot = bar:FindFirstChild(skillName)
                     local cooldown = slot and slot:FindFirstChild("Cooldown", true)
 
-                    if cooldown and cooldown:IsA("GuiObject") and cooldown.Visible then
+                    if cooldown
+                        and cooldown:IsA("GuiObject")
+                        and cooldown.Visible then
                         return true
                     end
                 end
@@ -2014,322 +1892,250 @@ task.spawn(function()
             return false
         end
 
-        local function fireSkill(skillName, teammate, allowRecentPossession)
-            if not counterRemote then return false end
+        local function fireCounters(allowRecent)
+            local t = clock()
+            local okPossession, recentOnly = possessionOK(t)
 
-            local t = now()
-            local possession, recentOnly = ballRecentlyHeld(t)
-            if not possession then return false end
-            if recentOnly and not allowRecentPossession then return false end
+            if not okPossession then return false end
+            if recentOnly and not allowRecent then return false end
+            if not anyCounter() then return false end
 
-            local args
-
-            if counterState.useClosestTeammate
-                and teammate
-                and teammate.Character then
-
-                args = {counterPacket, {{skillName, teammate.Character}}}
-            else
-                args = {counterPacket, {{skillName}}}
-            end
-
-            -- Always exactly two ByteNet carrier arguments here.
-            -- Do NOT use global unpack(); some executors do not expose it.
-            local ok = pcall(function()
-                counterRemote:FireServer(args[1], args[2])
-            end)
-
-            return ok
-        end
-
-        local function fireEnabledCounters(allowRecentPossession)
-            if not anyCounterEnabled() then return false end
-
-            local teammate = counterState.useClosestTeammate
-                and getClosestTeammate()
-                or nil
-
+            local teammate = state.useClosestTeammate and closestTeammate() or nil
             local fired = false
 
-            for key, skillName in pairs(counterState.autoSkills) do
-                if counterState[key] then
-                    fired = fireSkill(skillName, teammate, allowRecentPossession) or fired
+            for key, skillName in pairs(state.autoSkills) do
+                if state[key] then
+                    local ok
+
+                    if state.useClosestTeammate
+                        and teammate
+                        and teammate.Character then
+
+                        ok = pcall(function()
+                            remote:FireServer(
+                                packet,
+                                {{skillName, teammate.Character}}
+                            )
+                        end)
+                    else
+                        ok = pcall(function()
+                            remote:FireServer(
+                                packet,
+                                {{skillName}}
+                            )
+                        end)
+                    end
+
+                    fired = ok or fired
                 end
             end
 
             return fired
         end
 
-        local function pingSeconds()
-            local ok, value = pcall(function()
-                return counterPlayer:GetNetworkPing()
+        local function pingLead()
+            local ok, ping = pcall(function()
+                return lp:GetNetworkPing()
             end)
 
-            if ok and type(value) == "number" then
-                return math.clamp(value, 0, 0.5)
+            if not ok or type(ping) ~= "number" then
+                ping = 0.06
             end
 
-            return 0.06
-        end
-
-        local function counterLead()
-            -- GetNetworkPing is RTT. We use roughly half RTT plus a very small
-            -- scheduling cushion, capped so the counter does not fire stupidly early.
-            return math.clamp(0.035 + pingSeconds() * 0.50, 0.040, 0.125)
+            -- Small lead only. It helps close-range latency without firing
+            -- while the attacker is still far away.
+            return math.clamp(0.020 + ping * 0.35, 0.025, 0.065)
         end
 
         local function flat(v)
             return Vector3.new(v.X, 0, v.Z)
         end
 
-        local function pointSegmentSq(point, a, b)
+        local function segmentDistanceSq(a, b)
             local segment = b - a
             local lenSq = segment:Dot(segment)
 
             if lenSq <= 0.000001 then
-                local delta = point - a
-                return delta:Dot(delta)
+                return a:Dot(a)
             end
 
-            local t = math.clamp((point - a):Dot(segment) / lenSq, 0, 1)
-            local closest = a + segment * t
-            local delta = point - closest
-            return delta:Dot(delta)
+            local alpha = math.clamp((-a):Dot(segment) / lenSq, 0, 1)
+            local closest = a + segment * alpha
+            return closest:Dot(closest)
         end
 
-        local function threatStillAlive(threat, t)
-            if not threat or threat.fired then return false end
-            if t > threat.expires then return false end
-            if not strictEnemy(threat.player) then return false end
+        local function removeThreat(plr, reason)
+            local threat = state.threats[plr]
 
-            local track = threat.track
-            if track and not track.IsPlaying and t - threat.started > 0.09 then
-                return false
+            if threat then
+                log("END", threat.name .. " | " .. tostring(reason))
+                state.threats[plr] = nil
             end
-
-            return true
         end
 
-        local function finishThreat(player, reason)
-            local threat = counterState.threats[player]
-            if not threat then return end
-
-            if reason then
-                trace("THREAT_END", threat.profile.name .. " | " .. reason)
-            end
-
-            counterState.threats[player] = nil
-        end
-
-        local function fireThreat(threat, reason, metrics)
+        local function fireThreat(threat, reason, distance)
             if not threat or threat.fired then return end
 
-            local t = now()
-            local possession, recentOnly = ballRecentlyHeld(t)
+            local t = clock()
+            local possession, recentOnly = possessionOK(t)
             if not possession then return end
 
             threat.fired = true
-            threat.fireAt = t
 
-            trace(
+            log(
                 "COUNTER",
                 string.format(
-                    "%s | %s | dist=%.2f pred=%.2f sweep=%.2f ping=%.0fms",
-                    threat.profile.name,
+                    "%s | %s | %.2f studs",
+                    threat.name,
                     reason,
-                    metrics.current,
-                    metrics.predicted,
-                    metrics.swept,
-                    pingSeconds() * 1000
+                    distance
                 )
             )
 
-            fireEnabledCounters(recentOnly)
+            fireCounters(recentOnly)
 
-            -- Tiny reliability retries. They stop as soon as the hotbar shows cooldown.
-            -- Unlike V2, this is NOT a proximity loop and cannot fire from mere touching.
-            for _, delayTime in ipairs({0.018, 0.042}) do
+            -- Two tiny retries only for packet/replication races.
+            for _, delayTime in ipairs({0.016, 0.038}) do
                 task.delay(delayTime, function()
-                    if counterState.destroyed then return end
-                    if not threat.fired then return end
-                    if not strictEnemy(threat.player) then return end
-                    if counterCooldownVisible() then return end
+                    if state.destroyed or counterOnCooldown() then return end
+                    if not isEnemy(threat.player) then return end
 
-                    local stillValid, recent = ballRecentlyHeld(now())
-                    if not stillValid then return end
+                    local stillOwned, recent = possessionOK(clock())
+                    if not stillOwned then return end
 
-                    fireEnabledCounters(recent)
+                    fireCounters(recent)
                 end)
             end
         end
 
         local function evaluateThreat(threat, t)
-            if not threatStillAlive(threat, t) then
-                finishThreat(threat and threat.player, "expired/stopped")
+            if not threat or threat.fired then return end
+
+            if t > threat.expires then
+                removeThreat(threat.player, "expired")
                 return
             end
 
-            if not anyCounterEnabled() then return end
-
-            local myRoot, enemyRoot = rootsFor(threat.player)
-            if not myRoot or not enemyRoot then
-                finishThreat(threat.player, "missing root")
+            if not isEnemy(threat.player) then
+                removeThreat(threat.player, "not enemy")
                 return
             end
 
-            local relative3 = enemyRoot.Position - myRoot.Position
-            local yGap = math.abs(relative3.Y)
-            local relative = flat(relative3)
-            local currentSq = relative:Dot(relative)
-            local mcdSq = counterState.mCD * counterState.mCD
+            if threat.track
+                and not threat.track.IsPlaying
+                and t - threat.started > 0.08 then
 
-            -- Keep remembering motion even outside MCD. If a long tackle enters the
-            -- tracking radius later, we can still evaluate its swept path correctly.
-            local previousRelative = threat.previousRelative
-            threat.previousRelative = relative
-
-            if currentSq > mcdSq then
+                removeThreat(threat.player, "animation stopped")
                 return
             end
 
-            if yGap > counterState.verticalTolerance then
-                return
-            end
+            if not anyCounter() then return end
 
-            local radius = threat.profile.radius
+            local myRoot, enemyRoot = roots(threat.player)
+            if not myRoot or not enemyRoot then return end
+
+            local yGap = math.abs(enemyRoot.Position.Y - myRoot.Position.Y)
+            if yGap > state.verticalRange then return end
+
+            local relative = flat(enemyRoot.Position - myRoot.Position)
+            local distSq = relative:Dot(relative)
+            local distance = math.sqrt(math.max(distSq, 0))
+
+            local previous = threat.previous
+            threat.previous = relative
+
+            local radius = state.range + threat.extra
             local radiusSq = radius * radius
 
-            local currentDist = math.sqrt(math.max(currentSq, 0))
-            local sweptSq = currentSq
-
-            if previousRelative then
-                sweptSq = pointSegmentSq(Vector3.zero, previousRelative, relative)
-            end
-
-            local sweptDist = math.sqrt(math.max(sweptSq, 0))
-
-            local myVelocity = flat(myRoot.AssemblyLinearVelocity)
-            local enemyVelocity = flat(enemyRoot.AssemblyLinearVelocity)
-            local relativeVelocity = enemyVelocity - myVelocity
-            local speedSq = relativeVelocity:Dot(relativeVelocity)
-
-            local lead = counterLead()
-            local predictedSq = currentSq
-            local timeToClosest = 0
-            local closingSpeed = 0
-
-            if speedSq > 0.01 then
-                timeToClosest = math.clamp(
-                    -relative:Dot(relativeVelocity) / speedSq,
-                    0,
-                    lead
-                )
-
-                local predicted = relative + relativeVelocity * timeToClosest
-                predictedSq = predicted:Dot(predicted)
-
-                if currentSq > 0.0001 then
-                    closingSpeed = -(relative / math.sqrt(currentSq)):Dot(relativeVelocity)
-                end
-            end
-
-            local predictedDist = math.sqrt(math.max(predictedSq, 0))
-
-            -- Three valid ways to become dangerous:
-            -- A) the active steal animation is physically inside our counter radius;
-            -- B) a fast replicated dash skipped across our radius between frames;
-            -- C) the active attacker is moving into the radius within the ping-adjusted
-            --    lead window.
-            local immediateDanger = currentSq <= radiusSq
-            local sweptDanger = previousRelative ~= nil and sweptSq <= radiusSq
-            local predictedRadius = radius + 0.35
-            local predictedDanger =
-                closingSpeed > 1.5
-                and timeToClosest > 0.001
-                and timeToClosest <= lead
-                and predictedSq <= predictedRadius * predictedRadius
-
-            local reason = nil
-            if immediateDanger then
-                reason = "live-hitbox"
-            elseif sweptDanger then
-                reason = "swept-hitbox"
-            elseif predictedDanger then
-                reason = "incoming-hitbox"
-            end
-
-            if not reason then return end
-
-            local possession = ballRecentlyHeld(t)
-            if not possession then return end
-
-            fireThreat(threat, reason, {
-                current = currentDist,
-                predicted = predictedDist,
-                swept = sweptDist,
-            })
-        end
-
-        local function startThreat(plr, track, animationId)
-            if counterState.destroyed or not strictEnemy(plr) then return end
-
-            local profile = threatProfiles[animationId]
-            if not profile then return end
-
-            local t = now()
-            local last = counterState.recentThreatStart[plr]
-
-            if last and t - last < counterState.duplicateThreatWindow then
+            -- 1) Actual current overlap.
+            if distSq <= radiusSq then
+                fireThreat(threat, "range", distance)
                 return
             end
 
-            counterState.recentThreatStart[plr] = t
+            -- 2) Fast dash crossed the range between two frames.
+            if previous and segmentDistanceSq(previous, relative) <= radiusSq then
+                fireThreat(threat, "crossed range", distance)
+                return
+            end
 
-            local trackLength = tonumber(track.Length) or 0
-            local duration = math.max(profile.duration, trackLength > 0 and trackLength + 0.10 or 0)
+            -- 3) Very small ping compensation. Never predicts from far away.
+            local maxPredictDistance = radius + 2.25
+            if distance > maxPredictDistance then
+                return
+            end
+
+            local relVelocity =
+                flat(enemyRoot.AssemblyLinearVelocity)
+                - flat(myRoot.AssemblyLinearVelocity)
+
+            local speedSq = relVelocity:Dot(relVelocity)
+            if speedSq <= 0.01 then return end
+
+            local timeClosest =
+                math.clamp(
+                    -relative:Dot(relVelocity) / speedSq,
+                    0,
+                    pingLead()
+                )
+
+            if timeClosest <= 0 then return end
+
+            local predicted = relative + relVelocity * timeClosest
+
+            if predicted:Dot(predicted) <= radiusSq then
+                fireThreat(threat, "incoming", distance)
+            end
+        end
+
+        local function startThreat(plr, track, id)
+            if not isEnemy(plr) then return end
+
+            local profile = steal[id]
+            if not profile then return end
+
+            local t = clock()
+            local previousStart = state.recentStart[plr]
+
+            if previousStart and t - previousStart < state.duplicateWindow then
+                return
+            end
+
+            state.recentStart[plr] = t
+
+            local length = tonumber(track.Length) or 0
+            local duration = math.max(length, 0.45)
 
             local threat = {
                 player = plr,
                 track = track,
-                id = animationId,
-                profile = profile,
+                id = id,
+                name = profile.name,
+                extra = profile.extra,
                 started = t,
-                expires = t + math.clamp(duration, 0.20, 1.75),
+                expires = t + math.clamp(duration + 0.15, 0.45, 1.8),
+                previous = nil,
                 fired = false,
-                previousRelative = nil,
             }
 
-            counterState.threats[plr] = threat
+            state.threats[plr] = threat
 
-            local myRoot, enemyRoot = rootsFor(plr)
-            local startDist = -1
-
+            local myRoot, enemyRoot = roots(plr)
             if myRoot and enemyRoot then
-                local delta = flat(enemyRoot.Position - myRoot.Position)
-                startDist = math.sqrt(delta:Dot(delta))
-                threat.previousRelative = delta
+                threat.previous = flat(enemyRoot.Position - myRoot.Position)
             end
 
-            trace(
-                "THREAT",
-                string.format(
-                    "%s id=%s startDist=%.2f",
-                    profile.name,
-                    animationId,
-                    startDist
-                )
-            )
+            log("ATTACK", profile.name .. " from " .. plr.Name)
 
-            -- Point blank: evaluate in the AnimationPlayed callback itself rather than
-            -- waiting one more frame.
+            -- If they start the steal already inside range, react now.
             evaluateThreat(threat, t)
         end
 
-        local function disconnectRecord(record)
+        local function clearRecord(record)
             if not record then return end
 
             for _, conn in ipairs(record.connections or {}) do
-                disconnectOne(conn)
+                disconnect(conn)
             end
 
             record.connections = {}
@@ -2337,409 +2143,299 @@ task.spawn(function()
         end
 
         local function watchAnimator(animator, plr, record)
-            if not animator:IsA("Animator") or record.animators[animator] then return end
+            if not animator:IsA("Animator") or record.animators[animator] then
+                return
+            end
+
             record.animators[animator] = true
 
             record.connections[#record.connections + 1] =
                 animator.AnimationPlayed:Connect(function(track)
-                    safeCounterCall("AnimationPlayed", function()
-                        if counterState.destroyed
-                            or not track
-                            or not track.Animation
-                            or not strictEnemy(plr) then
-                            return
-                        end
+                    if state.destroyed
+                        or not track
+                        or not track.Animation
+                        or not isEnemy(plr) then
+                        return
+                    end
 
-                        local animationId =
-                            tostring(track.Animation.AnimationId or ""):match("%d+")
+                    local id =
+                        tostring(track.Animation.AnimationId or ""):match("%d+")
 
-                        if animationId and threatProfiles[animationId] then
-                            startThreat(plr, track, animationId)
-                        end
-                    end)
-                end)
-        end
-
-        local function hookCharacter(plr, char)
-            local record = counterState.playerRecords[plr]
-
-            if not record then
-                record = {connections = {}, animators = {}}
-                counterState.playerRecords[plr] = record
-            else
-                disconnectRecord(record)
-            end
-
-            for _, object in ipairs(char:GetDescendants()) do
-                if object:IsA("Animator") then
-                    watchAnimator(object, plr, record)
-                end
-            end
-
-            record.connections[#record.connections + 1] =
-                char.DescendantAdded:Connect(function(object)
-                    if object:IsA("Animator") then
-                        watchAnimator(object, plr, record)
+                    if id and steal[id] then
+                        startThreat(plr, track, id)
                     end
                 end)
         end
 
-        local function setupCounterPlayer(plr)
-            if plr == counterPlayer then return end
+        local function hookCharacter(plr, char)
+            local record = state.playerRecords[plr]
+
+            if not record then
+                record = {connections = {}, animators = {}}
+                state.playerRecords[plr] = record
+            else
+                clearRecord(record)
+            end
+
+            for _, obj in ipairs(char:GetDescendants()) do
+                if obj:IsA("Animator") then
+                    watchAnimator(obj, plr, record)
+                end
+            end
+
+            record.connections[#record.connections + 1] =
+                char.DescendantAdded:Connect(function(obj)
+                    if obj:IsA("Animator") then
+                        watchAnimator(obj, plr, record)
+                    end
+                end)
+        end
+
+        local function setupPlayer(plr)
+            if plr == lp then return end
 
             if plr.Character then
                 hookCharacter(plr, plr.Character)
             end
 
-            addGeneral(plr.CharacterAdded:Connect(function(char)
+            addConnection(plr.CharacterAdded:Connect(function(char)
                 hookCharacter(plr, char)
             end))
         end
 
-        for _, plr in ipairs(counterPlayers:GetPlayers()) do
-            setupCounterPlayer(plr)
+        for _, plr in ipairs(P:GetPlayers()) do
+            setupPlayer(plr)
         end
 
-        addGeneral(counterPlayers.PlayerAdded:Connect(setupCounterPlayer))
-        addGeneral(counterPlayers.PlayerRemoving:Connect(function(plr)
-            finishThreat(plr, "player removed")
-            counterState.recentThreatStart[plr] = nil
+        addConnection(P.PlayerAdded:Connect(setupPlayer))
 
-            local record = counterState.playerRecords[plr]
+        addConnection(P.PlayerRemoving:Connect(function(plr)
+            removeThreat(plr, "left")
+
+            local record = state.playerRecords[plr]
             if record then
-                disconnectRecord(record)
-                counterState.playerRecords[plr] = nil
+                clearRecord(record)
+                state.playerRecords[plr] = nil
             end
         end))
 
-        -- One cheap simulation loop. No "touching player = counter" logic exists here.
-        -- It only evaluates players who are CURRENTLY playing a known steal/tackle anim.
-        addGeneral(counterRS.PreSimulation:Connect(function()
-            safeCounterCall("PreSimulation", function()
-                if counterState.destroyed then return end
+        addConnection(RS.PreSimulation:Connect(function()
+            if state.destroyed then return end
 
-                local t = now()
-                if hasBall() then
-                    counterState.lastHadBallAt = t
-                end
+            local t = clock()
 
-                for plr, threat in pairs(counterState.threats) do
-                    if threatStillAlive(threat, t) then
-                        evaluateThreat(threat, t)
-                    else
-                        finishThreat(plr, "expired/stopped")
-                    end
+            if hasBall() then
+                state.lastHadBallAt = t
+            end
+
+            for plr, threat in pairs(state.threats) do
+                if threat then
+                    evaluateThreat(threat, t)
+                else
+                    state.threats[plr] = nil
                 end
-            end)
+            end
         end))
 
-        local function selectStyle(style, source)
-            local key, keySource = hotbarCounterKey()
-
-            if not key then
-                key = style and styleToCounter[style]
-                keySource = key and ("style-map:" .. tostring(style)) or keySource
-            end
-
-            if not key or not counterState.autoSkills[key] then
-                trace("COUNTER_SLOT_FAIL", tostring(style) .. " | " .. tostring(keySource))
-                return false
-            end
-
-            for stateKey in pairs(counterState.autoSkills) do
-                counterState[stateKey] = false
-            end
-
-            counterState[key] = true
-            counterState.lastDetectedStyle = style
-
-            trace(
-                "STYLE",
-                tostring(style)
-                    .. " via " .. tostring(source)
-                    .. " | counter=" .. tostring(counterState.autoSkills[key])
-                    .. " via " .. tostring(keySource)
-            )
-
-            notifyCounter(
-                "Auto Counter",
-                tostring(style):upper()
-                    .. " detected → "
-                    .. counterState.autoSkills[key],
-                2
-            )
-
-            updateCounterUI()
-            return true
-        end
-
-        local function autoDetectCharacter()
-            local style, source = detectStyle()
-            counterState.lastStyleReport = buildStyleReport()
-
-            if style and selectStyle(style, source) then
-                return true
-            end
-
-            trace("STYLE_FAIL", source)
-            warn("[AutoCounter V3.3] Could not detect equipped style.\n" .. counterState.lastStyleReport)
-
-            notifyCounter(
-                "Auto Counter",
-                "Couldn't detect style. Use 'Copy Counter Diagnostics' and send it to me.",
-                3
-            )
-
-            return false
-        end
-
-        local function counterDiagnostics()
+        local function diagnostics()
+            local style, styleSource = currentStyle()
+            local key, slot = hotbarCounterKey()
+            local active = table.concat(activeSkills(), ",")
             local lines = {
-                "========== AUTO COUNTER V3.3 DIAGNOSTICS ==========",
-                "style=" .. tostring(counterState.lastDetectedStyle),
-                "mcd=" .. tostring(counterState.mCD),
-                string.format("ping=%.0fms", pingSeconds() * 1000),
-                string.format("lead=%.3fs", counterLead()),
+                "========== AUTO COUNTER V4 ==========",
+                "style=" .. tostring(style),
+                "styleSource=" .. tostring(styleSource),
+                "counter=" .. tostring(key and state.autoSkills[key] or "none"),
+                "counterSource=" .. tostring(slot),
+                "team=" .. tostring(teamKey(lp)),
+                "range=" .. tostring(state.range),
+                "ping=" .. tostring(math.floor(pingLead() * 1000)) .. "ms lead",
                 "hasBall=" .. tostring(hasBall()),
-                "activeSkills=" .. table.concat(activeSkillNames(), ","),
-                "activeThreats=" .. tostring((function()
-                    local count = 0
-                    for _ in pairs(counterState.threats) do count = count + 1 end
-                    return count
-                end)()),
-                "",
-                counterState.lastStyleReport,
+                "active=" .. active,
                 "",
                 "EVENTS",
             }
 
-            for _, event in ipairs(counterState.diagnostics) do
+            for _, event in ipairs(state.events) do
                 lines[#lines + 1] = event
             end
 
-            lines[#lines + 1] = "==============================================="
+            lines[#lines + 1] = "===================================="
             return table.concat(lines, "\n")
         end
 
-        local function copyCounterDiagnostics()
-            local report = counterDiagnostics()
+        local function copyDebug()
+            local report = diagnostics()
 
             if type(setclipboard) == "function" then
                 pcall(setclipboard, report)
-                notifyCounter("Auto Counter", "Diagnostics copied.", 2)
             elseif type(toclipboard) == "function" then
                 pcall(toclipboard, report)
-                notifyCounter("Auto Counter", "Diagnostics copied.", 2)
             else
                 print(report)
-                notifyCounter("Auto Counter", "Clipboard unavailable; printed to console.", 3)
             end
+
+            notify("Auto Counter", "Debug copied.", 2)
         end
 
-        local function createAutoCounter(label, toggleKey)
-            autodrib:Toggle(label, function(value)
-                if counterState.keybindsEnabled then
-                    notifyCounter(
-                        "calm error",
-                        "hey! dont try using gui toggles if u got keybinds on!!! 😡",
-                        3
-                    )
+        local function createToggle(name, key)
+            autodrib:Toggle(name, function(value)
+                if state.keybindsEnabled then
+                    notify("Auto Counter", "Turn keybinds off first.", 2)
                     return
                 end
 
                 if type(value) == "boolean" then
-                    counterState[toggleKey] = value
+                    state[key] = value
                 else
-                    counterState[toggleKey] = not counterState[toggleKey]
+                    state[key] = not state[key]
                 end
 
-                updateCounterUI()
+                updateStatus()
             end)
         end
 
-        autodrib:Button(
-            "Auto Detect Counter",
-            "Reads attributes + the real skill hotbar. It does not scan the Celeron UI.",
-            function()
-                safeCounterCall("AutoDetectButton", function()
-                    autoDetectCharacter()
+        autodrib:Button("Auto Detect Counter", "", function()
+            selectCounter()
+            updateStatus()
+        end)
+
+        autodrib:Button("Copy Counter Debug", "", function()
+            copyDebug()
+        end)
+
+        autodrib:Slider("Auto Counter Range", 5, 2, 12, 0.5, function(value)
+            state.range = math.clamp(value, 2, 12)
+        end)
+
+        autodrib:Toggle("Show Active Auto Counters", function(value)
+            state.showActiveCounters =
+                type(value) == "boolean" and value
+                or not state.showActiveCounters
+
+            updateStatus()
+        end)
+
+        autodrib:Toggle("Toggle Keybinds", function(value)
+            state.keybindsEnabled =
+                type(value) == "boolean" and value
+                or not state.keybindsEnabled
+        end)
+
+        autodrib:Toggle("Use Closest Teammate", function(value)
+            state.useClosestTeammate =
+                type(value) == "boolean" and value
+                or not state.useClosestTeammate
+        end)
+
+        createToggle("Auto Dribble", "toggleDribble")
+        createToggle("Auto Counter (Move One)", "toggleCounter1")
+        createToggle("Auto Counter (Move Two)", "toggleCounter2")
+        createToggle("Auto Counter (Move Three)", "toggleCounter3")
+        createToggle("Auto Counter (Move Four)", "toggleCounter4")
+        createToggle("Auto Counter (Move Five)", "toggleCounter5")
+        createToggle("T Special", "toggleTSpecial")
+
+        addConnection(UIS.InputBegan:Connect(function(input, processed)
+            if processed or not state.keybindsEnabled then return end
+
+            local map = {
+                [Enum.KeyCode.Z] = "toggleDribble",
+                [Enum.KeyCode.X] = "toggleCounter1",
+                [Enum.KeyCode.C] = "toggleCounter2",
+                [Enum.KeyCode.V] = "toggleCounter3",
+                [Enum.KeyCode.N] = "toggleCounter4",
+                [Enum.KeyCode.M] = "toggleCounter5",
+                [Enum.KeyCode.L] = "toggleTSpecial",
+            }
+
+            local key = map[input.KeyCode]
+            if key then
+                state[key] = not state[key]
+                updateStatus()
+            end
+        end))
+
+        -- Re-detect when the actual Player style changes.
+        addConnection(lp.AttributeChanged:Connect(function(name)
+            local lower = tostring(name):lower()
+
+            if lower == "style"
+                or lower == "character"
+                or lower == "class" then
+
+                task.delay(0.20, function()
+                    if not state.destroyed then
+                        selectCounter()
+                        updateStatus()
+                    end
                 end)
             end
-        )
+        end))
 
-        autodrib:Button(
-            "Copy Counter Diagnostics",
-            "Copies style detection and the latest tackle timing events.",
-            function()
-                copyCounterDiagnostics()
-            end
-        )
+        addConnection(lp.CharacterAdded:Connect(function()
+            state.lastHadBallAt = -math.huge
 
-        autodrib:Toggle(
-            "Show Active Auto Counters",
-            "Shows Your Currently Toggled Auto Counters.",
-            function(value)
-                counterState.showActiveCounters =
-                    type(value) == "boolean" and value
-                    or not counterState.showActiveCounters
-
-                updateCounterUI()
-            end
-        )
-
-        autodrib:Toggle(
-            "Toggle Keybinds",
-            "Allows You To Toggle The Counters Using Binds.",
-            function(value)
-                counterState.keybindsEnabled =
-                    type(value) == "boolean" and value
-                    or not counterState.keybindsEnabled
-
-                updateCounterUI()
-            end
-        )
-
-        autodrib:Toggle(
-            "Use Closest Teammate",
-            "For pass-based counters only.",
-            function(value)
-                counterState.useClosestTeammate =
-                    type(value) == "boolean" and value
-                    or not counterState.useClosestTeammate
-            end
-        )
-
-        autodrib:Slider(
-            "Threat Track Radius (MCD)",
-            65,
-            25,
-            100,
-            1,
-            function(value)
-                counterState.mCD = math.clamp(value, 25, 100)
-            end
-        )
-
-        createAutoCounter("Auto Dribble", "toggleDribble")
-        createAutoCounter("Auto Counter (Move One)", "toggleCounter1")
-        createAutoCounter("Auto Counter (Move Two)", "toggleCounter2")
-        createAutoCounter("Auto Counter (Move Three)", "toggleCounter3")
-        createAutoCounter("Auto Counter (Move Four)", "toggleCounter4")
-        createAutoCounter("Auto Counter (Move Five)", "toggleCounter5")
-        createAutoCounter("T Special", "toggleTSpecial")
-
-        if not counterState.keybindSetup then
-            counterState.keybindSetup = true
-
-            addGeneral(counterUIS.InputBegan:Connect(function(input, gameProcessed)
-                if gameProcessed or not counterState.keybindsEnabled then return end
-
-                local keyMap = {
-                    [Enum.KeyCode.Z] = {"toggleDribble", "Auto Dribble"},
-                    [Enum.KeyCode.X] = {"toggleCounter1", "Auto Counter (Move One)"},
-                    [Enum.KeyCode.C] = {"toggleCounter2", "Auto Counter (Move Two)"},
-                    [Enum.KeyCode.V] = {"toggleCounter3", "Auto Counter (Move Three)"},
-                    [Enum.KeyCode.N] = {"toggleCounter4", "Auto Counter (Move Four)"},
-                    [Enum.KeyCode.M] = {"toggleCounter5", "Auto Counter (Move Five)"},
-                    [Enum.KeyCode.L] = {"toggleTSpecial", "T Special"},
-                }
-
-                local mapping = keyMap[input.KeyCode]
-                if not mapping then return end
-
-                local key = mapping[1]
-                counterState[key] = not counterState[key]
-                updateCounterUI()
-            end))
-        end
-
-        -- Re-detect automatically when Azure Latch swaps the equipped style.
-        -- Small delay lets PlayerGui.Hotbar rebuild before we inspect it.
-        addGeneral(counterPlayer.AttributeChanged:Connect(function(attributeName)
-            local lower = tostring(attributeName):lower()
-            if lower ~= "style" and lower ~= "character" and lower ~= "class" then
-                return
-            end
-
-            task.delay(0.20, function()
-                if not counterState.destroyed then
-                    safeCounterCall("StyleAttributeChanged", function()
-                        autoDetectCharacter()
-                    end)
+            task.delay(1.25, function()
+                if not state.destroyed then
+                    selectCounter()
+                    updateStatus()
                 end
             end)
         end))
 
-        -- Detect again after respawn, when the real hotbar has had time to rebuild.
-        addGeneral(counterPlayer.CharacterAdded:Connect(function()
-            counterState.lastHadBallAt = -math.huge
-            task.wait(1.5)
-
-            if not counterState.destroyed then
-                autoDetectCharacter()
-            end
-        end))
-
-        task.spawn(function()
-            task.wait(2)
-
-            if not counterState.destroyed then
-                safeCounterCall("AutoDetectBoot", function()
-                    autoDetectCharacter()
-                end)
+        task.delay(1.5, function()
+            if not state.destroyed then
+                selectCounter()
+                updateStatus()
             end
         end)
 
-        function counterRuntime.getState()
+        function runtime.getState()
             return {
-                version = 3.3,
-                style = counterState.lastDetectedStyle,
-                mCD = counterState.mCD,
-                ping = pingSeconds(),
-                lead = counterLead(),
-                hasBall = hasBall(),
-                activeSkills = activeSkillNames(),
+                version = 4,
+                style = state.lastStyle,
+                range = state.range,
+                team = teamKey(lp),
+                activeSkills = activeSkills(),
             }
         end
 
-        function counterRuntime.getDiagnostics()
-            return counterDiagnostics()
+        function runtime.getDiagnostics()
+            return diagnostics()
         end
 
-        function counterRuntime.copyDiagnostics()
-            copyCounterDiagnostics()
+        function runtime.copyDiagnostics()
+            copyDebug()
         end
 
-        function counterRuntime.destroy()
-            if counterState.destroyed then return end
-            counterState.destroyed = true
+        function runtime.destroy()
+            if state.destroyed then return end
+            state.destroyed = true
 
-            for _, conn in ipairs(counterState.generalConnections) do
-                disconnectOne(conn)
-            end
-            table.clear(counterState.generalConnections)
-
-            for _, record in pairs(counterState.playerRecords) do
-                disconnectRecord(record)
-            end
-            table.clear(counterState.playerRecords)
-            table.clear(counterState.threats)
-
-            if counterScreenGui and counterScreenGui.Parent then
-                counterScreenGui:Destroy()
+            for _, conn in ipairs(state.connections) do
+                disconnect(conn)
             end
 
-            if counterEnv.CeleronCounterRuntime == counterRuntime then
-                counterEnv.CeleronCounterRuntime = nil
+            for _, record in pairs(state.playerRecords) do
+                clearRecord(record)
+            end
+
+            if statusGui and statusGui.Parent then
+                statusGui:Destroy()
+            end
+
+            if env.CeleronCounterRuntime == runtime then
+                env.CeleronCounterRuntime = nil
             end
         end
 
-        warn("[AutoCounter V3.3] READY | style priority fixed | hotbar counter resolver armed")
-        updateCounterUI()
+        warn("[AutoCounter V4] READY")
+        updateStatus()
     end)
 
     if not bootOK then
-        warn("[AutoCounter V3.3][BOOT] " .. tostring(bootError))
+        warn("[AutoCounter V4][BOOT] " .. tostring(bootError))
     end
 end)
 
