@@ -523,7 +523,8 @@ local Luna = (function()
                 end
             end
 
-            sidebarList.CanvasSize = UDim2.new(0, 0, 0, height)
+            local trailingRoom = math.max(30, sidebarList.AbsoluteSize.Y * 0.35)
+            sidebarList.CanvasSize = UDim2.new(0, 0, 0, height + trailingRoom)
         end
         sidebarLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshSidebarCanvas)
 
@@ -706,6 +707,10 @@ local Luna = (function()
                 refreshSidebarCanvas()
             end)
             task.delay(0.20, function()
+                if tab.RefreshLayout then tab.RefreshLayout() end
+                refreshSidebarCanvas()
+            end)
+            task.delay(0.50, function()
                 if tab.RefreshLayout then tab.RefreshLayout() end
                 refreshSidebarCanvas()
             end)
@@ -1115,18 +1120,36 @@ local Luna = (function()
             }
             window.Tabs[#window.Tabs + 1] = tab
 
-            local function measuredColumnHeight(column, layout)
+            local function measuredVisibleSectionBottom(column, layout)
                 local height = math.max(0, layout.AbsoluteContentSize.Y)
 
-                for _, child in ipairs(column:GetChildren()) do
-                    if child:IsA("GuiObject") and child.Visible then
-                        local bottom =
-                            child.AbsolutePosition.Y
+                for _, section in ipairs(column:GetChildren()) do
+                    if section:IsA("GuiObject") and section.Visible then
+                        local sectionBottom =
+                            section.AbsolutePosition.Y
                             - column.AbsolutePosition.Y
-                            + child.AbsoluteSize.Y
+                            + section.AbsoluteSize.Y
 
-                        if bottom > height then
-                            height = bottom
+                        if sectionBottom > height then
+                            height = sectionBottom
+                        end
+
+                        -- IMPORTANT:
+                        -- Delta/mobile sometimes reports an AutomaticSize section frame
+                        -- shorter than the controls actually rendered inside it.
+                        -- Measure every visible descendant, so the last slider/keybind
+                        -- still contributes to the scroll range.
+                        for _, desc in ipairs(section:GetDescendants()) do
+                            if desc:IsA("GuiObject") and desc.Visible then
+                                local bottom =
+                                    desc.AbsolutePosition.Y
+                                    - column.AbsolutePosition.Y
+                                    + desc.AbsoluteSize.Y
+
+                                if bottom > height then
+                                    height = bottom
+                                end
+                            end
                         end
                     end
                 end
@@ -1135,15 +1158,21 @@ local Luna = (function()
             end
 
             local function refreshColumns()
-                local leftHeight = measuredColumnHeight(leftColumn, leftLayout)
-                local rightHeight = measuredColumnHeight(rightColumn, rightLayout)
+                local leftHeight = measuredVisibleSectionBottom(leftColumn, leftLayout)
+                local rightHeight = measuredVisibleSectionBottom(rightColumn, rightLayout)
                 local height = math.max(leftHeight, rightHeight)
 
                 columns.Size = UDim2.new(1, -6, 0, height)
 
-                -- Extra bottom room is intentional: on mobile the final row must be
-                -- fully draggable above the bottom edge, not merely barely visible.
-                local canvasHeight = math.max(0, height + 42)
+                -- Give one viewport of guaranteed trailing room.
+                -- This means the final rendered control can always be pulled fully
+                -- above the bottom edge even if Roblox under-reports a parent size.
+                local trailingRoom = math.max(80, page.AbsoluteSize.Y)
+                local canvasHeight = math.max(
+                    page.AbsoluteSize.Y + 1,
+                    height + trailingRoom
+                )
+
                 page.CanvasSize = UDim2.new(0, 0, 0, canvasHeight)
 
                 local maxY = math.max(0, canvasHeight - page.AbsoluteSize.Y)
@@ -1163,7 +1192,7 @@ local Luna = (function()
                     if page.Visible then
                         refreshColumns()
                     end
-                    task.wait(0.10)
+                    task.wait(0.05)
                 end
             end)
 
@@ -2213,7 +2242,7 @@ local Luna = (function()
     return Library
 end)()
 
--- V11: deterministic geometry-based scroll bounds + V10 organization
+-- V12: deepest-visible-descendant scroll bounds + V10 organization
 local Window = Luna:CreateWindow({
     Name = "evohub",
     Subtitle = "alpha",
