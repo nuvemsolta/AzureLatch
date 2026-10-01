@@ -14,14 +14,13 @@ if game.PlaceId == 139609232261520 then
     f()
 else
 
--- EVOHUB UI LIBRARY RE V1
--- Reconstructed from the user's runtime captures.
--- Keeps the existing hub adapter/config API while replacing Luna's renderer.
-local Luna = 
-(function()
+-- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
+-- Built from the exact 3,552-instance runtime tree and callback captures.
+local Luna = (function()
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
     local TweenService = game:GetService("TweenService")
+    local TextService = game:GetService("TextService")
     local CoreGui = game:GetService("CoreGui")
 
     local LocalPlayer = Players.LocalPlayer
@@ -49,7 +48,7 @@ local Luna =
         Slider = Color3.fromRGB(30, 30, 35),
         Stroke = Color3.fromRGB(35, 35, 40),
         Text = Color3.fromRGB(210, 210, 220),
-        Muted = Color3.fromRGB(155, 155, 165),
+        Muted = Color3.fromRGB(140, 140, 150),
     }
     Library.Theme = Theme
 
@@ -153,78 +152,118 @@ local Luna =
     }, parentGui())
     Library.NotificationGui = NotificationGui
 
-    local NotificationHolder = create("Frame", {
-        Name = "Holder",
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -12, 0, 12),
-        Size = UDim2.new(0, 250, 1, -24),
-        BackgroundTransparency = 1,
-    }, NotificationGui)
-    local NotificationLayout = list(NotificationHolder, 6, false)
-    NotificationLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    local notificationStack = {}
+    local function layoutNotifications()
+        local alive = {}
+        for _, entry in ipairs(notificationStack) do
+            if entry and entry.Parent then
+                alive[#alive + 1] = entry
+            end
+        end
+        notificationStack = alive
+
+        local baseY = 0
+        for index = #notificationStack, 1, -1 do
+            local entry = notificationStack[index]
+            entry.Position = UDim2.new(0.5, 0, 0.6, baseY)
+            baseY -= 26
+        end
+    end
 
     function Library:CreateNotification(settings)
         settings = type(settings) == "table" and settings or {}
-        local card = create("Frame", {
-            Name = "Notification",
-            Size = UDim2.new(1, 0, 0, 54),
-            BackgroundColor3 = Theme.Section,
-            BorderSizePixel = 0,
-            ZIndex = 50,
-        }, NotificationHolder)
-        corner(card, 3)
-        stroke(card, 0.5, 0.6)
+        local message = tostring(
+            settings.Content
+            or settings.Text
+            or settings.Description
+            or settings.Message
+            or settings.Title
+            or settings.Name
+            or "Notification"
+        )
 
-        local bar = create("Frame", {
-            Name = "Accent",
-            Size = UDim2.new(0, 2, 1, 0),
+        local measured = TextService:GetTextSize(
+            message,
+            13,
+            Enum.Font.SourceSans,
+            Vector2.new(900, 20)
+        )
+        local width = math.clamp(math.ceil(measured.X) + 20, 90, 420)
+
+        local holder = create("Frame", {
+            Name = "NotificationContainer",
+            AnchorPoint = Vector2.new(0.5, 0),
+            Position = UDim2.new(0.5, 0, 0.6, 0),
+            Size = UDim2.fromOffset(width, 20),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 10,
+        }, NotificationGui)
+
+        local accent = create("Frame", {
+            Name = "AccentBar",
+            Size = UDim2.new(1, 0, 0, 2),
             BackgroundColor3 = Theme.Accent,
+            BackgroundTransparency = 0,
             BorderSizePixel = 0,
-            ZIndex = 51,
-        }, card)
-        setAccent(bar)
+            ZIndex = 11,
+        }, holder)
+        setAccent(accent)
 
-        create("TextLabel", {
-            Name = "Title",
-            Position = UDim2.fromOffset(10, 5),
-            Size = UDim2.new(1, -15, 0, 18),
-            BackgroundTransparency = 1,
-            Text = tostring(settings.Title or settings.Name or "Notification"),
-            TextColor3 = Theme.Text,
-            Font = Enum.Font.SourceSansSemibold,
-            TextSize = 14,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            ZIndex = 51,
-        }, card)
+        local body = create("Frame", {
+            Name = "Notification",
+            Position = UDim2.fromOffset(0, 2),
+            Size = UDim2.new(1, 0, 1, -2),
+            BackgroundColor3 = Theme.Section,
+            BackgroundTransparency = 0.3,
+            BorderSizePixel = 0,
+            ZIndex = 10,
+        }, holder)
 
-        create("TextLabel", {
-            Name = "Body",
-            Position = UDim2.fromOffset(10, 23),
-            Size = UDim2.new(1, -15, 0, 25),
+        local label = create("TextLabel", {
+            Name = "Message",
+            Size = UDim2.fromScale(1, 1),
             BackgroundTransparency = 1,
-            Text = tostring(settings.Content or settings.Text or settings.Description or ""),
-            TextColor3 = Theme.Muted,
+            Text = message,
+            TextColor3 = Color3.fromRGB(220, 220, 230),
             Font = Enum.Font.SourceSans,
-            TextSize = 12,
-            TextWrapped = true,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextYAlignment = Enum.TextYAlignment.Top,
-            ZIndex = 51,
-        }, card)
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            TextYAlignment = Enum.TextYAlignment.Center,
+            TextWrapped = false,
+            ZIndex = 11,
+        }, body)
 
-        task.delay(tonumber(settings.Duration) or 3, function()
-            if card.Parent then
-                pcall(function()
-                    TweenService:Create(card, TweenInfo.new(0.12), {
-                        BackgroundTransparency = 1
-                    }):Play()
-                end)
-                task.wait(0.13)
-                card:Destroy()
-            end
+        notificationStack[#notificationStack + 1] = holder
+        layoutNotifications()
+
+        holder.Position = UDim2.new(0.5, 0, 0.6, 10)
+        body.BackgroundTransparency = 1
+        label.TextTransparency = 1
+        accent.BackgroundTransparency = 1
+
+        pcall(function()
+            TweenService:Create(holder, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Position = UDim2.new(0.5, 0, 0.6, 0)
+            }):Play()
+            TweenService:Create(body, TweenInfo.new(0.15), { BackgroundTransparency = 0.3 }):Play()
+            TweenService:Create(label, TweenInfo.new(0.15), { TextTransparency = 0 }):Play()
+            TweenService:Create(accent, TweenInfo.new(0.15), { BackgroundTransparency = 0 }):Play()
         end)
 
-        return card
+        task.delay(tonumber(settings.Duration) or 3, function()
+            if not holder.Parent then return end
+            pcall(function()
+                TweenService:Create(body, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+                TweenService:Create(label, TweenInfo.new(0.18), { TextTransparency = 1 }):Play()
+                TweenService:Create(accent, TweenInfo.new(0.18), { BackgroundTransparency = 1 }):Play()
+            end)
+            task.wait(0.19)
+            if holder.Parent then holder:Destroy() end
+            layoutNotifications()
+        end)
+
+        return holder
     end
 
     function Library:PlayNotificationSound()
@@ -331,19 +370,22 @@ local Luna =
                 Size = UDim2.fromOffset(12, 28),
                 BackgroundTransparency = 1,
                 Text = brand:sub(index, index),
-                TextColor3 = Theme.Accent,
+                TextColor3 = Color3.new(
+                    0.897059 + (0.584314 - 0.897059) * ((index - 1) / math.max(1, math.min(#brand, 8) - 1)),
+                    0.876471 + (0.541176 - 0.876471) * ((index - 1) / math.max(1, math.min(#brand, 8) - 1)),
+                    1 + (0.8 - 1) * ((index - 1) / math.max(1, math.min(#brand, 8) - 1))
+                ),
                 Font = Enum.Font.SourceSansBold,
                 TextSize = 15,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = 3,
             }, brandFrame)
-            setAccentText(letter)
         end
 
         local topTabs = create("Frame", {
             Name = "TopTabs",
             Position = UDim2.fromOffset(170, 0),
-            Size = UDim2.fromOffset(460, 28),
+            Size = UDim2.fromOffset(500, 28),
             BackgroundTransparency = 1,
             ZIndex = 3,
         }, topBar)
@@ -358,14 +400,15 @@ local Luna =
             ZIndex = 8,
         }, topBar)
         corner(searchContainer, 3)
-        stroke(searchContainer, 0.5, 0.75)
+        local searchStroke = stroke(searchContainer, 1, 0.546570360660553)
+        setAccent(searchStroke, "Color")
 
         create("TextLabel", {
             Name = "SearchIcon",
-            Position = UDim2.fromOffset(5, 0),
+            Position = UDim2.fromOffset(6, 0),
             Size = UDim2.fromOffset(16, 20),
             BackgroundTransparency = 1,
-            Text = "⌕",
+            Text = "🔍",
             TextColor3 = Theme.Muted,
             Font = Enum.Font.SourceSans,
             TextSize = 13,
@@ -387,6 +430,37 @@ local Luna =
             TextXAlignment = Enum.TextXAlignment.Left,
             ZIndex = 9,
         }, searchContainer)
+
+
+        local searchResults = create("Frame", {
+            Name = "SearchResults",
+            AnchorPoint = Vector2.new(0, 1),
+            Position = UDim2.new(0, 0, 0, -2),
+            Size = UDim2.new(1, 0, 0, 0),
+            BackgroundColor3 = Theme.Control,
+            BorderSizePixel = 0,
+            ClipsDescendants = false,
+            Visible = false,
+            ZIndex = 10,
+        }, searchContainer)
+        corner(searchResults, 3)
+        local searchResultsStroke = stroke(searchResults, 1, 0.5)
+        setAccent(searchResultsStroke, "Color")
+
+        local resultsList = create("ScrollingFrame", {
+            Name = "ResultsList",
+            Size = UDim2.fromScale(1, 1),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ScrollBarThickness = 2,
+            ScrollBarImageColor3 = Theme.Accent,
+            ZIndex = 10,
+        }, searchResults)
+        setAccent(resultsList, "ScrollBarImageColor3")
+        list(resultsList, 1, false)
+        padding(resultsList, 3, 3, 3, 3)
 
         local sidebar = create("Frame", {
             Name = "Sidebar",
@@ -410,7 +484,7 @@ local Luna =
             ZIndex = 3,
         }, sidebar)
         setAccent(sidebarList, "ScrollBarImageColor3")
-        list(sidebarList, 0, false)
+        list(sidebarList, 4, false)
 
         local info = create("Frame", {
             Name = "Info",
@@ -425,7 +499,7 @@ local Luna =
             Size = UDim2.new(1, 0, 0, 14),
             BackgroundTransparency = 1,
             RichText = true,
-            Text = 'build: <font color="rgb(149,138,204)">re</font>',
+            Text = 'build: <font color="rgb(149,138,204)">exact-v2</font>',
             TextColor3 = Theme.Text,
             Font = Enum.Font.SourceSans,
             TextSize = 13,
@@ -439,7 +513,7 @@ local Luna =
             Size = UDim2.new(1, 0, 0, 14),
             BackgroundTransparency = 1,
             RichText = true,
-            Text = 'ui: <font color="rgb(149,138,204)">evo style</font>',
+            Text = 'ui: <font color="rgb(149,138,204)">evo exact</font>',
             TextColor3 = Theme.Text,
             Font = Enum.Font.SourceSans,
             TextSize = 13,
@@ -539,6 +613,25 @@ local Luna =
                 end)
             end)
 
+            button.MouseEnter:Connect(function()
+                if button.TextColor3 ~= Theme.Accent then
+                    pcall(function()
+                        TweenService:Create(button, TweenInfo.new(0.2), {
+                            TextColor3 = Theme.Text
+                        }):Play()
+                    end)
+                end
+            end)
+
+            button.MouseLeave:Connect(function()
+                local selected = border.Visible
+                pcall(function()
+                    TweenService:Create(button, TweenInfo.new(0.2), {
+                        TextColor3 = selected and Theme.Accent or Theme.Text
+                    }):Play()
+                end)
+            end)
+
             if #sidebarEntries == 1 then
                 setSidebarSelected(section)
             end
@@ -557,12 +650,25 @@ local Luna =
             for _, other in ipairs(window.Tabs) do
                 local selected = other == tab
                 other.Page.Visible = selected
-                other.TabLine.Visible = selected
-                other.TabButton.TextColor3 = selected and Theme.Text or Theme.Muted
+
+                pcall(function()
+                    TweenService:Create(
+                        other.TabLine,
+                        TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                        { Size = selected and UDim2.new(1, 0, 0, 2) or UDim2.new(0, 0, 0, 2) }
+                    ):Play()
+                    TweenService:Create(
+                        other.TabButton,
+                        TweenInfo.new(0.15),
+                        { TextColor3 = selected and Theme.Text or Theme.Muted }
+                    ):Play()
+                end)
             end
 
             rebuildSidebar(tab)
             searchBox.Text = ""
+            searchResults.Visible = false
+            searchResults.Size = UDim2.new(1, 0, 0, 0)
         end
 
         function window:SetVisible(value)
@@ -624,23 +730,86 @@ local Luna =
         end)
 
         if Library.IsMobile then
-            local mobileToggle = create("TextButton", {
-                Name = "MobileToggle",
-                Position = UDim2.fromOffset(8, 50),
-                Size = UDim2.fromOffset(34, 34),
-                BackgroundColor3 = Theme.Section,
-                Text = "c",
-                TextColor3 = Theme.Accent,
-                Font = Enum.Font.SourceSansBold,
-                TextSize = 18,
-                AutoButtonColor = false,
+            local mobileToggle = create("Frame", {
+                Name = "MobileToggleButton",
+                Position = UDim2.fromOffset(15, 100),
+                Size = UDim2.fromOffset(55, 55),
+                BackgroundColor3 = Theme.Accent,
+                BackgroundTransparency = 0.35,
+                BorderSizePixel = 0,
+                Active = true,
                 ZIndex = 100,
             }, gui)
-            corner(mobileToggle, 4)
-            stroke(mobileToggle, 0.5, 0.5)
-            setAccentText(mobileToggle)
-            mobileToggle.Activated:Connect(function()
-                window:Toggle()
+            corner(mobileToggle, 12)
+            create("UIStroke", {
+                Color = Color3.new(1, 1, 1),
+                Thickness = 2,
+                Transparency = 0.4,
+                LineJoinMode = Enum.LineJoinMode.Round,
+            }, mobileToggle)
+            setAccent(mobileToggle)
+
+            local mobileIcon = create("TextLabel", {
+                Name = "TextLabel",
+                Size = UDim2.fromScale(1, 1),
+                BackgroundTransparency = 1,
+                Text = "✕",
+                TextColor3 = Color3.new(1, 1, 1),
+                Font = Enum.Font.GothamBold,
+                TextScaled = true,
+                TextWrapped = true,
+                ZIndex = 101,
+            }, mobileToggle)
+
+            local mobileButton = create("TextButton", {
+                Name = "TextButton",
+                Size = UDim2.fromScale(1, 1),
+                BackgroundTransparency = 1,
+                Text = "",
+                AutoButtonColor = false,
+                ZIndex = 102,
+            }, mobileToggle)
+
+            local mobileDragging = false
+            local mobileDragStart
+            local mobileStartPos
+            local moved = false
+
+            mobileButton.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.Touch
+                    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    mobileDragging = true
+                    moved = false
+                    mobileDragStart = input.Position
+                    mobileStartPos = mobileToggle.Position
+                end
+            end)
+
+            mobileButton.InputChanged:Connect(function(input)
+                if mobileDragging and (
+                    input.UserInputType == Enum.UserInputType.Touch
+                    or input.UserInputType == Enum.UserInputType.MouseMovement
+                ) then
+                    local delta = input.Position - mobileDragStart
+                    if delta.Magnitude > 5 then moved = true end
+                    mobileToggle.Position = UDim2.new(
+                        mobileStartPos.X.Scale,
+                        mobileStartPos.X.Offset + delta.X,
+                        mobileStartPos.Y.Scale,
+                        mobileStartPos.Y.Offset + delta.Y
+                    )
+                end
+            end)
+
+            mobileButton.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.Touch
+                    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    mobileDragging = false
+                    if not moved then
+                        window:Toggle()
+                        mobileIcon.Text = window.Visible and "✕" or "≡"
+                    end
+                end
             end)
         end
 
@@ -902,6 +1071,22 @@ local Luna =
                         pcall(callback)
                     end)
 
+                    button.MouseEnter:Connect(function()
+                        pcall(function()
+                            TweenService:Create(row, TweenInfo.new(0.15), {
+                                BackgroundColor3 = Color3.fromRGB(26, 26, 30)
+                            }):Play()
+                        end)
+                    end)
+
+                    button.MouseLeave:Connect(function()
+                        pcall(function()
+                            TweenService:Create(row, TweenInfo.new(0.15), {
+                                BackgroundColor3 = Theme.Control
+                            }):Play()
+                        end)
+                    end)
+
                     addControlRecord(self, row, nameText)
                     return { Instance = button, Row = row }
                 end
@@ -922,7 +1107,7 @@ local Luna =
                         BorderSizePixel = 0,
                         ZIndex = 6,
                     }, row)
-                    corner(box, 3)
+                    corner(box, 2)
                     if value then setAccent(box) end
 
                     makeControlText(row, nameText, UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), Enum.Font.SourceSans, 14)
@@ -994,7 +1179,7 @@ local Luna =
                         BorderSizePixel = 0,
                         ZIndex = 6,
                     }, row)
-                    corner(trackFrame, 3)
+                    create("UICorner", { CornerRadius = UDim.new(1, 0) }, trackFrame)
 
                     local fill = create("Frame", {
                         Name = "Frame",
@@ -1003,7 +1188,7 @@ local Luna =
                         BorderSizePixel = 0,
                         ZIndex = 7,
                     }, trackFrame)
-                    corner(fill, 3)
+                    create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
                     setAccent(fill)
 
                     local dragButton = create("TextButton", {
@@ -1169,7 +1354,7 @@ local Luna =
                         UDim2.fromOffset(12, 22),
                         UDim2.new(1, -12, 0, 0),
                         Enum.Font.SourceSans,
-                        11,
+                        10,
                         Enum.TextXAlignment.Center
                     )
                     arrow.TextColor3 = Theme.Muted
@@ -1193,12 +1378,12 @@ local Luna =
                         ScrollBarThickness = 2,
                         ScrollBarImageColor3 = Theme.Accent,
                         Visible = false,
-                        ZIndex = 20,
+                        ZIndex = 9,
                     }, row)
                     corner(choices, 3)
                     stroke(choices, 0.5, 0.55)
-                    local choicesLayout = list(choices, 1, false)
-                    padding(choices, 3, 3, 3, 3)
+                    local choicesLayout = list(choices, 2, false)
+                    padding(choices, 5, 5, 3, 3)
                     setAccent(choices, "ScrollBarImageColor3")
 
                     local object = {
@@ -1224,7 +1409,7 @@ local Luna =
                                 Font = Enum.Font.SourceSans,
                                 TextSize = 13,
                                 AutoButtonColor = false,
-                                ZIndex = 21,
+                                ZIndex = 10,
                             }, choices)
                             corner(optionButton, 2)
                             optionButton.Activated:Connect(function()
@@ -1514,6 +1699,26 @@ local Luna =
                 selectTab(tab)
             end)
 
+            tabButton.MouseEnter:Connect(function()
+                if selectedTab ~= tab then
+                    pcall(function()
+                        TweenService:Create(tabButton, TweenInfo.new(0.15), {
+                            TextColor3 = Theme.Text
+                        }):Play()
+                    end)
+                end
+            end)
+
+            tabButton.MouseLeave:Connect(function()
+                if selectedTab ~= tab then
+                    pcall(function()
+                        TweenService:Create(tabButton, TweenInfo.new(0.15), {
+                            TextColor3 = Theme.Muted
+                        }):Play()
+                    end)
+                end
+            end)
+
             if not selectedTab then
                 selectTab(tab)
             end
@@ -1521,12 +1726,121 @@ local Luna =
             return tab
         end
 
-        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-            if not selectedTab then return end
-            local query = searchBox.Text
-            for _, section in ipairs(selectedTab.Sections) do
-                sectionSearch(section, query)
+        local function clearSearchResults()
+            for _, child in ipairs(resultsList:GetChildren()) do
+                if child:IsA("TextButton") then
+                    child:Destroy()
+                end
             end
+        end
+
+        local function openSearchResult(tab, section)
+            if selectedTab ~= tab then
+                selectTab(tab)
+            end
+            setSidebarSelected(section)
+            task.defer(function()
+                local relative = section.Frame.AbsolutePosition.Y
+                    - tab.Page.AbsolutePosition.Y
+                    + tab.Page.CanvasPosition.Y
+                    - 4
+                tab.Page.CanvasPosition = Vector2.new(0, math.max(0, relative))
+            end)
+        end
+
+        local function refreshSearch()
+            local query = tostring(searchBox.Text or ""):lower()
+            clearSearchResults()
+
+            if query == "" then
+                searchResults.Visible = false
+                searchResults.Size = UDim2.new(1, 0, 0, 0)
+                return
+            end
+
+            local hits = {}
+            for _, tab in ipairs(window.Tabs) do
+                for _, section in ipairs(tab.Sections) do
+                    local sectionMatch = section.Name:lower():find(query, 1, true) ~= nil
+                    local matchedControl = nil
+                    for _, record in ipairs(section.Controls) do
+                        if record.Name:lower():find(query, 1, true) then
+                            matchedControl = record.Name
+                            break
+                        end
+                    end
+
+                    if sectionMatch or matchedControl then
+                        hits[#hits + 1] = {
+                            Tab = tab,
+                            Section = section,
+                            Text = matchedControl
+                                and (section.Name .. "  •  " .. matchedControl)
+                                or section.Name,
+                        }
+                    end
+                end
+            end
+
+            for index, hit in ipairs(hits) do
+                if index > 8 then break end
+
+                local resultButton = create("TextButton", {
+                    Name = "Result",
+                    Size = UDim2.new(1, 0, 0, 20),
+                    BackgroundColor3 = Theme.Section,
+                    BorderSizePixel = 0,
+                    Text = hit.Text,
+                    TextColor3 = Theme.Text,
+                    Font = Enum.Font.SourceSans,
+                    TextSize = 12,
+                    TextXAlignment = Enum.TextXAlignment.Left,
+                    AutoButtonColor = false,
+                    ZIndex = 11,
+                }, resultsList)
+                padding(resultButton, 5, 3, 0, 0)
+
+                resultButton.MouseEnter:Connect(function()
+                    resultButton.BackgroundColor3 = Theme.Control
+                end)
+                resultButton.MouseLeave:Connect(function()
+                    resultButton.BackgroundColor3 = Theme.Section
+                end)
+                resultButton.Activated:Connect(function()
+                    openSearchResult(hit.Tab, hit.Section)
+                    searchResults.Visible = false
+                    searchResults.Size = UDim2.new(1, 0, 0, 0)
+                end)
+            end
+
+            local shown = math.min(#hits, 8)
+            searchResults.Visible = shown > 0
+            searchResults.Size = UDim2.new(1, 0, 0, shown > 0 and (shown * 21 + 6) or 0)
+        end
+
+        searchBox:GetPropertyChangedSignal("Text"):Connect(refreshSearch)
+
+        searchBox.Focused:Connect(function()
+            pcall(function()
+                TweenService:Create(searchStroke, TweenInfo.new(0.15), {
+                    Transparency = 0.1
+                }):Play()
+            end)
+            refreshSearch()
+        end)
+
+        searchBox.FocusLost:Connect(function()
+            pcall(function()
+                TweenService:Create(searchStroke, TweenInfo.new(0.15), {
+                    Transparency = 0.546570360660553
+                }):Play()
+            end)
+            task.delay(0.1, function()
+                if not searchBox:IsFocused() then
+                    searchResults.Visible = false
+                    searchResults.Size = UDim2.new(1, 0, 0, 0)
+                end
+            end)
         end)
 
         return window
@@ -1554,7 +1868,6 @@ local Luna =
 
     return Library
 end)()
-
 
 local Window = Luna:CreateWindow({
     Name = "Celeron's GUI (Azure Latch)",
