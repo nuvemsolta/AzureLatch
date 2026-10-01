@@ -494,13 +494,21 @@ local Luna = (function()
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
             CanvasSize = UDim2.new(),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            AutomaticCanvasSize = Enum.AutomaticSize.None,
+            Active = true,
+            ScrollingEnabled = true,
+            ScrollingDirection = Enum.ScrollingDirection.Y,
+            ElasticBehavior = Enum.ElasticBehavior.Always,
             ScrollBarThickness = 2,
             ScrollBarImageColor3 = Theme.Accent,
             ZIndex = 3,
         }, sidebar)
         setAccent(sidebarList, "ScrollBarImageColor3")
-        list(sidebarList, 4, false)
+        local sidebarLayout = list(sidebarList, 4, false)
+        local function refreshSidebarCanvas()
+            sidebarList.CanvasSize = UDim2.new(0, 0, 0, math.max(0, sidebarLayout.AbsoluteContentSize.Y + 8))
+        end
+        sidebarLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshSidebarCanvas)
 
         local info = create("Frame", {
             Name = "Info",
@@ -592,6 +600,17 @@ local Luna = (function()
                 tab.Page.CanvasPosition = Vector2.new(0, 0)
             end
             setSidebarSelected(groupName)
+
+            -- Visibility changes do not always refresh AutomaticSize fast enough
+            -- on mobile executors. Force the content canvas after layout settles.
+            task.defer(function()
+                if tab.RefreshLayout then tab.RefreshLayout() end
+                refreshSidebarCanvas()
+            end)
+            task.delay(0.05, function()
+                if tab.RefreshLayout then tab.RefreshLayout() end
+                refreshSidebarCanvas()
+            end)
         end
 
         local function addSidebarEntry(tab, groupName)
@@ -653,6 +672,7 @@ local Luna = (function()
             for _, groupName in ipairs(tab.Groups) do
                 addSidebarEntry(tab, groupName)
             end
+            task.defer(refreshSidebarCanvas)
 
             local target = tab.SelectedGroup
                 or (tab.DefaultGroup and tab.GroupSet[tab.DefaultGroup] and tab.DefaultGroup)
@@ -934,7 +954,11 @@ local Luna = (function()
                 BackgroundTransparency = 1,
                 BorderSizePixel = 0,
                 CanvasSize = UDim2.new(),
-                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                AutomaticCanvasSize = Enum.AutomaticSize.None,
+                Active = true,
+                ScrollingEnabled = true,
+                ScrollingDirection = Enum.ScrollingDirection.Y,
+                ElasticBehavior = Enum.ElasticBehavior.Always,
                 ScrollBarThickness = 3,
                 ScrollBarImageColor3 = Theme.Accent,
                 Visible = false,
@@ -995,8 +1019,11 @@ local Luna = (function()
             local function refreshColumns()
                 local leftHeight = leftLayout.AbsoluteContentSize.Y
                 local rightHeight = rightLayout.AbsoluteContentSize.Y
-                columns.Size = UDim2.new(1, -6, 0, math.max(leftHeight, rightHeight))
+                local height = math.max(leftHeight, rightHeight)
+                columns.Size = UDim2.new(1, -6, 0, height)
+                page.CanvasSize = UDim2.new(0, 0, 0, math.max(0, height + 18))
             end
+            tab.RefreshLayout = refreshColumns
             leftLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
             rightLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
 
@@ -2015,6 +2042,7 @@ local Luna = (function()
     return Library
 end)()
 
+-- V9: EvoHub semantic organization + mobile scroll fix + separated Player/Visuals
 local Window = Luna:CreateWindow({
     Name = "evohub",
     Subtitle = "alpha",
@@ -2311,7 +2339,8 @@ mainReal:EnsureGroup("Main")
 for _, groupName in ipairs({
     "Base Moves", "Isagi", "Chigiri", "Bachira", "Nagi", "Shidou", "Kurona",
     "Kiyora", "Otoya", "Kunigami", "Yukimiya", "Barou", "Karasu", "Aiku",
-    "Sae", "Reo", "Don Lorenzo", "Rin", "Kaiser", "Nel Isagi", "Hiori"
+    "Sae", "Reo", "Don Lorenzo", "Rin", "Kaiser", "Nel Isagi", "Hiori",
+    "Gagamaru"
 }) do
     playerReal:EnsureGroup(groupName)
 end
@@ -2328,22 +2357,14 @@ local helptab = miscUI
 local function routedTarget(folderName)
     local key = tostring(folderName or ""):lower()
 
-    if key:find("metavision", 1, true) then
-        return visualsUI, "Ball Metavision"
-    end
-
-    if key:find("distance", 1, true)
-        or key:find("trap helper", 1, true)
-        or key:find("auto defensive", 1, true) then
-        return playerUI, "Base Moves"
-    end
-
     if key:find("notification", 1, true)
         or key:find("utility", 1, true)
         or key:find("other features", 1, true) then
         return miscUI, "Settings"
     end
 
+    -- Player and Visuals pages are now populated only by the EvoHub
+    -- semantic reconstructions below. Legacy Celeron features stay in Main.
     return mainUI, "Main"
 end
 
@@ -2358,6 +2379,472 @@ end
 
 local maintab = makeLegacyRouter("Blatant")
 local maintab2 = makeLegacyRouter("Silent")
+
+
+-- ================================================================
+-- EVOHUB VISUALS V9
+-- Runtime-semantic reconstruction from V7.3 page/callback/state captures.
+-- The UI/control organization is recovered; rendering code is clean-room.
+-- ================================================================
+task.spawn(function()
+    local ok, err = pcall(function()
+        local PlayersV = game:GetService("Players")
+        local RunServiceV = game:GetService("RunService")
+        local WorkspaceV = game:GetService("Workspace")
+        local CoreGuiV = game:GetService("CoreGui")
+        local LocalPlayerV = PlayersV.LocalPlayer
+        local ENVV = (getgenv and getgenv()) or _G
+
+        local function uiParent()
+            if type(gethui) == "function" then
+                local okH, h = pcall(gethui)
+                if okH and typeof(h) == "Instance" then return h end
+            end
+            return CoreGuiV
+        end
+
+        -- ---------------- ESP / Style Indicator ----------------
+        local espState = {
+            Indicators = false,
+            StyleIndicator = false,
+            ShowBox = false,
+            IframeIndicator = false,
+            FlowIndicator = false,
+            CooldownIndicator = false,
+            TeamCheck = false,
+            OnlyBallHolder = false,
+            TextSize = 11,
+            Range = 1480,
+            BoxColor = Color3.fromRGB(149, 138, 204),
+            PlayerAimBeam = false,
+            AimBeamLength = 300,
+            SelfChams = false,
+            ChamsColor = Color3.fromRGB(149, 138, 204),
+        }
+
+        local espFolder = visualsUI:FolderInGroup("ESP", "Style Indicator.", Color3.fromRGB(24,255,228), true, "Visuals")
+        espFolder:Toggle("Indicators", function(v) espState.Indicators = v == true end)
+        espFolder:Toggle("Style Indicator", function(v) espState.StyleIndicator = v == true end)
+        espFolder:Toggle("Show Box", function(v) espState.ShowBox = v == true end)
+        espFolder:Toggle("Iframe Indicator", function(v) espState.IframeIndicator = v == true end)
+        espFolder:Toggle("Flow Indicator", function(v) espState.FlowIndicator = v == true end)
+        espFolder:Toggle("Cooldown Indicator", function(v) espState.CooldownIndicator = v == true end)
+        espFolder:Toggle("Team Check", function(v) espState.TeamCheck = v == true end)
+        espFolder:Toggle("Only For Ball Holder", function(v) espState.OnlyBallHolder = v == true end)
+        espFolder:Slider("Text Size", 11, 8, 24, 1, function(v) espState.TextSize = v end)
+        espFolder:Slider("Indicators Range", 1480, 50, 2000, 10, function(v) espState.Range = v end)
+
+        local espSection = visualsReal.Sections[#visualsReal.Sections]
+        if espSection and espSection.Group == "ESP" then
+            espSection:CreateColorPicker({
+                Name = "Box Color",
+                CurrentColor = espState.BoxColor,
+                Callback = function(v) espState.BoxColor = v end
+            }, "Visuals_ESP_Style Indicator_Box Color")
+        end
+
+        espFolder:Toggle("Player Aim Beam", function(v) espState.PlayerAimBeam = v == true end)
+        espFolder:Slider("Aim Beam Length", 300, 25, 1000, 5, function(v) espState.AimBeamLength = v end)
+        espFolder:Toggle("Self Chams", function(v) espState.SelfChams = v == true end)
+
+        if espSection and espSection.Group == "ESP" then
+            espSection:CreateColorPicker({
+                Name = "Chams Color",
+                CurrentColor = espState.ChamsColor,
+                Callback = function(v) espState.ChamsColor = v end
+            }, "Visuals_ESP_Style Indicator_Chams Color")
+        end
+
+        local espObjects = {}
+        local selfHighlight
+
+        local function playerStyle(plr, char)
+            local v = plr:GetAttribute("style")
+            if v == nil and char then v = char:GetAttribute("style") end
+            if v == nil and char then
+                local state = char:FindFirstChild("state")
+                local style = state and (state:FindFirstChild("style") or state:FindFirstChild("Style"))
+                if style and style:IsA("ValueBase") then v = style.Value end
+            end
+            return v and tostring(v) or "?"
+        end
+
+        local function boolHint(char, names)
+            if not char then return false end
+            for _, name in ipairs(names) do
+                local attr = char:GetAttribute(name)
+                if attr == true then return true end
+                local obj = char:FindFirstChild(name, true)
+                if obj and obj:IsA("BoolValue") and obj.Value then return true end
+            end
+            return false
+        end
+
+        local function cleanupEntry(plr)
+            local entry = espObjects[plr]
+            if not entry then return end
+            for _, obj in pairs(entry) do
+                pcall(function()
+                    if typeof(obj) == "Instance" then obj:Destroy() end
+                end)
+            end
+            espObjects[plr] = nil
+        end
+
+        local function getEntry(plr, char)
+            local entry = espObjects[plr]
+            local head = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
+            if not head then
+                cleanupEntry(plr)
+                return nil
+            end
+
+            if entry and entry.head == head then return entry end
+            cleanupEntry(plr)
+
+            local gui = Instance.new("BillboardGui")
+            gui.Name = "EvoHubStyleIndicator"
+            gui.AlwaysOnTop = true
+            gui.Size = UDim2.fromOffset(180, 70)
+            gui.StudsOffset = Vector3.new(0, 3.3, 0)
+            gui.Adornee = head
+            gui.Parent = uiParent()
+
+            local label = Instance.new("TextLabel")
+            label.Name = "Indicator"
+            label.Size = UDim2.fromScale(1, 1)
+            label.BackgroundTransparency = 1
+            label.TextColor3 = Color3.fromRGB(210,210,220)
+            label.TextStrokeColor3 = Color3.new(0,0,0)
+            label.TextStrokeTransparency = 0.35
+            label.Font = Enum.Font.SourceSansSemibold
+            label.TextWrapped = true
+            label.Parent = gui
+
+            local highlight = Instance.new("Highlight")
+            highlight.Name = "EvoHubBox"
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.FillTransparency = 1
+            highlight.OutlineTransparency = 0
+            highlight.Adornee = char
+            highlight.Parent = uiParent()
+
+            entry = {gui = gui, label = label, highlight = highlight, head = head}
+            espObjects[plr] = entry
+            return entry
+        end
+
+        PlayersV.PlayerRemoving:Connect(cleanupEntry)
+
+        RunServiceV.RenderStepped:Connect(function()
+            local localChar = LocalPlayerV.Character
+            local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+
+            for _, plr in ipairs(PlayersV:GetPlayers()) do
+                if plr ~= LocalPlayerV then
+                    local char = plr.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    local entry = char and getEntry(plr, char) or nil
+
+                    if entry then
+                        local distance = localRoot and root and (root.Position - localRoot.Position).Magnitude or math.huge
+                        local allowed = espState.Indicators and distance <= espState.Range
+
+                        if espState.TeamCheck and plr.Team == LocalPlayerV.Team then
+                            allowed = false
+                        end
+                        if espState.OnlyBallHolder and not char:FindFirstChild("Ball") then
+                            allowed = false
+                        end
+
+                        entry.gui.Enabled = allowed
+                        entry.highlight.Enabled = allowed and espState.ShowBox
+                        entry.highlight.OutlineColor = espState.BoxColor
+                        entry.label.TextSize = espState.TextSize
+
+                        if allowed then
+                            local parts = {plr.DisplayName}
+                            if espState.StyleIndicator then
+                                parts[#parts + 1] = "Style: " .. playerStyle(plr, char)
+                            end
+                            if espState.IframeIndicator and boolHint(char, {"iframe","iframes","IFrame","Invulnerable"}) then
+                                parts[#parts + 1] = "IFRAME"
+                            end
+                            if espState.FlowIndicator and boolHint(char, {"flow","Flow","inFlow"}) then
+                                parts[#parts + 1] = "FLOW"
+                            end
+                            if espState.CooldownIndicator then
+                                parts[#parts + 1] = ("%dst"):format(math.floor(distance + 0.5))
+                            end
+                            entry.label.Text = table.concat(parts, "\n")
+                        end
+                    end
+                end
+            end
+
+            if localChar then
+                if not selfHighlight or selfHighlight.Adornee ~= localChar then
+                    if selfHighlight then selfHighlight:Destroy() end
+                    selfHighlight = Instance.new("Highlight")
+                    selfHighlight.Name = "EvoHubSelfChams"
+                    selfHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    selfHighlight.Adornee = localChar
+                    selfHighlight.Parent = uiParent()
+                end
+                selfHighlight.Enabled = espState.SelfChams
+                selfHighlight.FillColor = espState.ChamsColor
+                selfHighlight.OutlineColor = espState.ChamsColor
+                selfHighlight.FillTransparency = 0.55
+                selfHighlight.OutlineTransparency = 0
+            end
+        end)
+
+        -- ---------------- Crosshair ----------------
+        local crossState = {
+            Enabled = false,
+            Outline = false,
+            Label = false,
+            SilentAimSnap = false,
+            Spin = false,
+            SpinSpeed = 0,
+            Pulse = false,
+            PulseSpeed = 0.5,
+            PulseMin = 1,
+            PulseMax = 4,
+            Style = "Circle",
+            Width = 1,
+            Length = 0,
+            Gap = 1,
+            DotSize = 1,
+            CircleRadius = 6,
+            CircleSides = 3,
+            LineColor = Color3.fromRGB(210,210,220),
+            DotColor = Color3.fromRGB(149,138,204),
+            OutlineColor = Color3.fromRGB(0,0,0),
+            Rotation = 0,
+        }
+
+        local crossFolder = visualsUI:FolderInGroup("Crosshair", "Crosshair.", Color3.fromRGB(24,255,228), true, "Visuals")
+        crossFolder:Toggle("Enabled", function(v) crossState.Enabled = v == true end)
+        crossFolder:Toggle("Outline", function(v) crossState.Outline = v == true end)
+        crossFolder:Toggle("EvoHub Label", function(v) crossState.Label = v == true end)
+        crossFolder:Toggle("Silent Aim Snap", function(v) crossState.SilentAimSnap = v == true end)
+
+        local styleFolder = visualsUI:FolderInGroup("Crosshair", "Style.", Color3.fromRGB(24,255,228), true, "Visuals")
+        styleFolder:Dropdown("Style", {"Cross","Plus + Dot","T-Shape","Dot Only","Circle"}, function(v)
+            crossState.Style = v
+        end)
+        styleFolder:Slider("Width", 1, 1, 8, 1, function(v) crossState.Width = v end)
+        styleFolder:Slider("Length", 0, 0, 30, 1, function(v) crossState.Length = v end)
+        styleFolder:Slider("Gap", 1, 0, 30, 1, function(v) crossState.Gap = v end)
+        styleFolder:Slider("Dot Size", 1, 1, 12, 1, function(v) crossState.DotSize = v end)
+        styleFolder:Slider("Circle Radius", 6, 2, 40, 1, function(v) crossState.CircleRadius = v end)
+        styleFolder:Slider("Circle Sides", 3, 3, 24, 1, function(v) crossState.CircleSides = v end)
+
+        local animFolder = visualsUI:FolderInGroup("Crosshair", "Animations.", Color3.fromRGB(24,255,228), true, "Visuals")
+        animFolder:Toggle("Spin", function(v) crossState.Spin = v == true end)
+        animFolder:Slider("Spin Speed", 0, 0, 720, 5, function(v) crossState.SpinSpeed = v end)
+        animFolder:Toggle("Pulse", function(v) crossState.Pulse = v == true end)
+        animFolder:Slider("Pulse Speed", 0.5, 0.1, 5, 0.1, function(v) crossState.PulseSpeed = v end)
+        animFolder:Slider("Pulse Min", 1, 0, 20, 1, function(v) crossState.PulseMin = v end)
+        animFolder:Slider("Pulse Max", 4, 1, 30, 1, function(v) crossState.PulseMax = v end)
+
+        local colorsSection = visualsReal:CreateSection("Colors", "Crosshair")
+        colorsSection:CreateColorPicker({
+            Name = "Line Color", CurrentColor = crossState.LineColor,
+            Callback = function(v) crossState.LineColor = v end
+        }, "Visuals_Crosshair_Colors_Line Color")
+        colorsSection:CreateColorPicker({
+            Name = "Dot Color", CurrentColor = crossState.DotColor,
+            Callback = function(v) crossState.DotColor = v end
+        }, "Visuals_Crosshair_Colors_Dot Color")
+        colorsSection:CreateColorPicker({
+            Name = "Outline Color", CurrentColor = crossState.OutlineColor,
+            Callback = function(v) crossState.OutlineColor = v end
+        }, "Visuals_Crosshair_Colors_Outline Color")
+
+        local crossGui = Instance.new("ScreenGui")
+        crossGui.Name = "EvoHubCrosshair"
+        crossGui.IgnoreGuiInset = true
+        crossGui.ResetOnSpawn = false
+        crossGui.Parent = uiParent()
+
+        local root = Instance.new("Frame")
+        root.Name = "Root"
+        root.AnchorPoint = Vector2.new(0.5,0.5)
+        root.Position = UDim2.fromScale(0.5,0.5)
+        root.Size = UDim2.fromOffset(1,1)
+        root.BackgroundTransparency = 1
+        root.Parent = crossGui
+
+        local function mkLine(name)
+            local f = Instance.new("Frame")
+            f.Name = name
+            f.BorderSizePixel = 0
+            f.AnchorPoint = Vector2.new(0.5,0.5)
+            f.Parent = root
+            return f
+        end
+
+        local up = mkLine("Up")
+        local down = mkLine("Down")
+        local left = mkLine("Left")
+        local right = mkLine("Right")
+        local dot = mkLine("Dot")
+        local circle = mkLine("Circle")
+        circle.BackgroundTransparency = 1
+        local circleCorner = Instance.new("UICorner")
+        circleCorner.CornerRadius = UDim.new(1,0)
+        circleCorner.Parent = circle
+        local circleStroke = Instance.new("UIStroke")
+        circleStroke.Parent = circle
+
+        local crossLabel = Instance.new("TextLabel")
+        crossLabel.Name = "Label"
+        crossLabel.AnchorPoint = Vector2.new(0.5,1)
+        crossLabel.Position = UDim2.fromOffset(0,-10)
+        crossLabel.Size = UDim2.fromOffset(100,18)
+        crossLabel.BackgroundTransparency = 1
+        crossLabel.Text = "evohub"
+        crossLabel.Font = Enum.Font.SourceSansSemibold
+        crossLabel.TextSize = 13
+        crossLabel.TextColor3 = Color3.fromRGB(149,138,204)
+        crossLabel.Parent = root
+
+        ENVV.EvoHubCrosshairState = crossState
+
+        RunServiceV.RenderStepped:Connect(function(dt)
+            root.Visible = crossState.Enabled
+            if not crossState.Enabled then return end
+
+            local target = ENVV.EvoHubSilentAimScreenPosition
+            if crossState.SilentAimSnap and typeof(target) == "Vector2" then
+                root.Position = UDim2.fromOffset(target.X, target.Y)
+            else
+                root.Position = UDim2.fromScale(0.5,0.5)
+            end
+
+            if crossState.Spin then
+                crossState.Rotation = (crossState.Rotation + crossState.SpinSpeed * dt) % 360
+            else
+                crossState.Rotation = 0
+            end
+            root.Rotation = crossState.Rotation
+
+            local pulse = crossState.Gap
+            if crossState.Pulse then
+                local t = (math.sin(os.clock() * math.pi * 2 * crossState.PulseSpeed) + 1) * 0.5
+                pulse = crossState.PulseMin + (crossState.PulseMax - crossState.PulseMin) * t
+            end
+
+            local length = math.max(1, crossState.Length)
+            local width = math.max(1, crossState.Width)
+            local gap = math.max(0, pulse)
+
+            local showLines = crossState.Style == "Cross"
+                or crossState.Style == "Plus + Dot"
+                or crossState.Style == "T-Shape"
+            local showDot = crossState.Style == "Plus + Dot"
+                or crossState.Style == "Dot Only"
+            local showCircle = crossState.Style == "Circle"
+
+            up.Visible = showLines and crossState.Style ~= "T-Shape"
+            down.Visible = showLines
+            left.Visible = showLines
+            right.Visible = showLines
+            dot.Visible = showDot
+            circle.Visible = showCircle
+
+            for _, line in ipairs({up,down,left,right}) do
+                line.BackgroundColor3 = crossState.LineColor
+            end
+            up.Size = UDim2.fromOffset(width, length)
+            up.Position = UDim2.fromOffset(0, -(gap + length/2))
+            down.Size = UDim2.fromOffset(width, length)
+            down.Position = UDim2.fromOffset(0, gap + length/2)
+            left.Size = UDim2.fromOffset(length, width)
+            left.Position = UDim2.fromOffset(-(gap + length/2), 0)
+            right.Size = UDim2.fromOffset(length, width)
+            right.Position = UDim2.fromOffset(gap + length/2, 0)
+
+            dot.Size = UDim2.fromOffset(crossState.DotSize, crossState.DotSize)
+            dot.Position = UDim2.fromOffset(0,0)
+            dot.BackgroundColor3 = crossState.DotColor
+            local dc = dot:FindFirstChildOfClass("UICorner")
+            if not dc then
+                dc = Instance.new("UICorner")
+                dc.CornerRadius = UDim.new(1,0)
+                dc.Parent = dot
+            end
+
+            local diameter = crossState.CircleRadius * 2
+            circle.Size = UDim2.fromOffset(diameter, diameter)
+            circle.Position = UDim2.fromOffset(0,0)
+            circleStroke.Thickness = width
+            circleStroke.Color = crossState.LineColor
+
+            crossLabel.Visible = crossState.Label
+        end)
+
+        -- ---------------- Ball Metavision ----------------
+        local ballMetaEnabled = true
+        local metaFolder = visualsUI:FolderInGroup("Ball Metavision", "Ball Metavision.", Color3.fromRGB(24,255,228), true, "Visuals")
+        metaFolder:Toggle("Ball Metavision", nil, true, function(v)
+            ballMetaEnabled = v == true
+        end)
+
+        local ballHighlight
+        local currentBall
+
+        local function findBall()
+            local terrain = WorkspaceV:FindFirstChildOfClass("Terrain")
+            local ball = terrain and terrain:FindFirstChild("Ball")
+            if ball and ball:IsA("BasePart") then return ball end
+
+            local football = WorkspaceV:FindFirstChild("Football")
+            if football and football:IsA("BasePart") then return football end
+
+            for _, plr in ipairs(PlayersV:GetPlayers()) do
+                local char = plr.Character
+                local held = char and char:FindFirstChild("Ball")
+                if held and held:IsA("BasePart") then return held end
+            end
+            return nil
+        end
+
+        RunServiceV.Heartbeat:Connect(function()
+            if not ballMetaEnabled then
+                if ballHighlight then ballHighlight.Enabled = false end
+                return
+            end
+
+            local ball = findBall()
+            if ball ~= currentBall then
+                currentBall = ball
+                if ballHighlight then ballHighlight:Destroy() end
+                ballHighlight = nil
+
+                if ball then
+                    ballHighlight = Instance.new("Highlight")
+                    ballHighlight.Name = "EvoHubBallMetavision"
+                    ballHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    ballHighlight.FillColor = Color3.fromRGB(149,138,204)
+                    ballHighlight.OutlineColor = Color3.fromRGB(225,220,255)
+                    ballHighlight.FillTransparency = 0.45
+                    ballHighlight.OutlineTransparency = 0
+                    ballHighlight.Adornee = ball
+                    ballHighlight.Parent = uiParent()
+                end
+            elseif ballHighlight then
+                ballHighlight.Enabled = true
+            end
+        end)
+    end)
+
+    if not ok then
+        warn("[EvoHub Visuals V9] " .. tostring(err))
+    end
+end)
 
 -- EvoHub Misc > Settings clone.
 local uiSettings = miscReal:CreateSection("UI Settings", "Settings")
@@ -2611,17 +3098,8 @@ notifsup:Toggle("Suppress Notifications", "Suppresses Notifications On Some Feat
     })
 end)
 
-local meta = maintab:Folder("Metavision Features.", Color3.fromRGB(24, 255, 228), true)
-meta:Label("Metavision")
-meta:Label("V1 = standard overlay. V2 = use below 1:30, then tap the puzzle icon.")
-
-meta:Button("Metavision V1", function()
-    loadstring(game:HttpGet("https://pastebin.com/raw/FVgs7bQw"))()
-end)
-
-meta:Button("Metavision V2 (Under 1:30)", function()
-    loadstring(game:HttpGet("https://pastebin.com/raw/HfpQBAsF"))()
-end)
+-- V9: old Celeron Metavision V1/V2 removed.
+-- Visuals > Ball Metavision below is the EvoHub semantic reconstruction.
 
 local ballfolder = maintab:Folder("Ball Features.", Color3.fromRGB(24, 255, 228), true)
 ballfolder:Label("Ball Features.")
@@ -5674,8 +6152,8 @@ end
 --========================================================
 task.spawn(function()
     local moveBuffOK, moveBuffError = pcall(function()
-        local d = maintab:Folder("Distance Move Buffs.", Color3.fromRGB(24, 255, 228), true)
-        d:Label("Distance Move Buffs: Buffs Movement Based Moves.")
+        local d = playerUI:FolderInGroup("Gagamaru", "Movement Buffs.", Color3.fromRGB(24, 255, 228), true, "Blatant")
+        d:Label("Gagamaru Movement Buffs.")
 
         local player = Players.LocalPlayer
         local rs = RunService
@@ -6697,37 +7175,6 @@ task.spawn(function()
         end
 
 
-        d:Label("Isagi Movement Buffs.")
-        d:Slider("Naruhaya Footwork Distance", 0, 0, 200, 1, function(v)
-            Distances.naruhayaDist = v
-        end)
-
-        d:Label("NEL Isagi Movement Buffs.")
-        d:Slider("Raumdeuter Distance", 0, 0, 200, 1, function(v)
-            Distances.raumDist = v
-        end)
-
-        d:Label("Shidou Movement Buffs.")
-        d:Slider("Draconic Rush Distance", 0, 0, 200, 1, function(v)
-            Distances.dracDist = v
-        end)
-
-        d:Label("Bachira Movement Buffs.")
-        d:Slider("Step Overs Distance", 0, 0, 200, 1, function(v)
-            Distances.stepDist = v
-        end)
-
-        d:Label("Kaiser Movement Buffs.")
-        d:Slider("Off The Ball Distance", 0, 0, 200, 1, function(v)
-            Distances.kaiserDist = v
-        end)
-
-        d:Label("Rin Movement Buffs.")
-        d:Slider("Occlusion Break Distance", 0, 0, 200, 1, function(v)
-            Distances.occlusionDist = v
-        end)
-
-        d:Label("Gagamaru Movement Buffs.")
         d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
             Distances.divingDist = v
         end)
@@ -6738,118 +7185,6 @@ task.spawn(function()
 
         d:Slider("Scorpion Distance", 0, 0, 75, 1, function(v)
             Distances.scorpionDist = v
-        end)
-
-        d:Label("Aiku Movement Buffs.")
-        d:Slider("Reflex Tackle Distance", 0, 0, 125, 1, function(v)
-            Distances.reflexDist = v
-        end)
-
-        d:Label("Yukimiya Movement Buffs.")
-        d:Slider("Razor Break Distance", 0, 0, 35, 1, function(v)
-            Distances.razorDist = v
-        end)
-
-        d:Slider("Drag Scissors Distance", 0, 0, 100, 1, function(v)
-            Distances.dragDist = v
-        end)
-
-        d:Label("Kunigami Movement Buffs.")
-        d:Slider("Hero's Instinct Distance", 0, 0, 300, 1, function(v)
-            Distances.instinctDist = v
-        end)
-
-        d:Label("Don Lorenzo Movement Buffs.")
-        d:Slider("Zombie Dribble Distance", 0, 0, 250, 1, function(v)
-            Distances.zombDist = v
-        end)
-
-        d:Label("Sae Movement Buffs.")
-
-        d:Slider("Beautiful Destruction Distance", 0, 0, 33, 1, function(v)
-            Distances.beautifulDist = v
-        end)
-
-        d:Slider("Beautiful Destruction: Side Variant Distance", 0, 0, 25, 1, function(v)
-            Distances.creativeDist = v
-        end)
-
-        d:Slider("Nutmeg: Reflex Distance", 0, 0, 50, 1, function(v)
-            Distances.reflexNutmegDist = v
-        end)
-
-        d:Label("Barou Movement Buffs.")
-        d:Slider("King's Path Distance", 0, 0, 750, 1, function(v)
-            Distances.kingsDist = v
-        end)
-
-        d:Slider("DEVOUR. Distance", 0, 0, 500, 1, function(v)
-            Distances.devourMaxDist = v
-        end)
-
-        d:Label("Nagi Movement Buffs.")
-        d:Slider("Control Distance (Ground Variant)", 0, 0, 30, 1, function(v)
-            Distances.controlVarDist = v
-        end)
-
-        d:Label("Chigiri Movement Buffs.")
-        d:Slider("Mach Cut-In Distance", 0, 0, 200, 1, function(v)
-            Distances.machDist = v
-        end)
-
-        d:Slider("Golden Zone Distance (Req. Ball)", 0, 0, 400, 1, function(v)
-            Distances.goldenDist = v
-        end)
-
-        d:Label("Reo Movement Buffs.")
-        d:Slider("Twin Steps Distance", 0, 0, 75, 1, function(v)
-            Distances.twinStepsDist = v
-        end)
-
-        d:Label("Hiori Movement Buffs.")
-
-        d:Slider("Glacial Cut (Variant: Forward) Distance", 0, 0, 175, 1, function(v)
-            Distances.glacialDist = v
-        end)
-
-        d:Label("Kurona Movement Buffs.")
-        d:Slider("Close Quarter Dribble Distance", 0, 0, 250, 1, function(v)
-            Distances.quarterDist = v
-        end)
-
-        d:Slider("Go-Go! Distance", 0, 0, 100, 1, function(v)
-            Distances.gogoDist = v
-        end)
-
-        d:Slider("Guard Dog Distance", 0, 0, 100, 1, function(v)
-            Distances.guardDist = v
-        end)
-
-        d:Slider("Speedy Turn Distance", 0, 0, 250, 1, function(v)
-            Distances.speedyDist = v
-        end)
-
-        d:Slider("Fetch Distance", 0, 0, 100, 1, function(v)
-            Distances.fetchDist = v
-        end)
-
-        d:Label("Karasu Movement Buffs.")
-        d:Slider("Silent Steal Distance", 0, 0, 125, 1, function(v)
-            Distances.silentDist = v
-        end)
-
-        d:Slider("Corvine Distance", 0, 0, 100, 1, function(v)
-            Distances.corvineDist = v
-        end)
-
-        d:Label("Otoya Movement Buffs.")
-
-        d:Slider("Kusarigama Distance", 0, 0, 75, 1, function(v)
-            Distances.kusarDist = v
-        end)
-
-        d:Slider("Shadow Step Distance", 0, 0, 50, 1, function(v)
-            Distances.shadowDist = v
         end)
 
     end)
@@ -8571,42 +8906,55 @@ task.spawn(function()
             end
         end
 
-        local distanceFolder = maintab:Folder("EvoHub Distance Increase (RE).", Color3.fromRGB(24, 255, 228), true)
-        distanceFolder:Label("74 recovered source configs. Opt-in so old working movement buffs do not double-trigger.")
-        distanceFolder:Label("The original EvoHub converts source Distance to actual travel with x6.")
+        local BASE_MOVE_UI_NAMES = {
+            ["Tackle Distance"] = "Tackle Distance Increase",
+            ["Dash Distance"] = "Dash Distance Increase",
+            ["Side Dash Distance Increase"] = "Side Dash Distance Increase",
+        }
 
-        local distanceScale = 1
-        local function refreshDistances()
-            for buff, baseDistance in pairs(sourceDistance) do
-                buff.distance = math.clamp(baseDistance * distanceScale, 0.1, buff.maxDistance or 15)
-            end
-        end
+        local characterOrder = {
+            "Base Moves", "Isagi", "Chigiri", "Bachira", "Nagi", "Shidou",
+            "Kurona", "Kiyora", "Otoya", "Kunigami", "Yukimiya", "Barou",
+            "Karasu", "Aiku", "Sae", "Reo", "Don Lorenzo", "Rin", "Kaiser",
+            "Nel Isagi", "Hiori",
+        }
 
-        distanceFolder:Slider("RE Distance Scale", 1, 0.25, 2.5, 0.05, function(value)
-            distanceScale = value
-            refreshDistances()
-        end)
-
-        local groupNames = {}
-        for name in pairs(movementGroups) do table.insert(groupNames, name) end
-        table.sort(groupNames)
-
-        for _, characterName in ipairs(groupNames) do
+        for _, characterName in ipairs(characterOrder) do
             local group = movementGroups[characterName]
-            distanceFolder:Toggle(characterName .. " Distance Buffs", function(value)
-                group.enabled = value == true
-                for _, buff in ipairs(group.buffs) do
-                    buff.enabled = group.enabled
-                end
-            end)
-        end
+            if group then
+                local folder = playerUI:FolderInGroup(
+                    characterName,
+                    "Distance Increase.",
+                    Color3.fromRGB(24, 255, 228),
+                    true,
+                    "Player"
+                )
 
-        distanceFolder:Button("Disable All RE Distance Buffs", "Turns off all 74 recovered distance configs.", function()
-            for _, group in pairs(movementGroups) do
-                group.enabled = false
-                for _, buff in ipairs(group.buffs) do buff.enabled = false end
+                for _, buff in ipairs(group.buffs) do
+                    local visible = characterName ~= "Base Moves"
+                        or BASE_MOVE_UI_NAMES[buff.name] ~= nil
+
+                    if visible then
+                        local displayName = BASE_MOVE_UI_NAMES[buff.name] or buff.name
+
+                        folder:Toggle(displayName, function(value)
+                            buff.enabled = value == true
+                        end)
+
+                        folder:Slider(
+                            displayName .. " Distance",
+                            buff.distance,
+                            0.1,
+                            buff.maxDistance or 10,
+                            0.1,
+                            function(value)
+                                buff.distance = value
+                            end
+                        )
+                    end
+                end
             end
-        end)
+        end
 
         local defensive = createAutoDefensive({
             players = Players,
@@ -8617,127 +8965,117 @@ task.spawn(function()
             core = core,
         })
 
-        local defenseFolder = maintab2:Folder("EvoHub Auto Defensive (RE).", Color3.fromRGB(24, 255, 228), true)
-        defenseFolder:Label("Recovered shared engine: Aiku / Kaiser / Don Lorenzo / NEL Isagi / Hiori.")
-
-        local function prefixed(variant, suffix)
-            return variant.name .. " - " .. suffix
+        local function variantPage(variant)
+            if variant.name == "Auto Venom Trap" then
+                return "Aiku", "Auto Venom Trap"
+            elseif variant.name == "Kaiser Auto Volley" then
+                return "Kaiser", "Auto Volley"
+            elseif variant.name == "Auto Defense" then
+                return "Don Lorenzo", "Auto Defense"
+            elseif variant.name == "Nel Isagi Auto Volley" or variant.name == "NEL Isagi Auto Volley" then
+                return "Nel Isagi", "Auto Volley"
+            elseif variant.name == "Auto Frost Guard" then
+                return "Hiori", "Auto Frost Guard"
+            end
+            return nil, nil
         end
 
         for _, variant in ipairs(defensive.Variants) do
-            defenseFolder:Label(variant.name .. ".")
+            local pageName, sectionName = variantPage(variant)
+            if pageName then
+                local folder = playerUI:FolderInGroup(
+                    pageName,
+                    sectionName .. ".",
+                    Color3.fromRGB(24, 255, 228),
+                    true,
+                    "Player"
+                )
 
-            defenseFolder:Toggle(variant.name, function(value)
-                variant.enabled = value == true
-                defensive:CheckAnyEnabled()
-            end)
-
-            if variant.minBallSpeed ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Min Ball Speed"), variant.minBallSpeed, 0.1, 300, 0.1, function(value)
-                    variant.minBallSpeed = value
+                folder:Toggle(sectionName, function(value)
+                    variant.enabled = value == true
+                    defensive:CheckAnyEnabled()
                 end)
-            end
 
-            if variant.useJump ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Use Jump"), nil, variant.useJump, function(value)
-                    variant.useJump = value == true
-                end)
-            end
-
-            if variant.animPredict ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Animation Predict"), nil, variant.animPredict, function(value)
-                    variant.animPredict = value == true
-                end)
-            end
-
-            if variant.useImpact ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Impact Predict"), nil, variant.useImpact, function(value)
-                    variant.useImpact = value == true
-                end)
-            end
-
-            if variant.useFlick ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Flick"), nil, variant.useFlick, function(value)
-                    variant.useFlick = value == true
-                end)
-            end
-
-            if variant.goalboxOnly ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Goalbox Only"), nil, variant.goalboxOnly, function(value)
-                    variant.goalboxOnly = value == true
-                end)
-            end
-
-            if variant.ownGoalboxOnly ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Only In Our Goalbox"), nil, variant.ownGoalboxOnly, function(value)
-                    variant.ownGoalboxOnly = value == true
-                end)
-            end
-
-            if variant.enemyGoalboxOnly ~= nil then
-                defenseFolder:Toggle(prefixed(variant, "Only Near Enemy Goalbox"), nil, variant.enemyGoalboxOnly, function(value)
-                    variant.enemyGoalboxOnly = value == true
-                end)
-            end
-
-            if variant.targetTeam ~= nil then
-                defenseFolder:Dropdown(prefixed(variant, "Target Team"), {"enemy", "teammate", "both"}, function(value)
-                    variant.targetTeam = value
-                end)
-            end
-
-            if variant.predictWindow ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Predict Window"), variant.predictWindow, 0.1, 1.5, 0.05, function(value)
-                    variant.predictWindow = value
-                end)
-            end
-
-            if variant.skill3MinHeight ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill3 Min Height"), variant.skill3MinHeight, 0, 20, 0.5, function(value)
-                    variant.skill3MinHeight = value
-                end)
-            end
-
-            if variant.skill2MinHeight ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill2 Min Height"), variant.skill2MinHeight, 0, 20, 0.5, function(value)
-                    variant.skill2MinHeight = value
-                end)
-            end
-
-            if variant.skill3MaxDist ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill3 Max Distance"), variant.skill3MaxDist, 10, 150, 1, function(value)
-                    variant.skill3MaxDist = value
-                end)
-            end
-
-            if variant.skill3MaxVert ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill3 Max Vertical"), variant.skill3MaxVert, 10, 200, 1, function(value)
-                    variant.skill3MaxVert = value
-                end)
-            end
-
-            if variant.skill4MinHeight ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill4 Min Height"), variant.skill4MinHeight, 0, 20, 0.5, function(value)
-                    variant.skill4MinHeight = value
-                end)
-            end
-
-            if variant.skill4MaxDist ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill4 Max Distance"), variant.skill4MaxDist, 10, 150, 1, function(value)
-                    variant.skill4MaxDist = value
-                end)
-            end
-
-            if variant.skill4MaxVert ~= nil then
-                defenseFolder:Slider(prefixed(variant, "Skill4 Max Vertical"), variant.skill4MaxVert, 10, 200, 1, function(value)
-                    variant.skill4MaxVert = value
-                end)
-            end
-
-            if variant.preferSkill ~= nil then
-                defenseFolder:Dropdown(prefixed(variant, "Prefer Skill"), {"Skill3", "Skill4"}, function(value)
-                    variant.preferSkill = value
-                end)
+                if variant.goalboxOnly ~= nil then
+                    folder:Toggle("Goalbox Only", nil, variant.goalboxOnly, function(value)
+                        variant.goalboxOnly = value == true
+                    end)
+                end
+                if variant.enemyGoalboxOnly ~= nil then
+                    folder:Toggle("Only near/in Enemy Goalbox", nil, variant.enemyGoalboxOnly, function(value)
+                        variant.enemyGoalboxOnly = value == true
+                    end)
+                end
+                if variant.ownGoalboxOnly ~= nil then
+                    folder:Toggle("Only near/in Goalbox", nil, variant.ownGoalboxOnly, function(value)
+                        variant.ownGoalboxOnly = value == true
+                    end)
+                end
+                if variant.animPredict ~= nil then
+                    folder:Toggle("Animation Predict", nil, variant.animPredict, function(value)
+                        variant.animPredict = value == true
+                    end)
+                end
+                if variant.useJump ~= nil then
+                    folder:Toggle("Use Jump", nil, variant.useJump, function(value)
+                        variant.useJump = value == true
+                    end)
+                end
+                if variant.useFlick ~= nil then
+                    folder:Toggle("Flick", nil, variant.useFlick, function(value)
+                        variant.useFlick = value == true
+                    end)
+                end
+                if variant.minBallSpeed ~= nil then
+                    folder:Slider("Min Ball Speed", variant.minBallSpeed, 0.1, 300, 0.1, function(value)
+                        variant.minBallSpeed = value
+                    end)
+                end
+                if variant.predictWindow ~= nil then
+                    folder:Slider("Predict Window", variant.predictWindow, 0.1, 1.5, 0.05, function(value)
+                        variant.predictWindow = value
+                    end)
+                end
+                if variant.skill3MinHeight ~= nil then
+                    folder:Slider("Skill 3 Min Height", variant.skill3MinHeight, 0, 20, 0.5, function(value)
+                        variant.skill3MinHeight = value
+                    end)
+                end
+                if variant.skill2MinHeight ~= nil then
+                    folder:Slider("Skill 2 Min Height", variant.skill2MinHeight, 0, 20, 0.5, function(value)
+                        variant.skill2MinHeight = value
+                    end)
+                end
+                if variant.skill3MaxDist ~= nil then
+                    folder:Slider("Skill 3 Max Distance", variant.skill3MaxDist, 10, 150, 1, function(value)
+                        variant.skill3MaxDist = value
+                    end)
+                end
+                if variant.skill3MaxVert ~= nil then
+                    folder:Slider("Skill 3 Max Vertical", variant.skill3MaxVert, 10, 200, 1, function(value)
+                        variant.skill3MaxVert = value
+                    end)
+                end
+                if variant.skill4MinHeight ~= nil then
+                    folder:Slider("Skill 4 Min Height", variant.skill4MinHeight, 0, 20, 0.5, function(value)
+                        variant.skill4MinHeight = value
+                    end)
+                end
+                if variant.skill4MaxDist ~= nil then
+                    folder:Slider("Skill 4 Max Distance", variant.skill4MaxDist, 10, 150, 1, function(value)
+                        variant.skill4MaxDist = value
+                    end)
+                end
+                if variant.skill4MaxVert ~= nil then
+                    folder:Slider("Skill 4 Max Vertical", variant.skill4MaxVert, 10, 200, 1, function(value)
+                        variant.skill4MaxVert = value
+                    end)
+                end
+                if variant.preferSkill ~= nil then
+                    folder:Dropdown("Prefer", {"Skill3", "Skill4"}, function(value)
+                        variant.preferSkill = value
+                    end)
+                end
             end
         end
 
