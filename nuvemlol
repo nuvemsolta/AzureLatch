@@ -506,7 +506,24 @@ local Luna = (function()
         setAccent(sidebarList, "ScrollBarImageColor3")
         local sidebarLayout = list(sidebarList, 4, false)
         local function refreshSidebarCanvas()
-            sidebarList.CanvasSize = UDim2.new(0, 0, 0, math.max(0, sidebarLayout.AbsoluteContentSize.Y + 8))
+            local height = math.max(0, sidebarLayout.AbsoluteContentSize.Y + 8)
+
+            for _, child in ipairs(sidebarList:GetChildren()) do
+                if child:IsA("GuiObject") and child.Visible then
+                    local bottom =
+                        child.AbsolutePosition.Y
+                        - sidebarList.AbsolutePosition.Y
+                        + sidebarList.CanvasPosition.Y
+                        + child.AbsoluteSize.Y
+                        + 8
+
+                    if bottom > height then
+                        height = bottom
+                    end
+                end
+            end
+
+            sidebarList.CanvasSize = UDim2.new(0, 0, 0, height)
         end
         sidebarLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshSidebarCanvas)
 
@@ -552,9 +569,14 @@ local Luna = (function()
                 end
 
                 if mode == "scroll" then
+                    local canvasHeight = scroller.CanvasSize.Y.Offset
+                    if canvasHeight <= 0 then
+                        canvasHeight = scroller.AbsoluteCanvasSize.Y
+                    end
+
                     local maxY = math.max(
                         0,
-                        scroller.AbsoluteCanvasSize.Y - scroller.AbsoluteSize.Y
+                        canvasHeight - scroller.AbsoluteSize.Y
                     )
                     scroller.CanvasPosition = Vector2.new(
                         scroller.CanvasPosition.X,
@@ -574,6 +596,13 @@ local Luna = (function()
         end
 
         installTouchPan(sidebarList)
+
+        task.spawn(function()
+            while gui and gui.Parent and sidebarList and sidebarList.Parent do
+                refreshSidebarCanvas()
+                task.wait(0.10)
+            end
+        end)
 
         local info = create("Frame", {
             Name = "Info",
@@ -673,6 +702,10 @@ local Luna = (function()
                 refreshSidebarCanvas()
             end)
             task.delay(0.05, function()
+                if tab.RefreshLayout then tab.RefreshLayout() end
+                refreshSidebarCanvas()
+            end)
+            task.delay(0.20, function()
                 if tab.RefreshLayout then tab.RefreshLayout() end
                 refreshSidebarCanvas()
             end)
@@ -1082,16 +1115,57 @@ local Luna = (function()
             }
             window.Tabs[#window.Tabs + 1] = tab
 
+            local function measuredColumnHeight(column, layout)
+                local height = math.max(0, layout.AbsoluteContentSize.Y)
+
+                for _, child in ipairs(column:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible then
+                        local bottom =
+                            child.AbsolutePosition.Y
+                            - column.AbsolutePosition.Y
+                            + child.AbsoluteSize.Y
+
+                        if bottom > height then
+                            height = bottom
+                        end
+                    end
+                end
+
+                return height
+            end
+
             local function refreshColumns()
-                local leftHeight = leftLayout.AbsoluteContentSize.Y
-                local rightHeight = rightLayout.AbsoluteContentSize.Y
+                local leftHeight = measuredColumnHeight(leftColumn, leftLayout)
+                local rightHeight = measuredColumnHeight(rightColumn, rightLayout)
                 local height = math.max(leftHeight, rightHeight)
+
                 columns.Size = UDim2.new(1, -6, 0, height)
-                page.CanvasSize = UDim2.new(0, 0, 0, math.max(0, height + 18))
+
+                -- Extra bottom room is intentional: on mobile the final row must be
+                -- fully draggable above the bottom edge, not merely barely visible.
+                local canvasHeight = math.max(0, height + 42)
+                page.CanvasSize = UDim2.new(0, 0, 0, canvasHeight)
+
+                local maxY = math.max(0, canvasHeight - page.AbsoluteSize.Y)
+                if page.CanvasPosition.Y > maxY then
+                    page.CanvasPosition = Vector2.new(0, maxY)
+                end
             end
             tab.RefreshLayout = refreshColumns
             leftLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
             rightLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
+
+            -- Some mobile executors do not reliably fire/propagate AutomaticSize
+            -- changes for descendants. Re-measure the ACTUAL rendered geometry
+            -- while this page is visible. This makes the bottom scroll limit deterministic.
+            task.spawn(function()
+                while gui and gui.Parent and page and page.Parent do
+                    if page.Visible then
+                        refreshColumns()
+                    end
+                    task.wait(0.10)
+                end
+            end)
 
             function tab:EnsureGroup(groupName)
                 groupName = tostring(groupName or self.DefaultGroup or self.Name)
@@ -2139,7 +2213,7 @@ local Luna = (function()
     return Library
 end)()
 
--- V10: exact section placement + robust mobile vertical pan + recovered Animation Predict
+-- V11: deterministic geometry-based scroll bounds + V10 organization
 local Window = Luna:CreateWindow({
     Name = "evohub",
     Subtitle = "alpha",
