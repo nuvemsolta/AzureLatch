@@ -648,6 +648,49 @@ local Luna = (function()
             ZIndex = 2,
         }, main)
 
+        -- V13: exact EvoHub runtime hierarchy.
+        -- The real library has ONE shared ScrollingFrame for all tabs/pages.
+        local contentScroll = create("ScrollingFrame", {
+            Name = "ContentScroll",
+            Position = UDim2.fromOffset(0, 8),
+            Size = UDim2.new(1, 0, 1, -8),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            CanvasPosition = Vector2.new(0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            Active = false,
+            Selectable = true,
+            ScrollingDirection = Enum.ScrollingDirection.XY,
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Theme.Accent,
+            ClipsDescendants = true,
+            ZIndex = 3,
+        }, content)
+        setAccent(contentScroll, "ScrollBarImageColor3")
+
+        local sharedLeftColumn = create("Frame", {
+            Name = "LeftColumn",
+            Position = UDim2.fromOffset(0, 0),
+            Size = UDim2.new(0.48, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 3,
+        }, contentScroll)
+        local sharedLeftLayout = list(sharedLeftColumn, 10, false)
+
+        local sharedRightColumn = create("Frame", {
+            Name = "RightColumn",
+            Position = UDim2.new(0.52, 0, 0, 0),
+            Size = UDim2.new(0.48, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            ZIndex = 3,
+        }, contentScroll)
+        local sharedRightLayout = list(sharedRightColumn, 10, false)
+
         local window = {
             Gui = gui,
             Main = main,
@@ -656,6 +699,9 @@ local Luna = (function()
             Sidebar = sidebar,
             SidebarList = sidebarList,
             Content = content,
+            ContentScroll = contentScroll,
+            SharedLeftColumn = sharedLeftColumn,
+            SharedRightColumn = sharedRightColumn,
             SearchBox = searchBox,
             UIScale = scale,
             Tabs = {},
@@ -688,32 +734,19 @@ local Luna = (function()
         local function applyGroup(tab, groupName)
             if not tab or not groupName then return end
             tab.SelectedGroup = groupName
-            for _, section in ipairs(tab.Sections) do
-                section.Frame.Visible = section.Group == groupName
-            end
-            if tab.Page then
-                tab.Page.CanvasPosition = Vector2.new(0, 0)
-            end
-            setSidebarSelected(groupName)
 
-            -- Visibility changes do not always refresh AutomaticSize fast enough
-            -- on mobile executors. Force the content canvas after layout settles.
-            task.defer(function()
-                if tab.RefreshLayout then tab.RefreshLayout() end
-                refreshSidebarCanvas()
-            end)
-            task.delay(0.05, function()
-                if tab.RefreshLayout then tab.RefreshLayout() end
-                refreshSidebarCanvas()
-            end)
-            task.delay(0.20, function()
-                if tab.RefreshLayout then tab.RefreshLayout() end
-                refreshSidebarCanvas()
-            end)
-            task.delay(0.50, function()
-                if tab.RefreshLayout then tab.RefreshLayout() end
-                refreshSidebarCanvas()
-            end)
+            -- Original EvoHub keeps every section inside the same two columns and
+            -- switches pages only by changing Visible.
+            for _, otherTab in ipairs(window.Tabs) do
+                for _, section in ipairs(otherTab.Sections) do
+                    section.Frame.Visible =
+                        (otherTab == tab and section.Group == groupName)
+                end
+            end
+
+            contentScroll.CanvasPosition = Vector2.new(0, 0)
+            setSidebarSelected(groupName)
+            task.defer(refreshSidebarCanvas)
         end
 
         local function addSidebarEntry(tab, groupName)
@@ -790,7 +823,6 @@ local Luna = (function()
 
             for _, other in ipairs(window.Tabs) do
                 local selected = other == tab
-                other.Page.Visible = selected
                 if selected then
                     other.TabLine.Visible = true
                 end
@@ -817,6 +849,8 @@ local Luna = (function()
                 end
             end
 
+            contentScroll.Visible = true
+            contentScroll.CanvasPosition = Vector2.new(0, 0)
             rebuildSidebar(tab)
             searchBox.Text = ""
             searchResults.Visible = false
@@ -1050,56 +1084,14 @@ local Luna = (function()
             }, tabButton)
             setAccent(lineFrame)
 
-            local page = create("ScrollingFrame", {
-                Name = tabName,
-                Position = UDim2.fromOffset(0, 8),
-                Size = UDim2.new(1, 0, 1, -8),
-                BackgroundTransparency = 1,
-                BorderSizePixel = 0,
-                CanvasSize = UDim2.new(),
-                AutomaticCanvasSize = Enum.AutomaticSize.None,
-                Active = true,
-                ScrollingEnabled = true,
-                ScrollingDirection = Enum.ScrollingDirection.Y,
-                ElasticBehavior = Enum.ElasticBehavior.Always,
-                ScrollBarThickness = 3,
-                ScrollBarImageColor3 = Theme.Accent,
-                Visible = false,
-                ZIndex = 3,
-            }, content)
-            setAccent(page, "ScrollBarImageColor3")
-
-            local pageList = list(page, 8, false)
-            pageList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-            padding(page, 0, 6, 0, 8)
-            installTouchPan(page)
-
-            local columns = create("Frame", {
-                Name = "Columns",
-                Size = UDim2.new(1, -6, 0, 0),
-                BackgroundTransparency = 1,
-                LayoutOrder = 0,
-                ZIndex = 3,
-            }, page)
-
-            local leftColumn = create("Frame", {
-                Name = "LeftColumn",
-                Size = UDim2.new(0.48, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundTransparency = 1,
-                ZIndex = 3,
-            }, columns)
-            local leftLayout = list(leftColumn, 10, false)
-
-            local rightColumn = create("Frame", {
-                Name = "RightColumn",
-                Position = UDim2.new(0.52, 0, 0, 0),
-                Size = UDim2.new(0.48, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundTransparency = 1,
-                ZIndex = 3,
-            }, columns)
-            local rightLayout = list(rightColumn, 10, false)
+            -- V13: all tabs share the original EvoHub ContentScroll/columns.
+            -- There is intentionally NO nested/per-tab ScrollingFrame here.
+            local page = contentScroll
+            local columns = contentScroll
+            local leftColumn = sharedLeftColumn
+            local leftLayout = sharedLeftLayout
+            local rightColumn = sharedRightColumn
+            local rightLayout = sharedRightLayout
 
             local tab = {
                 Name = tabName,
@@ -1120,81 +1112,13 @@ local Luna = (function()
             }
             window.Tabs[#window.Tabs + 1] = tab
 
-            local function measuredVisibleSectionBottom(column, layout)
-                local height = math.max(0, layout.AbsoluteContentSize.Y)
-
-                for _, section in ipairs(column:GetChildren()) do
-                    if section:IsA("GuiObject") and section.Visible then
-                        local sectionBottom =
-                            section.AbsolutePosition.Y
-                            - column.AbsolutePosition.Y
-                            + section.AbsoluteSize.Y
-
-                        if sectionBottom > height then
-                            height = sectionBottom
-                        end
-
-                        -- IMPORTANT:
-                        -- Delta/mobile sometimes reports an AutomaticSize section frame
-                        -- shorter than the controls actually rendered inside it.
-                        -- Measure every visible descendant, so the last slider/keybind
-                        -- still contributes to the scroll range.
-                        for _, desc in ipairs(section:GetDescendants()) do
-                            if desc:IsA("GuiObject") and desc.Visible then
-                                local bottom =
-                                    desc.AbsolutePosition.Y
-                                    - column.AbsolutePosition.Y
-                                    + desc.AbsoluteSize.Y
-
-                                if bottom > height then
-                                    height = bottom
-                                end
-                            end
-                        end
-                    end
-                end
-
-                return height
-            end
-
+            -- Native EvoHub behavior: columns use AutomaticSize.Y and the ONE
+            -- ContentScroll uses AutomaticCanvasSize.Y. Do not manually calculate
+            -- CanvasSize; that was the source of the previous V9-V12 mismatch.
             local function refreshColumns()
-                local leftHeight = measuredVisibleSectionBottom(leftColumn, leftLayout)
-                local rightHeight = measuredVisibleSectionBottom(rightColumn, rightLayout)
-                local height = math.max(leftHeight, rightHeight)
-
-                columns.Size = UDim2.new(1, -6, 0, height)
-
-                -- Give one viewport of guaranteed trailing room.
-                -- This means the final rendered control can always be pulled fully
-                -- above the bottom edge even if Roblox under-reports a parent size.
-                local trailingRoom = math.max(80, page.AbsoluteSize.Y)
-                local canvasHeight = math.max(
-                    page.AbsoluteSize.Y + 1,
-                    height + trailingRoom
-                )
-
-                page.CanvasSize = UDim2.new(0, 0, 0, canvasHeight)
-
-                local maxY = math.max(0, canvasHeight - page.AbsoluteSize.Y)
-                if page.CanvasPosition.Y > maxY then
-                    page.CanvasPosition = Vector2.new(0, maxY)
-                end
+                contentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
             end
             tab.RefreshLayout = refreshColumns
-            leftLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
-            rightLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshColumns)
-
-            -- Some mobile executors do not reliably fire/propagate AutomaticSize
-            -- changes for descendants. Re-measure the ACTUAL rendered geometry
-            -- while this page is visible. This makes the bottom scroll limit deterministic.
-            task.spawn(function()
-                while gui and gui.Parent and page and page.Parent do
-                    if page.Visible then
-                        refreshColumns()
-                    end
-                    task.wait(0.05)
-                end
-            end)
 
             function tab:EnsureGroup(groupName)
                 groupName = tostring(groupName or self.DefaultGroup or self.Name)
@@ -1262,7 +1186,9 @@ local Luna = (function()
                     Group = groupName,
                 }
                 self.Sections[#self.Sections + 1] = section
-                sectionFrame.Visible = (self.SelectedGroup == nil or self.SelectedGroup == groupName)
+                sectionFrame.Visible =
+                    (selectedTab == self)
+                    and (self.SelectedGroup == nil or self.SelectedGroup == groupName)
 
                 function section:CreateLabel(controlSettings)
                     controlSettings = type(controlSettings) == "table" and controlSettings or { Text = tostring(controlSettings or "") }
@@ -2242,7 +2168,7 @@ local Luna = (function()
     return Library
 end)()
 
--- V12: deepest-visible-descendant scroll bounds + V10 organization
+-- V13: ORIGINAL single-ContentScroll architecture + organized features
 local Window = Luna:CreateWindow({
     Name = "evohub",
     Subtitle = "alpha",
