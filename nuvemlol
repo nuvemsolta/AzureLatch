@@ -1511,23 +1511,21 @@ ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.",
     end)
 end)
 
--- Auto Counter Original+ v1
--- Based on the user's original autoparry: AnimationPlayed -> Heartbeat loop -> FireServer.
--- Isolated to avoid Luau's per-function local limit.
+--========================================================
+-- AUTO COUNTER - attached core integration (V5)
+-- Adapted from azure_latch_auto_counter.txt into Luna UI.
+-- Keeps the proven AnimationPlayed -> Heartbeat -> FireServer design.
+-- Removed legacy auto-detect/debug UI is intentionally not reintroduced.
+--========================================================
 task.spawn(function()
     local bootOK, bootError = pcall(function()
-        local autodrib = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
-        autodrib:Label("Auto Counter.")
+        local folder = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
+        folder:Label("Auto Counter: attached core integrated into the hub.")
 
         local PlayersService = game:GetService("Players")
-        local RunServiceService = game:GetService("RunService")
-        local StarterGuiService = game:GetService("StarterGui")
-        local UserInputServiceService = game:GetService("UserInputService")
         local ReplicatedStorageService = game:GetService("ReplicatedStorage")
-
+        local RunServiceService = game:GetService("RunService")
         local localplayer = PlayersService.LocalPlayer
-        local byteNetReliable = ReplicatedStorageService:WaitForChild("ByteNetReliable")
-        local counterPacket = buffer.fromstring(buffers["base"])
         local env = (getgenv and getgenv()) or _G
 
         if type(env.CeleronCounterRuntime) == "table"
@@ -1535,10 +1533,13 @@ task.spawn(function()
             pcall(env.CeleronCounterRuntime.destroy)
         end
 
-        local autoSkillState = {
+        local state = {
             enabled = true,
-            suppressNotifs = false,
-
+            counterChance = 100,
+            useClosestTeammate = false,
+            range = 65,
+            fireRate = 0.05,
+            playerCooldown = 0.33,
             autoSkills = {
                 toggleDribble = "dribble",
                 toggleCounter1 = "skill1",
@@ -1548,7 +1549,6 @@ task.spawn(function()
                 toggleCounter5 = "skill5",
                 toggleTSpecial = "Tspecialer",
             },
-
             toggleDribble = false,
             toggleCounter1 = false,
             toggleCounter2 = false,
@@ -1556,48 +1556,23 @@ task.spawn(function()
             toggleCounter4 = false,
             toggleCounter5 = false,
             toggleTSpecial = false,
-
-            keybindsEnabled = false,
-            showActiveCounters = false,
-            useClosestTeammate = false,
-
-            -- One simple setting.
-            range = 12,
-
-            -- Original script used 0.05 / 0.33. We keep the same loop design,
-            -- but allow a quicker retry while the steal animation is still active.
-            fireRate = 0.035,
-            playerCooldown = 0.08,
-
-            cooldowns = {},
-            connections = {},
-            playerCharacterConnections = {},
             destroyed = false,
+            players = {},
+            globalConnections = {},
         }
 
-        local runtime = {version = "OriginalPlus-v1"}
+        -- The attachment used the first two IDs. Keep the hub's already-known
+        -- extra hostile steal IDs too so V5 does not regress detection coverage.
+        local hostileAnimations = {
+            ["109744655458082"] = true,
+            ["113088324958896"] = true,
+            ["96801747244950"] = true,
+            ["130345228612384"] = true,
+            ["82417661349987"] = true,
+        }
+
+        local runtime = {version = "AttachedCore-V5", state = state}
         env.CeleronCounterRuntime = runtime
-
-        -- Celeron's original hub already knew these five steal/attack animations.
-        local stealAnimations = {
-            ["109744655458082"] = "Tackle",
-            ["113088324958896"] = "Reflex Tackle",
-            ["96801747244950"] = "Steal 1",
-            ["130345228612384"] = "Steal 2",
-            ["82417661349987"] = "Hero's Instinct",
-        }
-
-        local function notify(title, message, duration)
-            if autoSkillState.suppressNotifs then return end
-
-            pcall(function()
-                StarterGuiService:SetCore("SendNotification", {
-                    Title = title,
-                    Text = message,
-                    Duration = duration or 2,
-                })
-            end)
-        end
 
         local function disconnect(conn)
             if typeof(conn) == "RBXScriptConnection" then
@@ -1605,10 +1580,13 @@ task.spawn(function()
             end
         end
 
-        local function hasball()
+        local function getRoot(char)
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+
+        local function hasBall()
             local char = localplayer.Character
             if not char then return false end
-
             return char:FindFirstChild("Ball") ~= nil
                 or char:FindFirstChild("Football") ~= nil
                 or char:GetAttribute("HasBall") == true
@@ -1616,401 +1594,231 @@ task.spawn(function()
 
         local function teamKey(plr)
             if not plr then return nil end
-
             local custom = plr:GetAttribute("team") or plr:GetAttribute("Team")
             if custom ~= nil and tostring(custom) ~= "" then
                 return "attr:" .. tostring(custom)
             end
-
             if plr.Team then
                 return "team:" .. tostring(plr.Team.Name)
             end
-
             return nil
         end
 
-        local function isEnemy(plr)
-            if not plr or plr == localplayer then return false end
-
+        local function isTeammate(plr)
             local mine = teamKey(localplayer)
             local theirs = teamKey(plr)
-
             if mine and theirs then
-                return mine ~= theirs
+                return mine == theirs
             end
-
-            -- Same fallback behavior as the original script when custom team
-            -- information is unavailable.
-            return plr.Team ~= nil
-                and localplayer.Team ~= nil
-                and plr.Team ~= localplayer.Team
+            return localplayer.Team ~= nil and plr.Team == localplayer.Team
         end
 
-        local function anyCounterEnabled()
-            for key in pairs(autoSkillState.autoSkills) do
-                if autoSkillState[key] then return true end
+        local function getUseBuffer()
+            -- Prefer the hub's already initialized exact buffer.
+            if buffers and type(buffers["base"]) == "string" and buffers["base"] ~= "" then
+                local ok, value = pcall(buffer.fromstring, buffers["base"])
+                if ok then return value end
             end
-            return false
+
+            -- RE core fallback: discover current bytenet_use packet id.
+            local packetId = 30
+            pcall(function()
+                local storage = ReplicatedStorageService:FindFirstChild("BytenetStorage")
+                local networking = storage and storage:FindFirstChild("Networking")
+                if networking and networking:IsA("StringValue") then
+                    local found = networking.Value:match('"bytenet_use"%s*:%s*(%d+)')
+                    if found then packetId = tonumber(found) or packetId end
+                end
+            end)
+            return buffer.fromstring(string.char(packetId) .. "\1")
         end
 
         local function getClosestTeammate()
-            local character = localplayer.Character
-            local root = character and character:FindFirstChild("HumanoidRootPart")
+            local root = getRoot(localplayer.Character)
             if not root then return nil end
 
-            local myTeam = teamKey(localplayer)
-            if not myTeam then return nil end
-
-            local closest = nil
-            local closestDistSq = math.huge
-
+            local closest, best = nil, math.huge
             for _, plr in ipairs(PlayersService:GetPlayers()) do
-                if plr ~= localplayer
-                    and teamKey(plr) == myTeam
-                    and plr.Character then
-
-                    local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-
-                    if hrp then
-                        local delta = root.Position - hrp.Position
-                        local distSq = delta:Dot(delta)
-
-                        if distSq < closestDistSq then
-                            closestDistSq = distSq
-                            closest = plr
+                if plr ~= localplayer and isTeammate(plr) then
+                    local other = getRoot(plr.Character)
+                    if other then
+                        local dist = (root.Position - other.Position).Magnitude
+                        if dist < best then
+                            closest, best = plr, dist
                         end
                     end
                 end
             end
-
             return closest
         end
 
         local function fireSkill(skillName, targetPlayer)
-            if not hasball() then
-                return false
-            end
+            if not hasBall() then return false end
+            local remote = ReplicatedStorageService:FindFirstChild("ByteNetReliable")
+            if not remote then return false end
 
             local payload
-
-            if autoSkillState.useClosestTeammate
-                and targetPlayer
-                and targetPlayer.Character then
-
+            if state.useClosestTeammate and targetPlayer and targetPlayer.Character then
                 payload = {{skillName, targetPlayer.Character}}
             else
                 payload = {{skillName}}
             end
 
             local ok = pcall(function()
-                byteNetReliable:FireServer(counterPacket, payload)
+                remote:FireServer(getUseBuffer(), payload)
             end)
-
             return ok
         end
 
-        local toggleKeys = {
-            "toggleCounter1",
-            "toggleCounter2",
-            "toggleCounter3",
-            "toggleCounter4",
-            "toggleCounter5",
+        local counterKeys = {
+            "toggleCounter1", "toggleCounter2", "toggleCounter3",
+            "toggleCounter4", "toggleCounter5", "toggleTSpecial", "toggleDribble",
         }
 
-        local function fireSelected()
-            local teammate =
-                autoSkillState.useClosestTeammate
-                and getClosestTeammate()
-                or nil
-
-            local fired = false
-
-            for _, key in ipairs(toggleKeys) do
-                if autoSkillState[key] then
-                    fired = fireSkill(
-                        autoSkillState.autoSkills[key],
-                        teammate
-                    ) or fired
+        local function fireCounters()
+            local teammate = state.useClosestTeammate and getClosestTeammate() or nil
+            for _, key in ipairs(counterKeys) do
+                if state[key] then
+                    fireSkill(state.autoSkills[key], teammate)
                 end
             end
-
-            if autoSkillState.toggleTSpecial then
-                fired = fireSkill(
-                    autoSkillState.autoSkills.toggleTSpecial,
-                    teammate
-                ) or fired
-            end
-
-            if autoSkillState.toggleDribble then
-                fired = fireSkill(
-                    autoSkillState.autoSkills.toggleDribble,
-                    teammate
-                ) or fired
-            end
-
-            return fired
         end
 
-        -- ORIGINAL CORE:
-        -- AnimationPlayed starts one Heartbeat loop. The loop stays alive for
-        -- the entire attack animation and waits until the enemy is inside range.
-        local function monitorAttackAnimator(animator, targetPlayer)
-            local record = autoSkillState.connections[targetPlayer]
-
-            if not record then
-                record = {}
-                autoSkillState.connections[targetPlayer] = record
-            end
-
-            if record.animatorConn then
-                disconnect(record.animatorConn)
-            end
-
-            record.animatorConn =
-                animator.AnimationPlayed:Connect(function(animTrack)
-
-                    if autoSkillState.destroyed
-                        or not autoSkillState.enabled
-                        or not anyCounterEnabled()
-                        or not isEnemy(targetPlayer) then
-                        return
-                    end
-
-                    local animation = animTrack.Animation
-                    local id =
-                        animation
-                        and tostring(animation.AnimationId or ""):match("%d+")
-
-                    local attackName = id and stealAnimations[id]
-                    if not attackName then return end
-
-                    if record.animLoop then
-                        disconnect(record.animLoop)
-                        record.animLoop = nil
-                    end
-
-                    local lastFire = 0
-
-                    local function attempt()
-                        if autoSkillState.destroyed
-                            or not autoSkillState.enabled
-                            or not animTrack.IsPlaying
-                            or not hasball()
-                            or not isEnemy(targetPlayer) then
-                            return false
-                        end
-
-                        local myChar = localplayer.Character
-                        local root =
-                            myChar
-                            and myChar:FindFirstChild("HumanoidRootPart")
-
-                        local targetRoot =
-                            targetPlayer.Character
-                            and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-
-                        if not root or not targetRoot then
-                            return true
-                        end
-
-                        local delta = root.Position - targetRoot.Position
-                        local distSq = delta:Dot(delta)
-
-                        if distSq > autoSkillState.range * autoSkillState.range then
-                            return true
-                        end
-
-                        local t = os.clock()
-
-                        if t - lastFire < autoSkillState.fireRate then
-                            return true
-                        end
-
-                        local previous =
-                            autoSkillState.cooldowns[targetPlayer]
-
-                        if previous
-                            and t - previous < autoSkillState.playerCooldown then
-                            return true
-                        end
-
-                        lastFire = t
-                        autoSkillState.cooldowns[targetPlayer] = t
-
-                        fireSelected()
-                        return true
-                    end
-
-                    -- Point blank gets one check immediately.
-                    attempt()
-
-                    record.animLoop =
-                        RunServiceService.Heartbeat:Connect(function()
-                            if not attempt() then
-                                if record.animLoop then
-                                    disconnect(record.animLoop)
-                                    record.animLoop = nil
-                                end
-
-                            end
-                        end)
-                end)
+        local function clearPlayerRecord(record)
+            if not record then return end
+            disconnect(record.loop)
+            disconnect(record.animator)
+            disconnect(record.charAdded)
+            record.loop, record.animator, record.charAdded = nil, nil, nil
         end
 
-        local function hookCharacter(plr, char)
-            local old = autoSkillState.playerCharacterConnections[plr]
-            if old then
-                disconnect(old)
-                autoSkillState.playerCharacterConnections[plr] = nil
-            end
-
-            local function hookAnimator()
-                local humanoid =
-                    char:FindFirstChildOfClass("Humanoid")
-                    or char:WaitForChild("Humanoid", 6)
-
-                if not humanoid then return end
-
-                local animator =
-                    humanoid:FindFirstChildOfClass("Animator")
-                    or humanoid:WaitForChild("Animator", 4)
-
-                if animator then
-                    monitorAttackAnimator(animator, plr)
-                end
-            end
-
-            hookAnimator()
-
-            autoSkillState.playerCharacterConnections[plr] =
-                char.DescendantAdded:Connect(function(object)
-                    if object:IsA("Animator") then
-                        monitorAttackAnimator(object, plr)
-                    end
-                end)
+        local function removePlayer(plr)
+            local record = state.players[plr]
+            if not record then return end
+            clearPlayerRecord(record)
+            state.players[plr] = nil
         end
 
-        local function setupPlayer(plr)
-            if plr == localplayer then return end
-
-            if plr.Character then
-                hookCharacter(plr, plr.Character)
-            end
-
-            local conn =
-                plr.CharacterAdded:Connect(function(char)
-                    hookCharacter(plr, char)
-                end)
-
-            local record = autoSkillState.connections[plr] or {}
-            autoSkillState.connections[plr] = record
-            record.characterAdded = conn
+        local function isHostileTrack(track)
+            local anim = track and track.Animation
+            local id = anim and tostring(anim.AnimationId):match("%d+")
+            return id ~= nil and hostileAnimations[id] == true
         end
 
-        for _, plr in ipairs(PlayersService:GetPlayers()) do
-            setupPlayer(plr)
-        end
+        local function startCounterLoop(plr, record, track)
+            disconnect(record.loop)
+            record.loop = nil
 
-        local playerAddedConn = PlayersService.PlayerAdded:Connect(setupPlayer)
+            if math.random(1, 100) > state.counterChance then return end
 
-        local playerRemovingConn =
-            PlayersService.PlayerRemoving:Connect(function(plr)
-                local record = autoSkillState.connections[plr]
-
-                if record then
-                    for _, conn in pairs(record) do
-                        disconnect(conn)
-                    end
-
-                    autoSkillState.connections[plr] = nil
-                end
-
-                disconnect(autoSkillState.playerCharacterConnections[plr])
-                autoSkillState.playerCharacterConnections[plr] = nil
-                autoSkillState.cooldowns[plr] = nil
-            end)
-
-        local function createAutoCounter(label, toggleKey)
-            autodrib:Toggle(label, function(value)
-                if autoSkillState.keybindsEnabled then
-                    notify("Auto Counter", "Turn keybinds off first.", 2)
+            local lastPoll = 0
+            local loop
+            loop = RunServiceService.Heartbeat:Connect(function()
+                if state.destroyed or not track.IsPlaying or not hasBall() then
+                    disconnect(loop)
+                    if record.loop == loop then record.loop = nil end
                     return
                 end
 
-                autoSkillState[toggleKey] = value == true
+                if not state.enabled then return end
+
+                local now = os.clock()
+                if now - lastPoll < state.fireRate then return end
+                lastPoll = now
+
+                if record.lastCounter and now - record.lastCounter < state.playerCooldown then
+                    return
+                end
+
+                local mine = getRoot(localplayer.Character)
+                local theirs = getRoot(plr.Character)
+                if not mine or not theirs then return end
+                if (mine.Position - theirs.Position).Magnitude > state.range then return end
+
+                record.lastCounter = now
+                fireCounters()
+            end)
+            record.loop = loop
+        end
+
+        local function watchPlayer(plr)
+            if plr == localplayer or state.players[plr] then return end
+            local record = {generation = 0}
+            state.players[plr] = record
+
+            local function onCharacter(char)
+                record.generation += 1
+                local generation = record.generation
+                disconnect(record.loop)
+                disconnect(record.animator)
+                record.loop, record.animator = nil, nil
+
+                local humanoid = char:WaitForChild("Humanoid", 6)
+                if not humanoid or state.destroyed or generation ~= record.generation then return end
+
+                local animator = humanoid:FindFirstChildOfClass("Animator")
+                    or humanoid:WaitForChild("Animator", 4)
+                if not animator or state.destroyed or generation ~= record.generation then return end
+
+                record.animator = animator.AnimationPlayed:Connect(function(track)
+                    if state.destroyed or isTeammate(plr) or not isHostileTrack(track) then return end
+                    startCounterLoop(plr, record, track)
+                end)
+            end
+
+            record.charAdded = plr.CharacterAdded:Connect(onCharacter)
+            if plr.Character then task.spawn(onCharacter, plr.Character) end
+        end
+
+        for _, plr in ipairs(PlayersService:GetPlayers()) do
+            watchPlayer(plr)
+        end
+        table.insert(state.globalConnections, PlayersService.PlayerAdded:Connect(watchPlayer))
+        table.insert(state.globalConnections, PlayersService.PlayerRemoving:Connect(removePlayer))
+
+        folder:Toggle("Auto Counter", "Master switch for the attached counter core.", true, function(value)
+            state.enabled = value == true
+        end)
+        folder:Slider("Counter Chance", 100, 0, 100, 1, function(value)
+            state.counterChance = math.clamp(value, 0, 100)
+        end)
+        folder:Slider("Auto Counter Range", 65, 4, 100, 1, function(value)
+            state.range = math.clamp(value, 4, 100)
+        end)
+        folder:Toggle("Use Closest Teammate", function(value)
+            state.useClosestTeammate = value == true
+        end)
+
+        local function addCounterToggle(label, key)
+            folder:Toggle(label, function(value)
+                state[key] = value == true
             end)
         end
 
-        autodrib:Slider("Auto Counter Range", 12, 4, 30, 1, function(value)
-            autoSkillState.range = math.clamp(value, 4, 30)
-        end)
-
-        autodrib:Toggle("Toggle Keybinds", function(value)
-            autoSkillState.keybindsEnabled = value == true
-        end)
-
-        autodrib:Toggle("Use Closest Teammate", function(value)
-            autoSkillState.useClosestTeammate = value == true
-        end)
-
-        createAutoCounter("Auto Dribble", "toggleDribble")
-        createAutoCounter("Auto Counter (Move One)", "toggleCounter1")
-        createAutoCounter("Auto Counter (Move Two)", "toggleCounter2")
-        createAutoCounter("Auto Counter (Move Three)", "toggleCounter3")
-        createAutoCounter("Auto Counter (Move Four)", "toggleCounter4")
-        createAutoCounter("Auto Counter (Move Five)", "toggleCounter5")
-        createAutoCounter("T Special", "toggleTSpecial")
-
-        local keybindConn =
-            UserInputServiceService.InputBegan:Connect(function(input, processed)
-                if processed or not autoSkillState.keybindsEnabled then return end
-
-                local map = {
-                    [Enum.KeyCode.Z] = "toggleDribble",
-                    [Enum.KeyCode.X] = "toggleCounter1",
-                    [Enum.KeyCode.C] = "toggleCounter2",
-                    [Enum.KeyCode.V] = "toggleCounter3",
-                    [Enum.KeyCode.N] = "toggleCounter4",
-                    [Enum.KeyCode.M] = "toggleCounter5",
-                    [Enum.KeyCode.L] = "toggleTSpecial",
-                }
-
-                local key = map[input.KeyCode]
-
-                if key then
-                    autoSkillState[key] =
-                        not autoSkillState[key]
-                end
-            end)
+        addCounterToggle("Auto Dribble", "toggleDribble")
+        addCounterToggle("Auto Counter (Move One)", "toggleCounter1")
+        addCounterToggle("Auto Counter (Move Two)", "toggleCounter2")
+        addCounterToggle("Auto Counter (Move Three)", "toggleCounter3")
+        addCounterToggle("Auto Counter (Move Four)", "toggleCounter4")
+        addCounterToggle("Auto Counter (Move Five)", "toggleCounter5")
+        addCounterToggle("T Special", "toggleTSpecial")
 
         function runtime.destroy()
-            if autoSkillState.destroyed then return end
-            autoSkillState.destroyed = true
-
-            disconnect(playerAddedConn)
-            disconnect(playerRemovingConn)
-            disconnect(keybindConn)
-
-            for _, record in pairs(autoSkillState.connections) do
-                for _, conn in pairs(record) do
-                    disconnect(conn)
-                end
-            end
-
-            for _, conn in pairs(autoSkillState.playerCharacterConnections) do
-                disconnect(conn)
-            end
-
+            if state.destroyed then return end
+            state.destroyed = true
+            for plr in pairs(state.players) do removePlayer(plr) end
+            for _, conn in ipairs(state.globalConnections) do disconnect(conn) end
+            table.clear(state.globalConnections)
             if env.CeleronCounterRuntime == runtime then
                 env.CeleronCounterRuntime = nil
             end
         end
 
-        warn("[AutoCounter Original+] READY")
+        warn("[AutoCounter AttachedCore V5] READY")
     end)
 
     if not bootOK then
-        warn("[AutoCounter Original+][BOOT] " .. tostring(bootError))
+        warn("[AutoCounter AttachedCore V5][BOOT] " .. tostring(bootError))
     end
 end)
 
@@ -5021,6 +4829,1919 @@ task.spawn(function()
 
     if not moveBuffOK then
         warn("[MoveBuffs][BOOT] " .. tostring(moveBuffError))
+    end
+end)
+
+--========================================================
+-- EVOHUB RE PHASE 2 INTEGRATION (V5)
+-- Dynamic ByteNet core + recovered 74-config Distance engine
+-- + shared AutoDefensive engine / 5 variants.
+-- Existing working movement features are preserved; RE engine is opt-in.
+--========================================================
+task.spawn(function()
+    local ok, err = pcall(function()
+        --[[
+        EvoHub RE - Core gameplay helpers (clean reconstruction)
+        Phase 2 / v1
+
+        Important recovered detail:
+        EvoHub does NOT permanently hardcode the ByteNet "use" packet id.
+        It starts with defaults and then reads ReplicatedStorage.BytenetStorage.Networking
+        to discover current packet IDs.
+
+        Recovered defaults:
+            bytenet_use        = 30
+            bytenet_findBall   = 29
+            bytenet_selectRole = 4
+        ]]
+
+        local function createCoreHelpers(ctx)
+            local ReplicatedStorage = assert(ctx.replicatedStorage, "replicatedStorage required")
+            local Workspace = assert(ctx.workspace, "workspace required")
+            local LocalPlayer = assert(ctx.player, "player required")
+
+            local core = {}
+
+            core.PacketIds = {
+                use = 30,
+                findBall = 29,
+                selectRole = 4,
+            }
+
+            function core:readPacketIds()
+                task.spawn(function()
+                    pcall(function()
+                        local storage = ReplicatedStorage:WaitForChild("BytenetStorage", 10)
+                        if not storage then
+                            return
+                        end
+
+                        local networking = storage:WaitForChild("Networking", 10)
+                        if not networking or not networking:IsA("StringValue") then
+                            return
+                        end
+
+                        local text = networking.Value
+                        if not text or text == "" then
+                            return
+                        end
+
+                        local useId = text:match('"bytenet_use"%s*:%s*(%d+)')
+                        if useId then
+                            self.PacketIds.use = tonumber(useId)
+                        end
+
+                        local findBallId = text:match('"bytenet_findBall"%s*:%s*(%d+)')
+                        if findBallId then
+                            self.PacketIds.findBall = tonumber(findBallId)
+                        end
+
+                        local selectRoleId = text:match('"bytenet_selectRole"%s*:%s*(%d+)')
+                        if selectRoleId then
+                            self.PacketIds.selectRole = tonumber(selectRoleId)
+                        end
+                    end)
+                end)
+            end
+
+            function core:useBuffer()
+                return buffer.fromstring(string.char(self.PacketIds.use) .. "\1")
+            end
+
+            function core:findBallBuffer()
+                return buffer.fromstring(string.char(self.PacketIds.findBall))
+            end
+
+            -- Recovered packet shape used throughout the defensive features:
+            -- ByteNetReliable:FireServer(useBuffer, {{skillName}})
+            function core:fireUse(skillName, ...)
+                local remote = ReplicatedStorage:FindFirstChild("ByteNetReliable")
+                if not remote then
+                    return false
+                end
+
+                local args = {...}
+                local payload = {skillName}
+                for _, value in ipairs(args) do
+                    table.insert(payload, value)
+                end
+
+                local ok = pcall(function()
+                    remote:FireServer(self:useBuffer(), {payload})
+                end)
+
+                return ok
+            end
+
+            function core:getTeam(playerName)
+                local characters = Workspace:FindFirstChild("characters")
+                local character = characters and characters:FindFirstChild(playerName)
+                if not character then
+                    return nil
+                end
+
+                local state = character:FindFirstChild("state")
+                local team = state and state:FindFirstChild("team")
+                return team and team.Value or nil
+            end
+
+            function core:hasIFrame(playerName)
+                local characters = Workspace:FindFirstChild("characters")
+                local character = characters and characters:FindFirstChild(playerName)
+                if not character then
+                    return false
+                end
+
+                local state = character:FindFirstChild("state")
+                local iframe = state and state:FindFirstChild("iframe")
+                return iframe and iframe.Value == true or false
+            end
+
+            function core:hasBall(playerName)
+                local characters = Workspace:FindFirstChild("characters")
+                local character = characters and characters:FindFirstChild(playerName or LocalPlayer.Name)
+                return character and character:FindFirstChild("Ball") ~= nil or false
+            end
+
+            function core:getHotbarSlot(slotName)
+                local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+                local hotbar = playerGui and playerGui:FindFirstChild("Hotbar")
+                local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+                local nestedHotbar = backpack and backpack:FindFirstChild("Hotbar")
+
+                if nestedHotbar then
+                    local slot = nestedHotbar:FindFirstChild(slotName)
+                    if slot then
+                        return slot
+                    end
+                end
+
+                if hotbar then
+                    local slot = hotbar:FindFirstChild(slotName, true)
+                    if slot then
+                        return slot
+                    end
+                end
+
+                return nil
+            end
+
+            -- Exact recovered interpretation:
+            -- missing slot -> true (treat as unavailable / cooldown)
+            -- slot without Cooldown -> false
+            -- otherwise height > 1 OR visible with BackgroundTransparency < 0.9
+            function core:isOnCooldown(slotName)
+                local slot = self:getHotbarSlot(slotName)
+                if not slot then
+                    return true
+                end
+
+                local cooldown = slot:FindFirstChild("Cooldown")
+                if not cooldown then
+                    return false
+                end
+
+                return cooldown.AbsoluteSize.Y > 1
+                    or (cooldown.Visible and cooldown.BackgroundTransparency < 0.9)
+            end
+
+            function core:getSkill4ToolName()
+                local slot = self:getHotbarSlot("skill4")
+                local base = slot and slot:FindFirstChild("Base")
+                local toolName = base and base:FindFirstChild("ToolName")
+                return toolName and toolName.Text or nil
+            end
+
+            core:readPacketIds()
+
+            return core
+        end
+        --[[
+        EvoHub RE - Movement / Distance Increase Engine (clean reconstruction)
+        Phase 2 / v1
+
+        Reconstructed from the captured EvoHub stage:
+        - engine state: ActiveBuffs / ActiveDashes / RenderConn / AnimConn
+        - AnimationPlayed matching
+        - slider distance is multiplied by 6 for actual travel
+        - animation length can replace configured duration
+        - directional and MoveDirection modes
+        - heightFunc(dt) support
+        - stopAnimIds support
+        - 0.15s default trigger cooldown
+
+        This file is intentionally readable. Original variable names/comments were destroyed by
+        obfuscation, so semantic names below are reconstructed from behavior.
+
+        Expected context:
+            local engine = createDistanceEngine({
+                player = Players.LocalPlayer,
+                runService = RunService,
+                ui = yourUILibrary,             -- optional; see registerWithUI
+                notify = function(msg, dur, sound) ... end, -- optional
+                autoLineupState = AutoLineupState,           -- optional
+            })
+
+        Then:
+            engine:setupCharacter(player.Character)
+            engine:addConfig(config)
+        ]]
+
+        local function createDistanceEngine(ctx)
+            local player = assert(ctx.player, "player required")
+            local RunService = assert(ctx.runService, "runService required")
+            local autoLineupState = ctx.autoLineupState
+
+            local engine = {
+                ActiveBuffs = {},
+                ActiveDashes = {},
+                RenderConn = nil,
+                AnimConn = nil,
+                CharacterConn = nil,
+            }
+
+            local FALLBACK_FORWARD = Vector3.new(0, 0, 1)
+
+            local function autoLineupBusy()
+                return autoLineupState
+                    and (autoLineupState.IsExecuting or autoLineupState.Frozen)
+            end
+
+            local function horizontalUnit(v, fallback)
+                local h = Vector3.new(v.X, 0, v.Z)
+                if h.Magnitude < 0.01 then
+                    return fallback
+                end
+                return h.Unit
+            end
+
+            local function namedDirection(hrp, name)
+                local forward = horizontalUnit(hrp.CFrame.LookVector, FALLBACK_FORWARD)
+                local right = horizontalUnit(hrp.CFrame.RightVector, Vector3.new(1, 0, 0))
+
+                if name == "Right" then
+                    return right
+                elseif name == "Left" then
+                    return -right
+                elseif name == "Front" then
+                    return forward
+                elseif name == "Back" then
+                    return -forward
+                elseif name == "FrontRight" then
+                    return (forward + right).Unit
+                elseif name == "FrontLeft" then
+                    return (forward - right).Unit
+                elseif name == "RightBack" then
+                    return (-forward + right).Unit
+                elseif name == "LeftBack" then
+                    return (-forward - right).Unit
+                end
+
+                return forward
+            end
+
+            function engine:stopAll()
+                table.clear(self.ActiveDashes)
+
+                if self.RenderConn then
+                    self.RenderConn:Disconnect()
+                    self.RenderConn = nil
+                end
+            end
+
+            local function updateDashes(dt)
+                if autoLineupBusy() then
+                    engine:stopAll()
+                    return
+                end
+
+                for index = #engine.ActiveDashes, 1, -1 do
+                    local dash = engine.ActiveDashes[index]
+                    local hrp = dash.hrp
+
+                    if not hrp or not hrp.Parent then
+                        table.remove(engine.ActiveDashes, index)
+                        continue
+                    end
+
+                    local stepDistance
+                    if dash.isUnlimited then
+                        stepDistance = dash.speed * dt
+                    else
+                        stepDistance = math.min(dash.speed * dt, dash.remaining)
+                    end
+
+                    local direction
+
+                    if dash.isDirectional and dash.directionName then
+                        direction = namedDirection(hrp, dash.directionName)
+                    elseif dash.useMovement then
+                        local character = hrp.Parent
+                        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+                        if humanoid and humanoid.MoveDirection.Magnitude > 0.05 then
+                            direction = horizontalUnit(humanoid.MoveDirection, FALLBACK_FORWARD)
+                        else
+                            direction = horizontalUnit(hrp.CFrame.LookVector, FALLBACK_FORWARD)
+                        end
+                    else
+                        direction = horizontalUnit(hrp.CFrame.LookVector, FALLBACK_FORWARD)
+                    end
+
+                    if not direction or direction.Magnitude < 0.01 then
+                        direction = FALLBACK_FORWARD
+                    end
+
+                    local nextPosition = hrp.Position + direction * stepDistance
+                    local y = hrp.Position.Y
+
+                    if dash.heightFunc then
+                        local deltaY = dash.heightFunc(dt)
+                        if deltaY then
+                            y += deltaY
+                        end
+                    end
+
+                    -- Original code discards pitch/roll and preserves yaw only.
+                    local _, yaw = hrp.CFrame:ToOrientation()
+                    hrp.CFrame = CFrame.new(nextPosition.X, y, nextPosition.Z)
+                        * CFrame.Angles(0, yaw, 0)
+
+                    dash.remaining -= stepDistance
+
+                    if dash.remaining <= 0 then
+                        table.remove(engine.ActiveDashes, index)
+                    end
+                end
+
+                if #engine.ActiveDashes == 0 and engine.RenderConn then
+                    engine.RenderConn:Disconnect()
+                    engine.RenderConn = nil
+                end
+            end
+
+            local function triggerDash(hrp, buff, track, directionName)
+                local sliderDistance = buff.distance or 0
+
+                if not buff.enabled or sliderDistance <= 0 then
+                    return
+                end
+
+                if autoLineupBusy() then
+                    return
+                end
+
+                local now = tick()
+                if buff.lastTrigger and (now - buff.lastTrigger) < (buff.cooldown or 0.15) then
+                    return
+                end
+                buff.lastTrigger = now
+
+                task.delay(buff.delay or 0, function()
+                    if not hrp or not hrp.Parent then
+                        return
+                    end
+
+                    if not buff.enabled or autoLineupBusy() then
+                        return
+                    end
+
+                    if buff.requiresBall then
+                        local ball = hrp.Parent:FindFirstChild("Ball")
+                        if not ball or not ball:IsA("MeshPart") then
+                            return
+                        end
+                    end
+
+                    -- Only one active distance push is kept for the same HRP.
+                    for i = #engine.ActiveDashes, 1, -1 do
+                        if engine.ActiveDashes[i].hrp == hrp then
+                            table.remove(engine.ActiveDashes, i)
+                        end
+                    end
+
+                    -- Important recovered detail:
+                    -- slider value is a multiplier and the engine converts it to studs with x6.
+                    local totalDistance = sliderDistance * 6
+
+                    local duration = buff.duration
+                    if track and track.Length and track.Length > 0.1 then
+                        local animationRemainder = track.Length - (buff.delay or 0)
+                        if animationRemainder > 0.05 then
+                            duration = animationRemainder
+                        end
+                    end
+
+                    if not duration or duration <= 0 then
+                        duration = (buff.duration and buff.duration > 0) and buff.duration or 0.4
+                    end
+
+                    local dash = {
+                        hrp = hrp,
+                        buff = buff,
+                        directionName = directionName,
+                        remaining = totalDistance,
+                        speed = buff.isUnlimited
+                            and (buff.speed or 150)
+                            or (totalDistance / duration),
+                        isUnlimited = buff.isUnlimited == true,
+                        isDirectional = buff.isDirectional == true or directionName ~= nil,
+                        useMovement = buff.useMovement == true,
+                        heightFunc = buff.heightFunc,
+                    }
+
+                    if track then
+                        local stopped
+                        stopped = track.Stopped:Connect(function()
+                            dash.remaining = 0
+                            if stopped then
+                                stopped:Disconnect()
+                            end
+                        end)
+                    end
+
+                    table.insert(engine.ActiveDashes, dash)
+
+                    if not engine.RenderConn then
+                        engine.RenderConn = RunService.RenderStepped:Connect(updateDashes)
+                    end
+                end)
+            end
+
+            function engine:onAnimationPlayed(track)
+                if autoLineupBusy() or not track.Animation then
+                    return
+                end
+
+                local fullId = tostring(track.Animation.AnimationId)
+                local digits = fullId:match("%d+")
+                if not digits then
+                    return
+                end
+
+                local character = player.Character
+                local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    return
+                end
+
+                -- Some buffs explicitly cancel an in-progress push when another animation starts.
+                for _, dash in ipairs(self.ActiveDashes) do
+                    local stopSet = dash.buff and dash.buff.stopAnimIds
+                    if stopSet and (stopSet[digits] or stopSet[fullId]) then
+                        dash.remaining = 0
+                    end
+                end
+
+                for _, buff in ipairs(self.ActiveBuffs) do
+                    if buff.enabled and (buff.distance or 0) > 0 then
+                        local matched = false
+                        local directionName = nil
+
+                        if type(buff.animIds) == "table" then
+                            directionName = buff.animIds[digits] or buff.animIds[fullId]
+
+                            if directionName ~= nil then
+                                matched = true
+                            else
+                                -- Handles array-form animIds where numeric keys map to string IDs.
+                                for key, value in pairs(buff.animIds) do
+                                    if value == digits
+                                        or value == fullId
+                                        or key == digits
+                                        or key == fullId then
+                                        matched = true
+                                        break
+                                    end
+                                end
+                            end
+                        elseif buff.animId == digits or buff.animId == fullId then
+                            matched = true
+                        end
+
+                        if matched then
+                            triggerDash(hrp, buff, track, directionName)
+                        end
+                    end
+                end
+            end
+
+            function engine:setupCharacter(character)
+                if self.AnimConn then
+                    self.AnimConn:Disconnect()
+                    self.AnimConn = nil
+                end
+
+                local humanoid = character:WaitForChild("Humanoid", 5)
+                if not humanoid then
+                    return
+                end
+
+                local animator = humanoid:WaitForChild("Animator", 5) or humanoid
+                self.AnimConn = animator.AnimationPlayed:Connect(function(track)
+                    self:onAnimationPlayed(track)
+                end)
+            end
+
+            function engine:addConfig(def)
+                local stopSet = nil
+
+                if def.stopAnimIds then
+                    stopSet = {}
+                    for _, id in ipairs(def.stopAnimIds) do
+                        stopSet[tostring(id)] = true
+                    end
+                end
+
+                local buff = {
+                    name = def.name or "Move Buff",
+                    animIds = def.animIds or (def.animId and {def.animId} or {}),
+                    animId = def.animId,
+                    delay = def.delay or def.wait or 0,
+                    duration = def.duration or 0.4,
+                    distance = def.defaultDistance or def.distance or 4,
+                    maxDistance = def.maxDistance or 10,
+                    isDirectional = def.isDirectional or false,
+                    useMovement = def.useMovement or false,
+                    isUnlimited = def.isUnlimited or false,
+                    speed = def.speed or 150,
+                    requiresBall = def.requiresBall or false,
+                    cooldown = def.cooldown or 0.15,
+                    stopAnimIds = stopSet,
+                    heightFunc = def.heightFunc,
+                    enabled = false,
+                }
+
+                table.insert(self.ActiveBuffs, buff)
+                return buff
+            end
+
+            function engine:registerWithUI(section, def)
+                local buff = self:addConfig(def)
+                local ui = assert(ctx.ui, "ctx.ui required for registerWithUI")
+
+                ui:CreateToggle(section, {
+                    Name = buff.name,
+                    Default = false,
+                    Callback = function(value)
+                        buff.enabled = value
+
+                        if ctx.notify then
+                            ctx.notify(
+                                buff.name .. (value and " Enabled" or " Disabled"),
+                                2,
+                                value and "Enable" or "Disable"
+                            )
+                        end
+                    end,
+                })
+
+                ui:CreateSlider(section, {
+                    Name = buff.name .. " Distance",
+                    Min = def.minDistance or 0.1,
+                    Max = buff.maxDistance,
+                    Default = buff.distance,
+                    Step = 0.1,
+                    Suffix = "",
+                    Callback = function(value)
+                        buff.distance = value
+                    end,
+                })
+
+                return buff
+            end
+
+            if player.Character then
+                task.spawn(function()
+                    engine:setupCharacter(player.Character)
+                end)
+            end
+
+            engine.CharacterConn = player.CharacterAdded:Connect(function(character)
+                engine:setupCharacter(character)
+            end)
+
+            function engine:destroy()
+                self:stopAll()
+                if self.AnimConn then self.AnimConn:Disconnect(); self.AnimConn = nil end
+                if self.CharacterConn then self.CharacterConn:Disconnect(); self.CharacterConn = nil end
+                table.clear(self.ActiveBuffs)
+            end
+
+            return engine
+        end
+        -- EvoHub Movement/Distance Increase configs reconstructed from the captured deobfuscated stage.
+        -- Source defaults, not the user's currently loaded/saved slider values.
+        local MovementConfigs = {
+            ["Base Moves"] = {
+                { name = "Dash Distance", animIds = {"79394729551302"}, delay = 0.15, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Dive Distance Increase", animIds = {"90537955276413"}, delay = 0.05, duration = 0.55, maxDistance = 10, defaultDistance = 4 },
+                { name = "Side Dash Distance Increase", animIds = {["114016332539655"] = "Right", ["100207093237932"] = "Left"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, isDirectional = true },
+                { name = "Doberman Charge", animIds = {"118833138118261"}, delay = 0.8, duration = 0.5, maxDistance = 15, defaultDistance = 6 },
+                { name = "Tackle Distance", animIds = {"109744655458082"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Side Dive Distance Increase", animIds = {["77573911221465"] = "Left", ["98466858696699"] = "Right"}, delay = 0.05, duration = 0.55, maxDistance = 10, defaultDistance = 4, isDirectional = true },
+            },
+            ["Isagi"] = {
+                { name = "Reflex Shot Run Distance Increase", animIds = {"106307629508344"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Naruhaya Footwork", animIds = {"82240286756891"}, delay = 0.33, duration = 0.45, maxDistance = 10, defaultDistance = 6 },
+            },
+            ["Chigiri"] = {
+                { name = "Non-Stop Dribble", animIds = {"105707565952027"}, delay = 0, duration = 0.5, maxDistance = 10, defaultDistance = 4 },
+                { name = "Self Pass", animIds = {"84083782378049"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Blitz", animIds = {"87517087691471"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Mach Cut-In Dash", animIds = {"133945265328817", "88448030655006"}, delay = 0.625, duration = 0.15, maxDistance = 10, defaultDistance = 6, useMovement = true },
+            },
+            ["Bachira"] = {
+                { name = "Monster Trance Distance Increase", animIds = {"97921174307159"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Step Overs Distance Increase", animIds = {"84063609284472"}, delay = 1.275, duration = 0.15, maxDistance = 10, defaultDistance = 6, useMovement = true },
+                { name = "Counter Distance Increase", animIds = {"139469489709120"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Otoya"] = {
+                { name = "Stealthy Steps Distance Increase", animIds = {"83067604549127"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Kusarigama Slash Distance Increase", animIds = {"84772583028665"}, delay = 0, duration = 0.55, maxDistance = 10, defaultDistance = 4 },
+                { name = "Shadow Step Distance Increase", animIds = {"133810381664491", "139230259021390"}, delay = 0, duration = 0.3, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Kiyora"] = {
+                { name = "Twister Pass Steal Distance Increase", animIds = {"80730958176662"}, delay = 0.4, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Dance Battle Distance Increase", animIds = {"95483906118039"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Shidou"] = {
+                { name = "Draconic Rush Distance Increase", animIds = {"95359966795185"}, delay = 0.175, duration = 0.625, maxDistance = 10, defaultDistance = 5 },
+            },
+            ["Kurona"] = {
+                { name = "Speedy Turn Distance Increase", animIds = {"109145068926350"}, delay = 0.05, duration = 0.7, maxDistance = 10, defaultDistance = 5 },
+                { name = "Fetch Distance Increase", animIds = {"110734304480469"}, delay = 0.125, duration = 0.525, maxDistance = 10, defaultDistance = 4 },
+                { name = "Guard Dog Distance Increase", animIds = {"111439544531399"}, delay = 0.1, duration = 0.35, maxDistance = 10, defaultDistance = 4 },
+                { name = "Close Quarter Dribble Distance Increase", animIds = {"94171465685487"}, delay = 0.18, duration = 2.25, maxDistance = 10, defaultDistance = 5, useMovement = true },
+                { name = "Go-Go! Distance Increase", animIds = {"111297568709238"}, delay = 0.55, duration = 0.35, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Nagi"] = {
+                { name = "Control Ground Distance Increase", animIds = {"77370115011368"}, delay = 0.1, duration = 0.3, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Barou"] = {
+                { name = "King's Path Distance Increase", animIds = {"73560885704292"}, delay = 0.4, duration = 1.175, maxDistance = 15, defaultDistance = 6 },
+                { name = "Devour Distance Increase", animIds = {"117921992582675"}, delay = 0.2, maxDistance = 10, defaultDistance = 4, isUnlimited = true, speed = 150 },
+                { name = "Chop Dribble Distance Increase", animIds = {"78306683522961", "108343574100752"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+            },
+            ["Karasu"] = {
+                { name = "Silent Steal Distance Increase", animIds = {"89782964116671"}, delay = 0.1, duration = 0.55, maxDistance = 10, defaultDistance = 4 },
+                { name = "Corvine Feint Clash Distance Increase", animIds = {"114866946968143"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Wing Arm Block Land Distance Increase", animIds = {"123994829903056"}, delay = 0.8, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Corvine Feint Distance Increase", animIds = {"79459013513539"}, delay = 1.1, duration = 0.4, maxDistance = 10, defaultDistance = 5 },
+            },
+            ["Yukimiya"] = {
+                { name = "Lane Splitter Distance Increase", animIds = {"126021811944208"}, delay = 0.4, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Drag Scissors Distance Increase", animIds = {"87853371514282", "71217538180364"}, delay = 0.2, duration = 1, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Full Breakthrough Distance Increase", animIds = {"96872849167773", "97563821982092", "105545130257223", "134599636818066"}, delay = 0.4, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Razor Break Distance Increase", animIds = {["131681055843039"] = "Front", ["114963791456755"] = "Left", ["115966658644919"] = "Right", ["122404546980503"] = "Back", ["70754845580062"] = "RightBack", ["128061536134952"] = "LeftBack", ["71501932579824"] = "FrontRight", ["96632954418440"] = "FrontLeft", ["70397727954557"] = "Front", ["131196726012273"] = "Front"}, delay = 0.1, duration = 0.35, maxDistance = 10, defaultDistance = 5, isDirectional = true },
+                { name = "Counter Distance Increase", animIds = {"93881520867340", "133198924811958"}, delay = 0.4, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+            },
+            ["Kunigami"] = {
+                { name = "Hero's Instinct Distance Increase", animIds = {"82417661349987"}, delay = 0.33, duration = 1.25, maxDistance = 15, defaultDistance = 6 },
+                { name = "Heroic Clash Distance Increase", animIds = {"101568232677122"}, delay = 0, duration = 0.5, maxDistance = 10, defaultDistance = 4, useMovement = true },
+            },
+            ["Aiku"] = {
+                { name = "Snake's Grasp Distance Increase", animIds = {"130345228612384"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Reflex Tackle Distance Increase", animIds = {"113088324958896"}, delay = 0, duration = 0.2, maxDistance = 10, defaultDistance = 4 },
+                { name = "Serpent's Sway Off Ball Distance Increase", animIds = {"112312116169687"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Aiku Run Flow Distance Increase", animIds = {"119774966094217"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Venom Trap Distance Increase", animIds = {"116422938520670"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, heightProfile = { default = 5, minBallHeight = 15, rate = 3 } },
+                { name = "Serpent's Sway Distance Increase", animIds = {"93382093981195", "71920366343806"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+            },
+            ["Sae"] = {
+                { name = "Beautiful Destruction Side", animIds = {"77926234700416"}, delay = 0.85, duration = 0.2, maxDistance = 10, defaultDistance = 4 },
+                { name = "Magical Turn Distance Increase", animIds = {"72549924871994"}, delay = 0.3, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Rabona Nutmeg Distance Increase", animIds = {"73266865968554"}, delay = 0.05, duration = 0.25, maxDistance = 10, defaultDistance = 4 },
+                { name = "Counter Distance Increase", animIds = {"88690614253524"}, delay = 1, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Beautiful Destruction Forward", animIds = {"83467654630220", "132788854309681", "138985718053619"}, delay = 0, duration = 0.3, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Kaiser"] = {
+                { name = "Imperial Break Distance Increase", animIds = {"98170073378390"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Emperors Path Distance Increase", animIds = {"110660551661470", "95710141714520"}, delay = 0.15, duration = 0.55, maxDistance = 10, defaultDistance = 5, useMovement = true },
+                { name = "Restriction Charge Distance Increase", animIds = {"87538177157625", "77001258605541"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+            },
+            ["Don Lorenzo"] = {
+                { name = "Zombie Dribble Distance Increase", animIds = {"102294508090597"}, delay = 0.15, duration = 1.7, maxDistance = 15, defaultDistance = 6 },
+                { name = "Defensive Stance Distance Increase", animIds = {"79800224209188", "89915301440000"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Counter Distance Increase", animIds = {"126033682871844"}, delay = 0.8, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Zombie Walk Distance Increase", animIds = {"133733511838098"}, delay = 0.7, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Horrific Intercept Distance Increase", animIds = {"90734196141468"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, heightProfile = { default = 7, minBallHeight = 15, rate = 3 } },
+                { name = "Dribble Land Distance Increase", animIds = {"77512595429495"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Reo"] = {
+                { name = "Metavision Run Distance Increase", animIds = {"98607356585505"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Twin Steps Distance Increase", animIds = {"106299517516303"}, delay = 1.75, duration = 0.15, maxDistance = 10, defaultDistance = 5, useMovement = true },
+                { name = "Counter Distance Increase", animIds = {"91010279634862"}, delay = 1.6, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Doberman Press Distance Increase", animIds = {"131986477806061"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+            },
+            ["Rin"] = {
+                { name = "Occlusion Break Distance Increase", animIds = {"116181317759538"}, delay = 0.2, duration = 1, maxDistance = 15, defaultDistance = 6 },
+                { name = "Fake Shot Distance Increase", animIds = {"116367146157633"}, delay = 0.8, duration = 0.4, maxDistance = 10, defaultDistance = 4, stopAnimIds = {"72384842123850"} },
+            },
+            ["Nel Isagi"] = {
+                { name = "Meta-Burst-Point Steal Distance Increase", animIds = {"107502555664359"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Raumdeuter Distance Increase", animIds = {"81582265162782"}, delay = 0.1, duration = 0.55, maxDistance = 10, defaultDistance = 5 },
+                { name = "Counter Distance Increase", animIds = {"127318371971354"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4 },
+                { name = "Meta-Burst-Point Trap Distance Increase", animIds = {"111091327490255"}, delay = 0, duration = 0.4, maxDistance = 10, defaultDistance = 4, heightProfile = { default = 5, minBallHeight = 15, rate = 3 } },
+            },
+            ["Hiori"] = {
+                { name = "Glacial Cut Distance Increase", animIds = {"116769918041530"}, delay = 0.425, duration = 0.5, maxDistance = 10, defaultDistance = 5 },
+                { name = "Counter Distance Increase", animIds = {"130243864962113"}, delay = 0.4, duration = 0.4, maxDistance = 10, defaultDistance = 4, useMovement = true },
+                { name = "Glacial Cut Directional Distance Increase", animIds = {"126660944970058", "80537494389388"}, delay = 0.425, duration = 0.5, maxDistance = 10, defaultDistance = 5, useMovement = true },
+            },
+        }
+        --[[
+        EvoHub RE - AutoDefensive shared engine + five recovered variants
+        Phase 2 / v1
+
+        Recovered shared users:
+        - Aiku: Auto Venom Trap
+        - Kaiser: Auto Volley
+        - Don Lorenzo: Auto Defense
+        - Nel Isagi: Auto Volley
+        - Hiori: Auto Frost Guard
+
+        This is a readable reconstruction of the captured stage, not the original source.
+        Original names/control-flow were destroyed by obfuscation.
+
+        The engine has TWO trigger paths:
+        1) live ball-velocity / impact prediction
+        2) enemy animation prediction
+
+        Important exact recovered constants:
+        - global broad horizontal/vertical limit: 200 / 200
+        - ball drag for impact sim: 0.9737 every 0.05s
+        - animation-tracking expiry: 5s
+        - global defense throttle: 2s
+        - "moving toward us" cone: 45 degrees
+        - direct-at-us velocity dot threshold: 0.85
+        - direct-at-us predicted horizontal threshold: 12 studs
+        - non-toward ball is rejected if farther than 15 studs
+        ]]
+
+        local function createAutoDefensive(ctx)
+            local Players = assert(ctx.players, "players required")
+            local RunService = assert(ctx.runService, "runService required")
+            local ReplicatedStorage = assert(ctx.replicatedStorage, "replicatedStorage required")
+            local Workspace = assert(ctx.workspace, "workspace required")
+            local LocalPlayer = assert(ctx.player, "player required")
+            local Core = assert(ctx.core, "core helpers required")
+
+            local AutoDefensive = {
+                Variants = {},
+                Enabled = false,
+                ByteNetReliable = nil,
+                Connection = nil,
+                AnimationTracking = {},
+                LastDefenseTime = 0,
+
+                -- Earlier values exist in the obfuscated initializer, but later duplicate
+                -- keys overwrite them. Effective values are 200 / 200.
+                MAX_BALL_DISTANCE = 200,
+                MAX_VERTICAL_DISTANCE = 200,
+
+                GlobalGoalboxes = {
+                    A = {minX = -668.15, maxX = -407.51, minZ = 1611.19, maxZ = 1706.13},
+                    B = {minX = -668.01, maxX = -407.68, minZ = 841.70, maxZ = 935.59},
+                },
+
+                GlobalEnemyGoalboxes = {
+                    A = {minX = -858.81, maxX = -217.79, minZ = 1460.15, maxZ = 1706.26},
+                    B = {minX = -859.01, maxX = -217.90, minZ = 841.60, maxZ = 1098.19},
+                },
+
+                lastBallOwnerTeam = nil,
+                lastBallOwnerName = nil,
+            }
+
+            local COMMON_ANIMATIONS = {
+                ["rbxassetid://131229402549770"] = {name = "Isagi", delay = 0.27},
+                ["rbxassetid://80063325550268"]  = {name = "Nagi", delay = 0.10},
+                ["rbxassetid://107869643584417"] = {name = "Chigiri", delay = 0.10},
+                ["rbxassetid://119133025118742"] = {name = "Shidou", delay = 0.30},
+                ["rbxassetid://71166281570409"]  = {name = "Yukimiya", delay = 0.30},
+                ["rbxassetid://88985413044521"]  = {name = "Kaiser", delay = 0.20},
+                ["rbxassetid://138598504314653"] = {name = "Kunigami", delay = 0.20},
+                ["rbxassetid://98869531447623"]  = {name = "Barou", delay = 0.30},
+                ["rbxassetid://97103063277850"]  = {name = "Nel Isagi", delay = 0.20},
+                ["rbxassetid://98975331828005"]  = {name = "Reo", delay = 0.50},
+                ["rbxassetid://114955963969575"] = {name = "Kiyora", delay = 1.10},
+                ["rbxassetid://94714913486342"]  = {name = "Otoya", delay = 0.30},
+            }
+
+            local function cloneAnimations(withMaxDistance)
+                local out = {}
+                local controls = {}
+
+                for id, info in pairs(COMMON_ANIMATIONS) do
+                    out[id] = {
+                        delay = info.delay,
+                        maxDistance = withMaxDistance and 90 or nil,
+                    }
+                    table.insert(controls, {name = info.name, id = id})
+                end
+
+                return out, controls
+            end
+
+            local function inGoalbox(position, team, enemy)
+                local box
+                if enemy then
+                    box = AutoDefensive.GlobalEnemyGoalboxes[team == "A" and "B" or "A"]
+                else
+                    box = AutoDefensive.GlobalGoalboxes[team]
+                end
+
+                return box
+                    and position.X >= box.minX
+                    and position.X <= box.maxX
+                    and position.Z >= box.minZ
+                    and position.Z <= box.maxZ
+                    or false
+            end
+
+            local function velocityPointsAt(ball, velocity, targetPosition)
+                if not ball or velocity.Magnitude == 0 then
+                    return false
+                end
+
+                return velocity.Unit:Dot((targetPosition - ball.Position).Unit)
+                    > math.cos(math.rad(45))
+            end
+
+            local function withinVariantRange(ball, targetPosition, variant)
+                if not ball then
+                    return false
+                end
+
+                local horizontal = (
+                    Vector3.new(targetPosition.X, 0, targetPosition.Z)
+                    - Vector3.new(ball.Position.X, 0, ball.Position.Z)
+                ).Magnitude
+
+                local maxHorizontal = variant.maxBallDistance or AutoDefensive.MAX_BALL_DISTANCE
+                local maxVertical = variant.maxVerticalDistance or AutoDefensive.MAX_VERTICAL_DISTANCE
+
+                return horizontal <= maxHorizontal
+                    and math.abs(targetPosition.Y - ball.Position.Y) <= maxVertical
+            end
+
+            local function facingWithin(root, targetPosition, degrees)
+                if not root then
+                    return false
+                end
+
+                degrees = degrees or 20
+                return root.CFrame.LookVector:Dot((targetPosition - root.Position).Unit)
+                    > math.cos(math.rad(degrees))
+            end
+
+            local function behindOrSide(root, targetPosition)
+                if not root then
+                    return false
+                end
+
+                return root.CFrame.LookVector:Dot((targetPosition - root.Position).Unit)
+                    < math.cos(math.rad(60))
+            end
+
+            -- Returns closestTime, closestHorizontalDistance, closestVerticalDistance.
+            local function predictClosestApproach(ball, velocity, targetPosition, maxTime)
+                if not ball or velocity.Magnitude <= 0 then
+                    return nil
+                end
+
+                local position = ball.Position
+                local currentVelocity = velocity
+
+                local bestTime = nil
+                local bestHorizontal = math.huge
+                local bestVertical = math.huge
+
+                for t = 0, maxTime, 0.05 do
+                    local horizontal = (
+                        Vector3.new(position.X, 0, position.Z)
+                        - Vector3.new(targetPosition.X, 0, targetPosition.Z)
+                    ).Magnitude
+                    local vertical = math.abs(position.Y - targetPosition.Y)
+
+                    if horizontal < bestHorizontal then
+                        bestTime = t
+                        bestHorizontal = horizontal
+                        bestVertical = vertical
+                    end
+
+                    position += currentVelocity * 0.05
+                    currentVelocity = Vector3.new(
+                        currentVelocity.X * 0.9737,
+                        currentVelocity.Y - Workspace.Gravity * 0.05,
+                        currentVelocity.Z * 0.9737
+                    )
+                end
+
+                if bestHorizontal <= AutoDefensive.MAX_BALL_DISTANCE
+                    and bestVertical <= AutoDefensive.MAX_VERTICAL_DISTANCE then
+                    return bestTime, bestHorizontal, bestVertical
+                end
+
+                return nil
+            end
+
+            local function findCurrentBallOwner()
+                local characters = Workspace:FindFirstChild("characters")
+                if not characters then
+                    return nil, nil
+                end
+
+                for _, character in ipairs(characters:GetChildren()) do
+                    if character:FindFirstChild("Ball") then
+                        local state = character:FindFirstChild("state")
+                        local team = state and state:FindFirstChild("team")
+                        if team then
+                            return character.Name, team.Value
+                        end
+                    end
+                end
+
+                return nil, nil
+            end
+
+            local function targetTeamMatches(variant, ownerTeam, ourTeam)
+                local mode = variant.targetTeam or "enemy"
+
+                if mode == "enemy" then
+                    return ownerTeam ~= ourTeam
+                elseif mode == "teammate" then
+                    return ownerTeam == ourTeam
+                elseif mode == "both" then
+                    return true
+                end
+
+                return false
+            end
+
+            local function passesGoalboxFilters(variant, rootPosition, ourTeam)
+                local ownGoalbox = inGoalbox(rootPosition, ourTeam, false)
+                local enemyGoalbox = inGoalbox(rootPosition, ourTeam, true)
+
+                if variant.goalboxOnly and not ownGoalbox then
+                    return false
+                end
+
+                if variant.enemyGoalboxOnly and not enemyGoalbox then
+                    return false
+                end
+
+                if variant.ownGoalboxOnly and not ownGoalbox then
+                    return false
+                end
+
+                return true
+            end
+
+            local function jump()
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    humanoid.Jump = true
+                end
+            end
+
+            local function flickAwayFromCamera(targetPosition)
+                local camera = Workspace.CurrentCamera
+                local character = LocalPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+
+                if not camera or not root then
+                    return
+                end
+
+                local toTarget = targetPosition - root.Position
+                if toTarget.Magnitude <= 0 then
+                    return
+                end
+
+                if root.CFrame.LookVector:Dot(toTarget.Unit) <= 0.5 then
+                    return
+                end
+
+                local look = camera.CFrame.LookVector
+                local backwards = Vector3.new(-look.X, 0, -look.Z)
+                if backwards.Magnitude <= 0 then
+                    return
+                end
+
+                backwards = backwards.Unit
+                camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + backwards)
+                root.CFrame = CFrame.new(root.Position, root.Position + backwards)
+            end
+
+            local function aggressiveFire(skill, virtualKey)
+                local remote = ReplicatedStorage:FindFirstChild("ByteNetReliable")
+                    or AutoDefensive.ByteNetReliable
+
+                if remote then
+                    pcall(function()
+                        remote:FireServer(Core:useBuffer(), {{skill}})
+                    end)
+
+                    pcall(function()
+                        remote:FireServer(Core:useBuffer(), {{skill, true}})
+                    end)
+                end
+
+                -- The original then fires the same skill through its generic helper again.
+                Core:fireUse(skill)
+
+                pcall(function()
+                    local packets = require(ReplicatedStorage:FindFirstChild("packets"))
+                    if packets and packets.bytenet_use and packets.bytenet_use.send then
+                        packets.bytenet_use.send({skill})
+                        packets.bytenet_use.send({skill, true})
+                    end
+                end)
+
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true, virtualKey, false, game)
+                    task.delay(0.03, function()
+                        pcall(function()
+                            vim:SendKeyEvent(false, virtualKey, false, game)
+                        end)
+                    end)
+                end)
+            end
+
+            function AutoDefensive:Register(variant)
+                table.insert(self.Variants, variant)
+                return variant
+            end
+
+            local function mainStep()
+                if not AutoDefensive.Enabled or not LocalPlayer.Character then
+                    return
+                end
+
+                local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if not root then
+                    return
+                end
+
+                local ourTeam = Core:getTeam(LocalPlayer.Name)
+                if not ourTeam or ourTeam == "lobby" then
+                    return
+                end
+
+                local style = LocalPlayer:GetAttribute("style")
+
+                local variant = nil
+                for _, candidate in ipairs(AutoDefensive.Variants) do
+                    if candidate.enabled and candidate.isSupported(style) then
+                        variant = candidate
+                        break
+                    end
+                end
+
+                if not variant then
+                    return
+                end
+
+                local rootPosition = root.Position
+                local now = tick()
+
+                local characters = Workspace:FindFirstChild("characters")
+                if not characters then
+                    return
+                end
+
+                local ownerName, ownerTeam = findCurrentBallOwner()
+                if ownerTeam then
+                    AutoDefensive.lastBallOwnerTeam = ownerTeam
+                    AutoDefensive.lastBallOwnerName = ownerName
+                end
+
+                local ball = Workspace.Terrain:FindFirstChild("Ball")
+                    or Workspace:FindFirstChild("Ball")
+
+                local cfBall = ReplicatedStorage:FindFirstChild("CFBall")
+                local velocityValue = cfBall and cfBall:FindFirstChild("velocity")
+
+                if ball and velocityValue then
+                    local velocity = velocityValue.Value
+                    local valid = velocity.Magnitude >= variant.minBallSpeed
+                    local context = {isBallDirectlyAtUs = false}
+
+                    if valid and variant.useImpact then
+                        local impactTime, horizontal = predictClosestApproach(
+                            ball,
+                            velocity,
+                            rootPosition,
+                            variant.predictWindow or 0.75
+                        )
+
+                        if not impactTime then
+                            valid = false
+                        elseif horizontal <= 12 then
+                            context.isBallDirectlyAtUs = true
+                        end
+
+                    elseif valid then
+                        local fullDistance = (ball.Position - rootPosition).Magnitude
+                        local movingToward = velocityPointsAt(ball, velocity, rootPosition)
+                        local inRange = withinVariantRange(ball, rootPosition, variant)
+
+                        if not inRange then
+                            valid = false
+                        elseif not movingToward and fullDistance > 15 then
+                            valid = false
+                        elseif velocity.Magnitude > 0
+                            and velocity.Unit:Dot((rootPosition - ball.Position).Unit) > 0.85 then
+                            context.isBallDirectlyAtUs = true
+                        end
+                    end
+
+                    local ownerMatches = targetTeamMatches(
+                        variant,
+                        AutoDefensive.lastBallOwnerTeam,
+                        ourTeam
+                    )
+
+                    if valid
+                        and AutoDefensive.lastBallOwnerTeam
+                        and AutoDefensive.lastBallOwnerTeam ~= "lobby"
+                        and AutoDefensive.lastBallOwnerName ~= LocalPlayer.Name
+                        and ownerMatches
+                        and passesGoalboxFilters(variant, rootPosition, ourTeam)
+                        and now - AutoDefensive.LastDefenseTime > 2 then
+
+                        if variant.performDefense(ball, rootPosition, velocity, context) then
+                            AutoDefensive.LastDefenseTime = now
+                        end
+                    end
+                end
+
+                -- Expire stale animation prediction records.
+                for key, record in pairs(AutoDefensive.AnimationTracking) do
+                    if now - record.detectedTime > 5 then
+                        AutoDefensive.AnimationTracking[key] = nil
+                    end
+                end
+
+                if not variant.animPredict
+                    or not passesGoalboxFilters(variant, rootPosition, ourTeam) then
+                    return
+                end
+
+                for _, target in ipairs(characters:GetChildren()) do
+                    if target.Name ~= LocalPlayer.Name and target:FindFirstChild("Ball") then
+                        local state = target:FindFirstChild("state")
+                        local team = state and state:FindFirstChild("team")
+
+                        if team and team.Value ~= "lobby"
+                            and targetTeamMatches(variant, team.Value, ourTeam) then
+
+                            local targetRoot = target:FindFirstChild("HumanoidRootPart")
+                            local humanoid = target:FindFirstChildOfClass("Humanoid")
+                            local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+
+                            if targetRoot and animator then
+                                local dist = (targetRoot.Position - rootPosition).Magnitude
+                                local enemyFacingUs = facingWithin(targetRoot, rootPosition, 45)
+                                local areWeFacingEnemy = facingWithin(root, targetRoot.Position, 45)
+                                local isBehindOrSide = behindOrSide(targetRoot, rootPosition)
+
+                                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                                    local id = track.Animation and track.Animation.AnimationId
+                                    local animCfg = id and variant.animations[id]
+
+                                    if id and track.IsPlaying and animCfg then
+                                        if not animCfg.maxDistance or dist <= animCfg.maxDistance then
+                                            local key = target.Name .. "_" .. id
+                                            local record = AutoDefensive.AnimationTracking[key]
+
+                                            if not record then
+                                                record = {
+                                                    detectedTime = now,
+                                                    hasTriggered = false,
+                                                    delay = animCfg.delay,
+                                                }
+                                                AutoDefensive.AnimationTracking[key] = record
+                                            end
+
+                                            if not record.hasTriggered
+                                                and now - record.detectedTime >= record.delay
+                                                and now - AutoDefensive.LastDefenseTime > 2 then
+
+                                                -- Exact quirk recovered from the source:
+                                                -- in this path isBallDirectlyAtUs is set equal to enemyFacingUs.
+                                                local animContext = {
+                                                    isEnemyFacingUs = enemyFacingUs,
+                                                    areWeFacingEnemy = areWeFacingEnemy,
+                                                    isBehindOrSide = isBehindOrSide,
+                                                    dist = dist,
+                                                    targetHrp = targetRoot,
+                                                    isBallDirectlyAtUs = enemyFacingUs,
+                                                }
+
+                                                if variant.performDefense(
+                                                    target:FindFirstChild("Ball"),
+                                                    rootPosition,
+                                                    nil,
+                                                    animContext
+                                                ) then
+                                                    AutoDefensive.LastDefenseTime = now
+                                                    record.hasTriggered = true
+                                                end
+                                            end
+                                        end
+
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            function AutoDefensive:CheckAnyEnabled()
+                local anyEnabled = false
+                for _, variant in ipairs(self.Variants) do
+                    if variant.enabled then
+                        anyEnabled = true
+                        break
+                    end
+                end
+
+                if anyEnabled and not self.Enabled then
+                    self.ByteNetReliable = ReplicatedStorage:FindFirstChild("ByteNetReliable")
+                    if not self.ByteNetReliable then
+                        return
+                    end
+
+                    self.Enabled = true
+                    self.Connection = RunService.RenderStepped:Connect(mainStep)
+
+                elseif not anyEnabled and self.Enabled then
+                    self.Enabled = false
+
+                    if self.Connection then
+                        self.Connection:Disconnect()
+                        self.Connection = nil
+                    end
+
+                    self.AnimationTracking = {}
+                    self.LastDefenseTime = 0
+                end
+            end
+
+            -- =========================================================
+            -- Variant reconstruction
+            -- =========================================================
+
+            local function makeCommonAnimations(withMaxDistance)
+                return cloneAnimations(withMaxDistance)
+            end
+
+            do
+                -- Aiku / Reo Venom Trap
+                local animations, controls = makeCommonAnimations(false)
+
+                local variant = {
+                    name = "Auto Venom Trap",
+                    enabled = false,
+                    goalboxOnly = false,
+                    animPredict = false,
+                    useJump = true,
+                    useFlick = true,
+                    useImpact = false,
+                    minBallSpeed = 70,
+                    skill3MinHeight = 3,
+                    animations = animations,
+                    AnimationDelayControls = controls,
+                }
+
+                function variant.isSupported(style)
+                    if style == "aiku" or style == "aiku2" then
+                        return true
+                    end
+
+                    if style == "reo" then
+                        return Core:getSkill4ToolName() == "Venom Trap"
+                    end
+
+                    return false
+                end
+
+                function variant.performDefense(ball, rootPosition, _, context)
+                    local isReo = LocalPlayer:GetAttribute("style") == "reo"
+                    local skill = isReo and "skill4" or "skill3"
+
+                    if Core:isOnCooldown(skill) then
+                        return false
+                    end
+
+                    if ball and ball.Position.Y < variant.skill3MinHeight then
+                        return false
+                    end
+
+                    local contextMissing = context == nil
+                    if variant.useJump
+                        and ball
+                        and (ball.Position.Y >= 5 or contextMissing) then
+                        jump()
+                        task.wait(0.03)
+                    end
+
+                    if variant.useFlick
+                        and context
+                        and context.isBallDirectlyAtUs then
+                        flickAwayFromCamera(ball and ball.Position or rootPosition)
+                    end
+
+                    aggressiveFire(
+                        skill,
+                        isReo and Enum.KeyCode.Four or Enum.KeyCode.Three
+                    )
+
+                    return true
+                end
+
+                AutoDefensive:Register(variant)
+            end
+
+            do
+                -- Mastery Kaiser Auto Volley
+                local animations, controls = makeCommonAnimations(true)
+
+                local variant = {
+                    name = "Kaiser Auto Volley",
+                    enabled = false,
+                    enemyGoalboxOnly = false,
+                    animPredict = false,
+                    useJump = true,
+                    useFlick = false,
+                    useImpact = false,
+                    minBallSpeed = 150,
+                    targetTeam = "teammate",
+                    animations = animations,
+                    AnimationDelayControls = controls,
+                }
+
+                function variant.isSupported(style)
+                    return style == "masterykaiser"
+                end
+
+                function variant.performDefense(ball, _, _, context)
+                    local skill = "skill1"
+                    if Core:isOnCooldown(skill) then
+                        return false
+                    end
+
+                    local contextMissing = context == nil
+                    if variant.useJump
+                        and ball
+                        and (ball.Position.Y >= 5 or contextMissing) then
+                        jump()
+                        task.wait(0.03)
+                    end
+
+                    pcall(function()
+                        AutoDefensive.ByteNetReliable:FireServer(Core:useBuffer(), {{skill}})
+                    end)
+
+                    return true
+                end
+
+                AutoDefensive:Register(variant)
+            end
+
+            do
+                -- Don Lorenzo / Reo Defensive Stance + Horrific Intercept
+                local animations, controls = makeCommonAnimations(false)
+
+                local variant = {
+                    name = "Auto Defense",
+                    enabled = false,
+                    goalboxOnly = false,
+                    animPredict = false,
+                    useJump = true,
+                    useFlick = true,
+                    useImpact = false,
+                    minBallSpeed = 70,
+
+                    skill3MaxDist = 53,
+                    skill3MaxVert = 65,
+
+                    skill4MinHeight = 3,
+                    skill4MaxDist = 53,
+                    skill4MaxVert = 65,
+
+                    preferSkill = "Skill3",
+
+                    animations = animations,
+                    AnimationDelayControls = controls,
+                }
+
+                function variant.isSupported(style)
+                    if style == "donlorenzo" or style == "masterylorenzo" then
+                        return true
+                    end
+
+                    if style == "reo" then
+                        local name = Core:getSkill4ToolName()
+                        return name == "Defensive Stance" or name == "Horrific Intercept"
+                    end
+
+                    return false
+                end
+
+                local function horizontalVertical(ball, rootPosition)
+                    local horizontal = (
+                        Vector3.new(rootPosition.X, 0, rootPosition.Z)
+                        - Vector3.new(ball.Position.X, 0, ball.Position.Z)
+                    ).Magnitude
+                    local vertical = math.abs(rootPosition.Y - ball.Position.Y)
+                    return horizontal, vertical
+                end
+
+                local function attempt(skill, ball, rootPosition, shouldFlick)
+                    local maxDist = skill == "skill3"
+                        and variant.skill3MaxDist
+                        or variant.skill4MaxDist
+                    local maxVert = skill == "skill3"
+                        and variant.skill3MaxVert
+                        or variant.skill4MaxVert
+
+                    local horizontal, vertical = horizontalVertical(ball, rootPosition)
+                    if horizontal > maxDist or vertical > maxVert then
+                        return false
+                    end
+
+                    if skill == "skill4" and ball.Position.Y < variant.skill4MinHeight then
+                        return false
+                    end
+
+                    if Core:isOnCooldown(skill) then
+                        return false
+                    end
+
+                    if variant.useJump and ball.Position.Y >= 5 then
+                        jump()
+                        task.wait(0.03)
+                    end
+
+                    if variant.useFlick and shouldFlick then
+                        flickAwayFromCamera(ball.Position)
+                    end
+
+                    pcall(function()
+                        AutoDefensive.ByteNetReliable:FireServer(Core:useBuffer(), {{skill}})
+                    end)
+
+                    return true
+                end
+
+                function variant.performDefense(ball, rootPosition, _, context)
+                    if not ball then
+                        return false
+                    end
+
+                    local style = LocalPlayer:GetAttribute("style")
+                    local isReo = style == "reo"
+
+                    if isReo then
+                        local reoMove = Core:getSkill4ToolName()
+                        if reoMove ~= "Defensive Stance" and reoMove ~= "Horrific Intercept" then
+                            return false
+                        end
+
+                        local skill = "skill4"
+                        if Core:isOnCooldown(skill) then
+                            return false
+                        end
+
+                        local stance = reoMove == "Defensive Stance"
+                        local intercept = reoMove == "Horrific Intercept"
+
+                        local maxDist = stance and variant.skill3MaxDist or variant.skill4MaxDist
+                        local maxVert = stance and variant.skill3MaxVert or variant.skill4MaxVert
+                        local horizontal, vertical = horizontalVertical(ball, rootPosition)
+
+                        if horizontal > maxDist or vertical > maxVert then
+                            return false
+                        end
+
+                        if intercept and ball.Position.Y < variant.skill4MinHeight then
+                            return false
+                        end
+
+                        if variant.useJump and ball.Position.Y >= 5 then
+                            jump()
+                            task.wait(0.03)
+                        end
+
+                        local direct = intercept
+                            and context
+                            and context.isBallDirectlyAtUs
+                            or false
+
+                        if variant.useFlick and direct then
+                            flickAwayFromCamera(ball.Position)
+                        end
+
+                        pcall(function()
+                            AutoDefensive.ByteNetReliable:FireServer(
+                                Core:useBuffer(),
+                                {{skill}}
+                            )
+                        end)
+
+                        return true
+                    end
+
+                    local direct = context and context.isBallDirectlyAtUs or false
+
+                    if direct then
+                        if attempt("skill4", ball, rootPosition, direct) then
+                            return true
+                        end
+                        return attempt("skill3", ball, rootPosition, false)
+                    end
+
+                    if variant.preferSkill == "Skill4" then
+                        if not Core:isOnCooldown("skill4") then
+                            return attempt("skill4", ball, rootPosition, direct)
+                        end
+                        return attempt("skill3", ball, rootPosition, false)
+                    end
+
+                    if not Core:isOnCooldown("skill3") then
+                        return attempt("skill3", ball, rootPosition, false)
+                    end
+                    return attempt("skill4", ball, rootPosition, direct)
+                end
+
+                AutoDefensive:Register(variant)
+            end
+
+            do
+                -- Nel Isagi / Reo Neo Direct Shot Auto Volley
+                local animations, controls = makeCommonAnimations(true)
+
+                local variant = {
+                    name = "Nel Isagi Auto Volley",
+                    enabled = false,
+                    enemyGoalboxOnly = false,
+                    ownGoalboxOnly = false,
+                    animPredict = false,
+                    useJump = true,
+                    useImpact = true,
+                    minBallSpeed = 150,
+                    targetTeam = "both",
+                    predictWindow = 0.55,
+                    animations = animations,
+                    AnimationDelayControls = controls,
+                }
+
+                function variant.isSupported(style)
+                    if style == "nelisagi" then
+                        return true
+                    end
+
+                    if style == "reo" then
+                        return Core:getSkill4ToolName() == "Neo Direct Shot"
+                    end
+
+                    return false
+                end
+
+                function variant.performDefense(ball, _, _, context)
+                    local isReo = LocalPlayer:GetAttribute("style") == "reo"
+                    local skill = isReo and "skill4" or "skill1"
+
+                    if Core:isOnCooldown(skill) then
+                        return false
+                    end
+
+                    local contextMissing = context == nil
+                    if variant.useJump
+                        and ball
+                        and (ball.Position.Y >= 5 or contextMissing) then
+                        jump()
+                        task.wait(0.03)
+                    end
+
+                    pcall(function()
+                        AutoDefensive.ByteNetReliable:FireServer(Core:useBuffer(), {{skill}})
+                    end)
+
+                    return true
+                end
+
+                AutoDefensive:Register(variant)
+            end
+
+            do
+                -- Hiori / Reo Frost Guard
+                local animations, controls = makeCommonAnimations(false)
+
+                local variant = {
+                    name = "Auto Frost Guard",
+                    enabled = false,
+                    goalboxOnly = false,
+                    animPredict = false,
+                    useJump = true,
+                    useImpact = false,
+                    minBallSpeed = 70,
+                    skill2MinHeight = 3,
+                    animations = animations,
+                    AnimationDelayControls = controls,
+                }
+
+                function variant.isSupported(style)
+                    if style == "hiori" then
+                        return true
+                    end
+
+                    if style == "reo" then
+                        return Core:getSkill4ToolName() == "Frost Guard"
+                    end
+
+                    return false
+                end
+
+                function variant.performDefense(ball, rootPosition, _, context)
+                    local isReo = LocalPlayer:GetAttribute("style") == "reo"
+                    if isReo and Core:getSkill4ToolName() ~= "Frost Guard" then
+                        return false
+                    end
+
+                    local skill = isReo and "skill4" or "skill2"
+
+                    if Core:isOnCooldown(skill) then
+                        return false
+                    end
+
+                    if ball and ball.Position.Y < variant.skill2MinHeight then
+                        return false
+                    end
+
+                    local contextMissing = context == nil
+                    if variant.useJump
+                        and ball
+                        and (ball.Position.Y >= 5 or contextMissing) then
+                        jump()
+                    end
+
+                    aggressiveFire(
+                        skill,
+                        isReo and Enum.KeyCode.Four or Enum.KeyCode.Two
+                    )
+
+                    return true
+                end
+
+                AutoDefensive:Register(variant)
+            end
+
+            return AutoDefensive
+        end
+
+        local env = (getgenv and getgenv()) or _G
+        if type(env.CeleronEvoRERuntime) == "table"
+            and type(env.CeleronEvoRERuntime.destroy) == "function" then
+            pcall(env.CeleronEvoRERuntime.destroy)
+        end
+
+        local player = Players.LocalPlayer
+        local core = createCoreHelpers({
+            replicatedStorage = ReplicatedStorage,
+            workspace = workspace,
+            player = player,
+        })
+
+        local distanceEngine = createDistanceEngine({
+            player = player,
+            runService = RunService,
+        })
+
+        local movementGroups = {}
+        local movementBuffs = {}
+        local sourceDistance = {}
+
+        for characterName, configs in pairs(MovementConfigs) do
+            local group = {enabled = false, buffs = {}}
+            movementGroups[characterName] = group
+
+            for _, definition in ipairs(configs) do
+                local buff = distanceEngine:addConfig(definition)
+                buff.enabled = false
+                sourceDistance[buff] = buff.distance
+                table.insert(group.buffs, buff)
+                table.insert(movementBuffs, buff)
+            end
+        end
+
+        local distanceFolder = maintab:Folder("EvoHub Distance Increase (RE).", Color3.fromRGB(24, 255, 228), true)
+        distanceFolder:Label("74 recovered source configs. Opt-in so old working movement buffs do not double-trigger.")
+        distanceFolder:Label("The original EvoHub converts source Distance to actual travel with x6.")
+
+        local distanceScale = 1
+        local function refreshDistances()
+            for buff, baseDistance in pairs(sourceDistance) do
+                buff.distance = math.clamp(baseDistance * distanceScale, 0.1, buff.maxDistance or 15)
+            end
+        end
+
+        distanceFolder:Slider("RE Distance Scale", 1, 0.25, 2.5, 0.05, function(value)
+            distanceScale = value
+            refreshDistances()
+        end)
+
+        local groupNames = {}
+        for name in pairs(movementGroups) do table.insert(groupNames, name) end
+        table.sort(groupNames)
+
+        for _, characterName in ipairs(groupNames) do
+            local group = movementGroups[characterName]
+            distanceFolder:Toggle(characterName .. " Distance Buffs", function(value)
+                group.enabled = value == true
+                for _, buff in ipairs(group.buffs) do
+                    buff.enabled = group.enabled
+                end
+            end)
+        end
+
+        distanceFolder:Button("Disable All RE Distance Buffs", "Turns off all 74 recovered distance configs.", function()
+            for _, group in pairs(movementGroups) do
+                group.enabled = false
+                for _, buff in ipairs(group.buffs) do buff.enabled = false end
+            end
+        end)
+
+        local defensive = createAutoDefensive({
+            players = Players,
+            runService = RunService,
+            replicatedStorage = ReplicatedStorage,
+            workspace = workspace,
+            player = player,
+            core = core,
+        })
+
+        local defenseFolder = maintab2:Folder("EvoHub Auto Defensive (RE).", Color3.fromRGB(24, 255, 228), true)
+        defenseFolder:Label("Recovered shared engine: Aiku / Kaiser / Don Lorenzo / NEL Isagi / Hiori.")
+
+        local function prefixed(variant, suffix)
+            return variant.name .. " - " .. suffix
+        end
+
+        for _, variant in ipairs(defensive.Variants) do
+            defenseFolder:Label(variant.name .. ".")
+
+            defenseFolder:Toggle(variant.name, function(value)
+                variant.enabled = value == true
+                defensive:CheckAnyEnabled()
+            end)
+
+            if variant.minBallSpeed ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Min Ball Speed"), variant.minBallSpeed, 0.1, 300, 0.1, function(value)
+                    variant.minBallSpeed = value
+                end)
+            end
+
+            if variant.useJump ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Use Jump"), nil, variant.useJump, function(value)
+                    variant.useJump = value == true
+                end)
+            end
+
+            if variant.animPredict ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Animation Predict"), nil, variant.animPredict, function(value)
+                    variant.animPredict = value == true
+                end)
+            end
+
+            if variant.useImpact ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Impact Predict"), nil, variant.useImpact, function(value)
+                    variant.useImpact = value == true
+                end)
+            end
+
+            if variant.useFlick ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Flick"), nil, variant.useFlick, function(value)
+                    variant.useFlick = value == true
+                end)
+            end
+
+            if variant.goalboxOnly ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Goalbox Only"), nil, variant.goalboxOnly, function(value)
+                    variant.goalboxOnly = value == true
+                end)
+            end
+
+            if variant.ownGoalboxOnly ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Only In Our Goalbox"), nil, variant.ownGoalboxOnly, function(value)
+                    variant.ownGoalboxOnly = value == true
+                end)
+            end
+
+            if variant.enemyGoalboxOnly ~= nil then
+                defenseFolder:Toggle(prefixed(variant, "Only Near Enemy Goalbox"), nil, variant.enemyGoalboxOnly, function(value)
+                    variant.enemyGoalboxOnly = value == true
+                end)
+            end
+
+            if variant.targetTeam ~= nil then
+                defenseFolder:Dropdown(prefixed(variant, "Target Team"), {"enemy", "teammate", "both"}, function(value)
+                    variant.targetTeam = value
+                end)
+            end
+
+            if variant.predictWindow ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Predict Window"), variant.predictWindow, 0.1, 1.5, 0.05, function(value)
+                    variant.predictWindow = value
+                end)
+            end
+
+            if variant.skill3MinHeight ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill3 Min Height"), variant.skill3MinHeight, 0, 20, 0.5, function(value)
+                    variant.skill3MinHeight = value
+                end)
+            end
+
+            if variant.skill2MinHeight ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill2 Min Height"), variant.skill2MinHeight, 0, 20, 0.5, function(value)
+                    variant.skill2MinHeight = value
+                end)
+            end
+
+            if variant.skill3MaxDist ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill3 Max Distance"), variant.skill3MaxDist, 10, 150, 1, function(value)
+                    variant.skill3MaxDist = value
+                end)
+            end
+
+            if variant.skill3MaxVert ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill3 Max Vertical"), variant.skill3MaxVert, 10, 200, 1, function(value)
+                    variant.skill3MaxVert = value
+                end)
+            end
+
+            if variant.skill4MinHeight ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill4 Min Height"), variant.skill4MinHeight, 0, 20, 0.5, function(value)
+                    variant.skill4MinHeight = value
+                end)
+            end
+
+            if variant.skill4MaxDist ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill4 Max Distance"), variant.skill4MaxDist, 10, 150, 1, function(value)
+                    variant.skill4MaxDist = value
+                end)
+            end
+
+            if variant.skill4MaxVert ~= nil then
+                defenseFolder:Slider(prefixed(variant, "Skill4 Max Vertical"), variant.skill4MaxVert, 10, 200, 1, function(value)
+                    variant.skill4MaxVert = value
+                end)
+            end
+
+            if variant.preferSkill ~= nil then
+                defenseFolder:Dropdown(prefixed(variant, "Prefer Skill"), {"Skill3", "Skill4"}, function(value)
+                    variant.preferSkill = value
+                end)
+            end
+        end
+
+        local runtime = {
+            core = core,
+            distance = distanceEngine,
+            defensive = defensive,
+            movementGroups = movementGroups,
+        }
+
+        function runtime.destroy()
+            pcall(function()
+                if distanceEngine and distanceEngine.destroy then distanceEngine:destroy() end
+            end)
+            pcall(function()
+                if defensive then
+                    for _, variant in ipairs(defensive.Variants) do variant.enabled = false end
+                    defensive:CheckAnyEnabled()
+                end
+            end)
+            if env.CeleronEvoRERuntime == runtime then
+                env.CeleronEvoRERuntime = nil
+            end
+        end
+
+        env.CeleronEvoRERuntime = runtime
+        warn("[EvoHub RE Phase2 V5] Core + 74 Distance configs + AutoDefensive READY")
+    end)
+
+    if not ok then
+        warn("[EvoHub RE Phase2 V5][BOOT] " .. tostring(err))
     end
 end)
 
