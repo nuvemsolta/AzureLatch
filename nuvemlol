@@ -510,6 +510,71 @@ local Luna = (function()
         end
         sidebarLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshSidebarCanvas)
 
+        -- V10: mobile vertical pan that still works when a swipe begins on
+        -- interactive descendants such as sliders and TextButtons.
+        local function installTouchPan(scroller)
+            local active = false
+            local startPos = nil
+            local startCanvas = nil
+            local mode = nil
+
+            local function containsPoint(pos)
+                local p = scroller.AbsolutePosition
+                local z = scroller.AbsoluteSize
+                return pos.X >= p.X and pos.X <= p.X + z.X
+                    and pos.Y >= p.Y and pos.Y <= p.Y + z.Y
+            end
+
+            UIS.InputBegan:Connect(function(input)
+                if input.UserInputType ~= Enum.UserInputType.Touch then return end
+                if not scroller.Visible or not scroller.ScrollingEnabled then return end
+                if not containsPoint(input.Position) then return end
+
+                active = true
+                startPos = input.Position
+                startCanvas = scroller.CanvasPosition
+                mode = nil
+            end)
+
+            UIS.InputChanged:Connect(function(input)
+                if not active or input.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+
+                local delta = input.Position - startPos
+
+                if mode == nil and delta.Magnitude >= 7 then
+                    if math.abs(delta.Y) > math.abs(delta.X) * 1.10 then
+                        mode = "scroll"
+                    else
+                        mode = "other"
+                    end
+                end
+
+                if mode == "scroll" then
+                    local maxY = math.max(
+                        0,
+                        scroller.AbsoluteCanvasSize.Y - scroller.AbsoluteSize.Y
+                    )
+                    scroller.CanvasPosition = Vector2.new(
+                        scroller.CanvasPosition.X,
+                        math.clamp(startCanvas.Y - delta.Y, 0, maxY)
+                    )
+                end
+            end)
+
+            UIS.InputEnded:Connect(function(input)
+                if active and input.UserInputType == Enum.UserInputType.Touch then
+                    active = false
+                    startPos = nil
+                    startCanvas = nil
+                    mode = nil
+                end
+            end)
+        end
+
+        installTouchPan(sidebarList)
+
         local info = create("Frame", {
             Name = "Info",
             Position = UDim2.new(0, 8, 1, -35),
@@ -969,6 +1034,7 @@ local Luna = (function()
             local pageList = list(page, 8, false)
             pageList.HorizontalAlignment = Enum.HorizontalAlignment.Center
             padding(page, 0, 6, 0, 8)
+            installTouchPan(page)
 
             local columns = create("Frame", {
                 Name = "Columns",
@@ -1302,6 +1368,9 @@ local Luna = (function()
                     end
 
                     local draggingSlider = false
+                    local sliderTouchStart = nil
+                    local sliderTouchMode = nil
+
                     local function updateFromX(x)
                         local width = trackFrame.AbsoluteSize.X
                         if width <= 0 then return end
@@ -1310,26 +1379,54 @@ local Luna = (function()
                     end
 
                     dragButton.InputBegan:Connect(function(input)
-                        if input.UserInputType == Enum.UserInputType.MouseButton1
-                            or input.UserInputType == Enum.UserInputType.Touch then
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then
                             draggingSlider = true
+                            sliderTouchMode = "slider"
                             updateFromX(input.Position.X)
+                        elseif input.UserInputType == Enum.UserInputType.Touch then
+                            draggingSlider = true
+                            sliderTouchStart = input.Position
+                            sliderTouchMode = nil
                         end
                     end)
 
                     dragButton.InputEnded:Connect(function(input)
-                        if input.UserInputType == Enum.UserInputType.MouseButton1
-                            or input.UserInputType == Enum.UserInputType.Touch then
+                        if input.UserInputType == Enum.UserInputType.MouseButton1 then
                             draggingSlider = false
+                            sliderTouchMode = nil
+                        elseif input.UserInputType == Enum.UserInputType.Touch then
+                            if draggingSlider and sliderTouchMode == nil then
+                                updateFromX(input.Position.X)
+                            end
+                            draggingSlider = false
+                            sliderTouchStart = nil
+                            sliderTouchMode = nil
                         end
                     end)
 
                     UIS.InputChanged:Connect(function(input)
-                        if draggingSlider and (
-                            input.UserInputType == Enum.UserInputType.MouseMovement
-                            or input.UserInputType == Enum.UserInputType.Touch
-                        ) then
+                        if not draggingSlider then return end
+
+                        if input.UserInputType == Enum.UserInputType.MouseMovement
+                            and sliderTouchMode == "slider" then
                             updateFromX(input.Position.X)
+
+                        elseif input.UserInputType == Enum.UserInputType.Touch
+                            and sliderTouchStart then
+
+                            local delta = input.Position - sliderTouchStart
+
+                            if sliderTouchMode == nil and delta.Magnitude >= 7 then
+                                if math.abs(delta.X) > math.abs(delta.Y) * 1.10 then
+                                    sliderTouchMode = "slider"
+                                else
+                                    sliderTouchMode = "scroll"
+                                end
+                            end
+
+                            if sliderTouchMode == "slider" then
+                                updateFromX(input.Position.X)
+                            end
                         end
                     end)
 
@@ -2042,7 +2139,7 @@ local Luna = (function()
     return Library
 end)()
 
--- V9: EvoHub semantic organization + mobile scroll fix + separated Player/Visuals
+-- V10: exact section placement + robust mobile vertical pan + recovered Animation Predict
 local Window = Luna:CreateWindow({
     Name = "evohub",
     Subtitle = "alpha",
@@ -2127,6 +2224,128 @@ end
 local function cleanSectionName(name)
     name = tostring(name or "Section")
     return name:gsub("%s*%.%s*$", "")
+end
+
+
+local function normalizedSectionName(name)
+    return cleanSectionName(name):lower()
+end
+
+local function sectionDisplayName(tabName, groupName, folderName)
+    local n = normalizedSectionName(folderName)
+
+    if tabName == "Main" then
+        if n == "auto dribble / counter features" then return "Auto Counter" end
+        if n == "auto line up features" then return "Auto Line Ups" end
+        if n == "line up creator features" then return "LineUp Creator" end
+        if n == "air dribble features" then return "Air Dribble" end
+        if n == "shot predictor" then return "Shot Predictor" end
+        if n == "auto position features" then return "Auto Position" end
+        if n == "ball magnet features" then return "Ball Magnet" end
+        if n == "auto goalkeeper features" then return "Auto Goalkeeper" end
+        if n == "auto goal features" then return "Auto Goal" end
+        if n == "auto activate features" then return "Auto Activate" end
+        if n == "mobile simulation keys" then return "Mobile Keyboard" end
+        if n == "utility features" then return "Misc Features" end
+        if n == "break ball features" then return "Break Ball" end
+        if n == "no cooldown features" then return "No Cooldown" end
+        if n == "ball features" then return "Ball Features" end
+        if n == "mobile silent features" then return "Mobile Silent" end
+        if n == "other features" then return "Other Features" end
+    end
+
+    return cleanSectionName(folderName)
+end
+
+local function sectionPlacement(tabName, groupName, sectionName)
+    local n = normalizedSectionName(sectionName)
+
+    if tabName == "Player" then
+        if n == "distance increase" or n == "movement buffs" then
+            return "left", 10
+        end
+        if n == "trap helper" or n == "aimbots" or n == "run flow aimbot"
+            or n == "rabona nutmeg aimbot" then
+            return "left", 20
+        end
+        if n == "instant skills" then
+            if groupName == "Nel Isagi" then return "left", 20 end
+            return "right", 10
+        end
+        if n == "auto venom trap" or n == "auto defense"
+            or n == "auto volley" or n == "auto frost guard"
+            or n == "justice header defense" or n == "silent steal defense" then
+            return "right", 10
+        end
+        if n == "animation predict" then return "right", 20 end
+        if n == "formless macro" or n == "ost" then return "right", 20 end
+
+    elseif tabName == "Visuals" then
+        if groupName == "ESP" and n == "style indicator" then
+            return "left", 10
+        end
+        if groupName == "Crosshair" then
+            if n == "crosshair" then return "left", 10 end
+            if n == "animations" then return "left", 20 end
+            if n == "style" then return "right", 10 end
+            if n == "colors" then return "right", 20 end
+        end
+        if groupName == "Ball Metavision" and n == "ball metavision" then
+            return "left", 10
+        end
+
+    elseif tabName == "Misc" then
+        if n == "ui settings" then return "left", 10 end
+        if n == "notification suppression" then return "left", 20 end
+        if n == "credits" then return "right", 10 end
+        if n == "utility features" or n == "misc features" then return "right", 20 end
+
+    elseif tabName == "Main" then
+        local left = {
+            ["auto counter"] = 10,
+            ["auto trap"] = 20,
+            ["auto line ups"] = 30,
+            ["lineup creator"] = 40,
+            ["air dribble"] = 50,
+            ["shot predictor"] = 60,
+        }
+        local right = {
+            ["auto position"] = 10,
+            ["ball magnet"] = 20,
+            ["auto goal"] = 30,
+            ["auto goalkeeper"] = 40,
+            ["auto activate"] = 50,
+            ["ball features"] = 60,
+            ["no cooldown"] = 70,
+            ["break ball"] = 80,
+            ["mobile silent"] = 90,
+            ["mobile keyboard"] = 100,
+            ["other features"] = 110,
+            ["misc features"] = 120,
+        }
+        if left[n] then return "left", left[n] end
+        if right[n] then return "right", right[n] end
+    end
+
+    return nil, nil
+end
+
+local function placeSection(realTab, section, tabName, groupName, displayName)
+    local column, order = sectionPlacement(tabName, groupName, displayName)
+
+    if column == "left" then
+        section.Frame.Parent = realTab.LeftColumn
+    elseif column == "right" then
+        section.Frame.Parent = realTab.RightColumn
+    end
+
+    if order then
+        section.Frame.LayoutOrder = order
+    end
+
+    task.defer(function()
+        if realTab.RefreshLayout then realTab.RefreshLayout() end
+    end)
 end
 
 local function makeContainer(realTab, section, tabName, folderName)
@@ -2299,8 +2518,14 @@ local function wrapTab(realTab, tabName, defaultGroup)
         local folderName = tostring(name or "Section")
         groupName = tostring(groupName or defaultGroup)
         realTab:EnsureGroup(groupName)
-        local section = realTab:CreateSection(cleanSectionName(folderName), groupName)
-        return makeContainer(realTab, section, legacyTabName or tabName, folderName)
+
+        local effectiveTabName = legacyTabName or tabName
+        local displayName = sectionDisplayName(effectiveTabName, groupName, folderName)
+        local section = realTab:CreateSection(displayName, groupName)
+
+        placeSection(realTab, section, effectiveTabName, groupName, displayName)
+
+        return makeContainer(realTab, section, effectiveTabName, folderName)
     end
 
     function tab:Folder(name, _color, _expanded)
@@ -2650,6 +2875,7 @@ task.spawn(function()
         animFolder:Slider("Pulse Max", 4, 1, 30, 1, function(v) crossState.PulseMax = v end)
 
         local colorsSection = visualsReal:CreateSection("Colors", "Crosshair")
+        placeSection(visualsReal, colorsSection, "Visuals", "Crosshair", "Colors")
         colorsSection:CreateColorPicker({
             Name = "Line Color", CurrentColor = crossState.LineColor,
             Callback = function(v) crossState.LineColor = v end
@@ -9075,6 +9301,32 @@ task.spawn(function()
                     folder:Dropdown("Prefer", {"Skill3", "Skill4"}, function(value)
                         variant.preferSkill = value
                     end)
+                end
+
+                if variant.AnimationDelayControls and variant.animations then
+                    local predictFolder = playerUI:FolderInGroup(
+                        pageName,
+                        "Animation Predict.",
+                        Color3.fromRGB(24, 255, 228),
+                        true,
+                        "Player"
+                    )
+
+                    for _, control in ipairs(variant.AnimationDelayControls) do
+                        local info = variant.animations[control.id]
+                        if info then
+                            predictFolder:Slider(
+                                control.name,
+                                tonumber(info.delay) or 0,
+                                0,
+                                2,
+                                0.01,
+                                function(value)
+                                    info.delay = value
+                                end
+                            )
+                        end
+                    end
                 end
             end
         end
