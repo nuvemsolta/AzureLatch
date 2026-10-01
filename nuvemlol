@@ -1440,7 +1440,7 @@ ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.",
 end)
 
 local autodrib = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
-autodrib:Label("Auto Counter V3: waits for a real steal threat to enter your hitbox window.")
+autodrib:Label("Auto Counter V3.1: threat timing + runtime fix.")
 
 local counterPlayers = game:GetService("Players")
 local counterRS = game:GetService("RunService")
@@ -1540,7 +1540,7 @@ local counterState = {
     lastDetectedStyle = nil,
 }
 
-local counterRuntime = {version = 3}
+local counterRuntime = {version = 3.1}
 counterEnv.CeleronCounterRuntime = counterRuntime
 
 local function now()
@@ -1553,6 +1553,19 @@ local function trace(tag, message)
     if #list > 70 then
         table.remove(list, 1)
     end
+end
+
+local function safeCounterCall(tag, callback)
+    local ok, result = pcall(callback)
+
+    if not ok then
+        local message = tostring(result)
+        trace("ERROR", tostring(tag) .. " | " .. message)
+        warn("[AutoCounter V3.1][" .. tostring(tag) .. "] " .. message)
+        return false, result
+    end
+
+    return true, result
 end
 
 local function notifyCounter(title, text, duration)
@@ -1950,8 +1963,10 @@ local function fireSkill(skillName, teammate, allowRecentPossession)
         args = {counterPacket, {{skillName}}}
     end
 
+    -- Always exactly two ByteNet carrier arguments here.
+    -- Do NOT use global unpack(); some executors do not expose it.
     local ok = pcall(function()
-        counterRemote:FireServer(unpack(args))
+        counterRemote:FireServer(args[1], args[2])
     end)
 
     return ok
@@ -2257,20 +2272,21 @@ local function watchAnimator(animator, plr, record)
 
     record.connections[#record.connections + 1] =
         animator.AnimationPlayed:Connect(function(track)
+            safeCounterCall("AnimationPlayed", function()
+                if counterState.destroyed
+                    or not track
+                    or not track.Animation
+                    or not strictEnemy(plr) then
+                    return
+                end
 
-            if counterState.destroyed
-                or not track
-                or not track.Animation
-                or not strictEnemy(plr) then
-                return
-            end
+                local animationId =
+                    tostring(track.Animation.AnimationId or ""):match("%d+")
 
-            local animationId =
-                tostring(track.Animation.AnimationId or ""):match("%d+")
-
-            if animationId and threatProfiles[animationId] then
-                startThreat(plr, track, animationId)
-            end
+                if animationId and threatProfiles[animationId] then
+                    startThreat(plr, track, animationId)
+                end
+            end)
         end)
 end
 
@@ -2329,20 +2345,22 @@ end))
 -- One cheap simulation loop. No "touching player = counter" logic exists here.
 -- It only evaluates players who are CURRENTLY playing a known steal/tackle anim.
 addGeneral(counterRS.PreSimulation:Connect(function()
-    if counterState.destroyed then return end
+    safeCounterCall("PreSimulation", function()
+        if counterState.destroyed then return end
 
-    local t = now()
-    if hasBall() then
-        counterState.lastHadBallAt = t
-    end
-
-    for plr, threat in pairs(counterState.threats) do
-        if threatStillAlive(threat, t) then
-            evaluateThreat(threat, t)
-        else
-            finishThreat(plr, "expired/stopped")
+        local t = now()
+        if hasBall() then
+            counterState.lastHadBallAt = t
         end
-    end
+
+        for plr, threat in pairs(counterState.threats) do
+            if threatStillAlive(threat, t) then
+                evaluateThreat(threat, t)
+            else
+                finishThreat(plr, "expired/stopped")
+            end
+        end
+    end)
 end))
 
 local function selectStyle(style, source)
@@ -2389,7 +2407,7 @@ end
 
 local function counterDiagnostics()
     local lines = {
-        "========== AUTO COUNTER V3 DIAGNOSTICS ==========",
+        "========== AUTO COUNTER V3.1 DIAGNOSTICS ==========",
         "style=" .. tostring(counterState.lastDetectedStyle),
         "mcd=" .. tostring(counterState.mCD),
         string.format("ping=%.0fms", pingSeconds() * 1000),
@@ -2455,7 +2473,9 @@ autodrib:Button(
     "Auto Detect Counter",
     "Reads attributes + the real skill hotbar. It does not scan the Celeron UI.",
     function()
-        autoDetectCharacter()
+        safeCounterCall("AutoDetectButton", function()
+            autoDetectCharacter()
+        end)
     end
 )
 
@@ -2559,13 +2579,15 @@ task.spawn(function()
     task.wait(2)
 
     if not counterState.destroyed then
-        autoDetectCharacter()
+        safeCounterCall("AutoDetectBoot", function()
+            autoDetectCharacter()
+        end)
     end
 end)
 
 function counterRuntime.getState()
     return {
-        version = 3,
+        version = 3.1,
         style = counterState.lastDetectedStyle,
         mCD = counterState.mCD,
         ping = pingSeconds(),
@@ -2607,6 +2629,7 @@ function counterRuntime.destroy()
     end
 end
 
+warn("[AutoCounter V3.1] READY | no global unpack dependency | threat tracker armed")
 updateCounterUI()
 
 local autogoal = maintab:Folder("Auto Goal Features.", Color3.fromRGB(24, 255, 228), true)
