@@ -1,3 +1,8 @@
+-- [[ V16 CAPTURE PARITY PATCH ]]
+-- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
+-- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
+-- Native UI settings are evidence-driven; custom extras remain separate.
+
 -- evo hub // re — STABLE ROLLBACK BASE
 -- V15_CONTINUED local build restored after V19 bootstrap regression.
 -- No PlaceId redirect / no optional remote feature-pack loaders.
@@ -2338,6 +2343,34 @@ local function makeContainer(realTab, section, tabName, folderName)
         }, key)
     end
 
+    function container:Keybind(name, defaultKey, mode, callback)
+        callback = type(callback) == "function" and callback or function() end
+        defaultKey = typeof(defaultKey) == "EnumItem" and defaultKey or Enum.KeyCode.Unknown
+        mode = tostring(mode or "Toggle")
+
+        local key = controlKey(tabName, folderName, name)
+        local saved = configGet(key, defaultKey.Name)
+        local current = defaultKey
+
+        if type(saved) == "string" and Enum.KeyCode[saved] then
+            current = Enum.KeyCode[saved]
+        elseif typeof(saved) == "EnumItem" then
+            current = saved
+        end
+
+        return section:CreateKeybind({
+            Name = tostring(name or "Keybind"),
+            CurrentKeybind = current,
+            Mode = mode,
+            Callback = callback,
+            ChangedCallback = function(newKey)
+                if typeof(newKey) == "EnumItem" then
+                    configSet(key, newKey.Name)
+                end
+            end
+        }, key)
+    end
+
     function container:Slider(name, currentValue, minimum, maximum, increment, callback)
         callback = type(callback) == "function" and callback or function() end
         local key = controlKey(tabName, folderName, name)
@@ -2646,10 +2679,9 @@ task.spawn(function()
         end
 
         local function fireKickN(power, vector)
+            -- V16 capture: false + vector are fields of the SAME inner kick packet.
             return fireUseN({
-                { "kick", tonumber(power) or 24 },
-                false,
-                vector
+                { "kick", tonumber(power) or 24, false, vector }
             })
         end
 
@@ -2813,13 +2845,14 @@ task.spawn(function()
                 IsPlayingAnimation = false,
                 AnimationDuration = 0.5,
                 AutoJumpEnabled = false,
-                JumpAfterKick = true,
+                JumpAfterKick = false,
                 IsKeyHeld = false,
                 Height = 50,
-                Forward = 1,
-                Power = 29,
+                Forward = 1.15,
+                Power = 28,
                 VectorScale = 50,
                 MobileGui = nil,
+                MobileConnections = {},
             }
 
             local function cameraBlocked()
@@ -2940,7 +2973,7 @@ task.spawn(function()
             local function setEnabled(v)
                 state.Enabled = v == true
                 state.IsPlayingAnimation = false
-                state.JumpAfterKick = state.Enabled
+                state.JumpAfterKick = false
                 state.IsKeyHeld = false
                 state.IsActive = false
 
@@ -2952,6 +2985,14 @@ task.spawn(function()
             end
 
             local function removeMobile()
+                for i = 1, #state.MobileConnections do
+                    local connection = state.MobileConnections[i]
+                    if connection then
+                        pcall(function() connection:Disconnect() end)
+                    end
+                end
+                table.clear(state.MobileConnections)
+
                 if state.MobileGui then
                     pcall(function() state.MobileGui:Destroy() end)
                     state.MobileGui = nil
@@ -3005,8 +3046,93 @@ task.spawn(function()
                 button.BackgroundTransparency = 1
                 button.Text = ""
                 button.Size = UDim2.fromScale(1, 1)
+                button.AutoButtonColor = false
                 button.Parent = frame
-                button.Activated:Connect(execute)
+
+                -- Mobile parity: the original control can be repositioned.
+                -- Keep tap and drag separate so moving the button never fires Air Dribble.
+                local dragging = false
+                local activeInput = nil
+                local dragStart = nil
+                local frameStart = nil
+                local moved = false
+                local DRAG_THRESHOLD = 8
+
+                local function keepConnection(connection)
+                    state.MobileConnections[#state.MobileConnections + 1] = connection
+                    return connection
+                end
+
+                local function viewportSize()
+                    local cam = WorkspaceN.CurrentCamera
+                    return cam and cam.ViewportSize or Vector2.new(800, 600)
+                end
+
+                local function updateDrag(input)
+                    if not dragging or not dragStart or not frameStart then return end
+
+                    local delta = input.Position - dragStart
+                    if delta.Magnitude >= DRAG_THRESHOLD then
+                        moved = true
+                    end
+
+                    local viewport = viewportSize()
+                    local halfX = math.max(1, frame.AbsoluteSize.X * 0.5)
+                    local halfY = math.max(1, frame.AbsoluteSize.Y * 0.5)
+
+                    local centerX = frameStart.X + halfX + delta.X
+                    local centerY = frameStart.Y + halfY + delta.Y
+
+                    centerX = math.clamp(centerX, halfX, math.max(halfX, viewport.X - halfX))
+                    centerY = math.clamp(centerY, halfY, math.max(halfY, viewport.Y - halfY))
+
+                    frame.Position = UDim2.fromOffset(centerX, centerY)
+                end
+
+                keepConnection(button.InputBegan:Connect(function(input)
+                    if input.UserInputType == Enum.UserInputType.Touch
+                        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+
+                        dragging = true
+                        activeInput = input
+                        dragStart = input.Position
+                        frameStart = frame.AbsolutePosition
+                        moved = false
+                    end
+                end))
+
+                keepConnection(UserInputServiceN.InputChanged:Connect(function(input)
+                    if not dragging then return end
+
+                    if activeInput and activeInput.UserInputType == Enum.UserInputType.Touch then
+                        if input == activeInput then
+                            updateDrag(input)
+                        end
+                    elseif input.UserInputType == Enum.UserInputType.MouseMovement then
+                        updateDrag(input)
+                    end
+                end))
+
+                keepConnection(UserInputServiceN.InputEnded:Connect(function(input)
+                    if not dragging then return end
+
+                    local isActiveTouch = activeInput
+                        and activeInput.UserInputType == Enum.UserInputType.Touch
+                        and input == activeInput
+                    local isMouseRelease = input.UserInputType == Enum.UserInputType.MouseButton1
+
+                    if isActiveTouch or isMouseRelease then
+                        local shouldExecute = not moved
+                        dragging = false
+                        activeInput = nil
+                        dragStart = nil
+                        frameStart = nil
+
+                        if shouldExecute then
+                            execute()
+                        end
+                    end
+                end))
 
                 state.MobileGui = gui
             end
@@ -3032,7 +3158,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Forward",
                 "Forward",
-                0, 20, 1, 0.05,
+                0, 20, 1.15, 0.05,
                 function(v) state.Forward = v end
             )
             state.Forward = initialForward
@@ -3041,7 +3167,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Power",
                 "Power",
-                1, 100, 29, 0.5,
+                1, 100, 28, 0.5,
                 function(v) state.Power = v end
             )
             state.Power = initialPower
@@ -3078,7 +3204,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Mobile Button",
                 "Mobile Button",
-                true,
+                false,
                 setMobileButton
             )
 
@@ -5213,56 +5339,119 @@ task.spawn(function()
         end)
 
         -- ---------------- Ball Metavision ----------------
-        local ballMetaEnabled = true
-        local metaFolder = visualsUI:FolderInGroup("Ball Metavision", "Ball Metavision.", Color3.fromRGB(24,255,228), true, "Visuals")
-        metaFolder:Toggle("Ball Metavision", nil, true, function(v)
-            ballMetaEnabled = v == true
-        end)
-
-        local ballHighlight
-        local currentBall
+        -- V16 capture: one native toggle, default false, StartOld/Stop/Start lifecycle.
+        local ballMetaEnabled = false
+        local ballHighlight = nil
+        local currentBall = nil
+        local metaConnection = nil
 
         local function findBall()
             local terrain = WorkspaceV:FindFirstChildOfClass("Terrain")
             local ball = terrain and terrain:FindFirstChild("Ball")
             if ball and ball:IsA("BasePart") then return ball end
 
+            local directBall = WorkspaceV:FindFirstChild("Ball")
+            if directBall then
+                if directBall:IsA("BasePart") then return directBall end
+                if directBall:IsA("Model") then
+                    local part = directBall.PrimaryPart or directBall:FindFirstChildWhichIsA("BasePart", true)
+                    if part then return part end
+                end
+            end
+
             local football = WorkspaceV:FindFirstChild("Football")
-            if football and football:IsA("BasePart") then return football end
+            if football then
+                if football:IsA("BasePart") then return football end
+                if football:IsA("Model") then
+                    local part = football.PrimaryPart or football:FindFirstChildWhichIsA("BasePart", true)
+                    if part then return part end
+                end
+            end
 
             for _, plr in ipairs(PlayersV:GetPlayers()) do
                 local char = plr.Character
                 local held = char and char:FindFirstChild("Ball")
-                if held and held:IsA("BasePart") then return held end
+                if held then
+                    if held:IsA("BasePart") then return held end
+                    if held:IsA("Model") then
+                        local part = held.PrimaryPart or held:FindFirstChildWhichIsA("BasePart", true)
+                        if part then return part end
+                    end
+                end
             end
             return nil
         end
 
-        RunServiceV.Heartbeat:Connect(function()
-            if not ballMetaEnabled then
-                if ballHighlight then ballHighlight.Enabled = false end
+        local function destroyBallMetaVisual()
+            currentBall = nil
+            if ballHighlight then
+                pcall(function() ballHighlight:Destroy() end)
+                ballHighlight = nil
+            end
+        end
+
+        local function updateBallMeta()
+            if not ballMetaEnabled then return end
+
+            local ball = findBall()
+            if not ball then
+                destroyBallMetaVisual()
                 return
             end
 
-            local ball = findBall()
-            if ball ~= currentBall then
+            if ball ~= currentBall or not ballHighlight or not ballHighlight.Parent then
+                destroyBallMetaVisual()
                 currentBall = ball
-                if ballHighlight then ballHighlight:Destroy() end
-                ballHighlight = nil
 
-                if ball then
-                    ballHighlight = Instance.new("Highlight")
-                    ballHighlight.Name = "EvoHubBallMetavision"
-                    ballHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    ballHighlight.FillColor = Color3.fromRGB(149,138,204)
-                    ballHighlight.OutlineColor = Color3.fromRGB(225,220,255)
-                    ballHighlight.FillTransparency = 0.45
-                    ballHighlight.OutlineTransparency = 0
-                    ballHighlight.Adornee = ball
-                    ballHighlight.Parent = uiParent()
-                end
-            elseif ballHighlight then
+                ballHighlight = Instance.new("Highlight")
+                ballHighlight.Name = "EvoHubBallMetavision"
+                ballHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                ballHighlight.FillColor = Color3.fromRGB(149, 138, 204)
+                ballHighlight.OutlineColor = Color3.fromRGB(225, 220, 255)
+                ballHighlight.FillTransparency = 0.45
+                ballHighlight.OutlineTransparency = 0
+                ballHighlight.Adornee = ball
+
+                -- A Highlight is a world visual; parenting it to CoreGui was the RE bug.
+                ballHighlight.Parent = WorkspaceV
+            else
                 ballHighlight.Enabled = true
+            end
+        end
+
+        local function stopBallMeta()
+            ballMetaEnabled = false
+            if metaConnection then
+                metaConnection:Disconnect()
+                metaConnection = nil
+            end
+            destroyBallMetaVisual()
+        end
+
+        local function startBallMeta()
+            if metaConnection then
+                metaConnection:Disconnect()
+                metaConnection = nil
+            end
+
+            ballMetaEnabled = true
+            updateBallMeta()
+            metaConnection = RunServiceV.Heartbeat:Connect(updateBallMeta)
+        end
+
+        local metaFolder = visualsUI:FolderInGroup(
+            "Ball Metavision",
+            "Ball Metavision.",
+            Color3.fromRGB(24,255,228),
+            true,
+            "Visuals"
+        )
+
+        metaFolder:Toggle("Ball Metavision", nil, false, function(v)
+            if v == true then
+                startBallMeta()
+            else
+                stopBallMeta()
             end
         end)
     end)
@@ -12077,13 +12266,13 @@ end
 
 
 -- ================================================================
--- EVOHUB RE LINEUPS V4
+-- EVOHUB RE LINEUPS V5 - V16 CAPTURE PARITY
 -- Reconstructed from the user's EvoHub runtime dump + lineups.json.
 -- Important:
 --   * exact old EvoHub marker geometry (single neon Cylinder)
 --   * exact default position tolerance (3.5)
---   * exact smooth-aim defaults (0.15s)
---   * optional auto snap / skill execute are OFF by default for testing
+--   * V16 native smooth-aim default (0.08s)
+--   * no invented native UI controls; style lifecycle auto-switches markers
 --   * embedded 1300-lineup database + external JSON import support
 -- ================================================================
 do
@@ -12161,16 +12350,21 @@ do
         local state = {
             enabled = false,
             selectedStyle = "Auto",
-            markerMode = "Nearby",
-            useFreeze = true,
+            markerMode = "All (EvoHub)",
+            useFreeze = false,
             smoothAiming = false,
-            smoothness = 0.15,
+            smoothness = 0.08,
             useAccuracy = false,
             accuracy = 100,
+            disableBasicLineups = true,
             positionTolerance = 3.5,
             autoSnap = false,
             autoExecute = false,
             importPath = "lineups.json",
+            suspendedStyle = nil,
+            observedStyle = nil,
+            lifecycleConnection = nil,
+            lifecycleAccumulator = 0,
             indexed = false,
             index = {},
             pool = {},
@@ -12383,7 +12577,7 @@ do
             return importJSON(raw)
         end
 
-        local function reloadExternal()
+        local function reloadExternal(silent)
             if not ensureIndex() then return end
             local total = 0
             local seen = {}
@@ -12415,7 +12609,9 @@ do
                 state.lastPoolTeam = nil
             end
 
-            notify(total > 0 and ("Imported " .. total .. " new lineup(s).") or "No new lineups found.")
+            if not silent then
+                notify(total > 0 and ("Imported " .. total .. " new lineup(s).") or "No new lineups found.")
+            end
         end
 
         local function groundPosition(target)
@@ -12448,7 +12644,7 @@ do
             part.Shape = Enum.PartType.Cylinder
             part.Material = Enum.Material.Neon
             part.Color = markerColor(entry.style)
-            part.Transparency = 0.5
+            part.Transparency = 0.3
             part.Anchored = true
             part.CanCollide = false
             part.CanTouch = false
@@ -12527,9 +12723,13 @@ do
             local team = getCurrentTeam()
 
             if not style or not STYLE_CONFIG[style] or not team then
+                -- Native CreateMarkers destroys the previous style's markers first.
+                -- V4 only did this when force=true, leaving orphan markers after a style swap.
                 state.pool = {}
                 state.active = nil
-                if force then rebuildMarkers() end
+                state.lastPoolStyle = nil
+                state.lastPoolTeam = nil
+                rebuildMarkers()
                 return false
             end
 
@@ -12843,7 +13043,7 @@ do
                 return
             end
 
-            reloadExternal()
+            reloadExternal(true)
             rebuildPool(true)
 
             state.scanAccumulator = 0
@@ -12863,8 +13063,9 @@ do
                 if state.scanAccumulator < 0.04 then return end
                 state.scanAccumulator = 0
 
-                -- Keep legacy Celeron lineups from fighting this system.
-                if padCount and padCount > 0 then
+                -- Native default is "Disable Basic Lineups" = true.
+                -- Only yield to the legacy/basic Celeron pads when the user explicitly allows them.
+                if not state.disableBasicLineups and padCount and padCount > 0 then
                     setActive(nil)
                     return
                 end
@@ -12880,97 +13081,134 @@ do
             end)
         end
 
-        autoline:Label("EvoHub RE Auto Lineups")
+        -- V16 native visible controls:
+        -- Enable / Toggle Line Ups [C] / Use Freeze / Smooth Aiming / Smoothness /
+        -- Use Accuracy / Accuracy / Disable Basic Lineups.
+        local enableToggle
 
-        autoline:Dropdown(
-            "EvoHub Lineup Style",
-            STYLE_OPTIONS,
-            "Auto = reads your current style.",
-            function(value)
-                state.selectedStyle = value or "Auto"
-                state.lastPoolStyle = nil
-                state.lastPoolTeam = nil
-                if state.enabled then rebuildPool(true) end
+        local function syncEnableToggle(value)
+            if enableToggle and type(enableToggle.SetValue) == "function" then
+                enableToggle:SetValue(value == true, true)
             end
-        )
+        end
 
-        autoline:Dropdown(
-            "EvoHub Marker Mode",
-            {"Nearby", "All (EvoHub)"},
-            "Nearby is lighter; All recreates every marker for your style/team.",
-            function(value)
-                state.markerMode = value or "Nearby"
-                if state.enabled then rebuildMarkers() end
+        local function manualSetEnabled(value)
+            local style = getCurrentStyle()
+
+            if value == true then
+                state.suspendedStyle = nil
+                state.enabled = true
+                startRuntime()
+                syncEnableToggle(state.enabled)
+            else
+                state.suspendedStyle = style
+                state.enabled = false
+                stopRuntime()
+                syncEnableToggle(false)
             end
-        )
+        end
 
-        autoline:Slider("Lineup Position Tolerance", 3.5, 1, 8, 0.1, function(value)
-            state.positionTolerance = tonumber(value) or 3.5
-        end)
-
-        autoline:Toggle("EvoHub Use Freeze", "Freeze during snap/skill execution.", true, function(value)
+        autoline:Toggle("Use Freeze", nil, false, function(value)
             state.useFreeze = value == true
             if not state.useFreeze then freeFreeze() end
         end)
 
-        autoline:Toggle("EvoHub Smooth Aiming", "Sine-Out camera aim like EvoHub.", false, function(value)
+        autoline:Toggle("Smooth Aiming", nil, false, function(value)
             state.smoothAiming = value == true
         end)
 
-        autoline:Slider("EvoHub Smoothness", 0.15, 0.01, 0.50, 0.01, function(value)
-            state.smoothness = tonumber(value) or 0.15
+        autoline:Slider("Smoothness", 0.08, 0.01, 0.50, 0.01, function(value)
+            state.smoothness = tonumber(value) or 0.08
         end)
 
-        autoline:Toggle("EvoHub Use Accuracy", "Allows intentionally imperfect aim.", false, function(value)
+        autoline:Toggle("Use Accuracy", nil, false, function(value)
             state.useAccuracy = value == true
         end)
 
-        autoline:Slider("EvoHub Accuracy", 100, 50, 100, 1, function(value)
+        autoline:Slider("Accuracy", 100, 50, 100, 1, function(value)
             state.accuracy = tonumber(value) or 100
         end)
 
-        autoline:Toggle("EvoHub Auto Snap", "Snaps exactly to targetPosition when you enter a lineup.", false, function(value)
-            state.autoSnap = value == true
+        autoline:Toggle("Disable Basic Lineups", nil, true, function(value)
+            state.disableBasicLineups = value == true
         end)
 
-        autoline:Toggle("EvoHub Auto Execute Skill", "Experimental: uses recovered EvoHub style skill mapping.", false, function(value)
-            state.autoExecute = value == true
+        enableToggle = autoline:Toggle("Enable", nil, false, function(value)
+            manualSetEnabled(value == true)
         end)
 
-        autoline:Textbox("Lineup Import File", "lineups.json", function(value)
-            if type(value) == "string" and value ~= "" then
-                state.importPath = value
-            end
-        end)
-
-        autoline:Button("Reload Imported Lineups", "Reads lineups.json / EvoHubAlpha/lineups*.json.", function()
-            reloadExternal()
-            if state.enabled then rebuildPool(true) end
-        end)
-
-        autoline:Toggle(
-            "EvoHub Auto Lineups",
-            "1300 embedded lineups + imported JSON files.",
-            false,
-            function(value)
-                state.enabled = value == true
-                if state.enabled then
-                    startRuntime()
-                else
-                    stopRuntime()
-                end
+        autoline:Keybind(
+            "Toggle Line Ups",
+            Enum.KeyCode.C,
+            "Toggle",
+            function(pressed)
+                if not pressed then return end
+                manualSetEnabled(not state.enabled)
             end
         )
 
+        -- User-requested lifecycle parity:
+        -- each newly equipped supported style auto-starts its lineups;
+        -- changing to another supported style rebuilds them;
+        -- unsupported/nil style always clears the previous markers.
+        state.lifecycleConnection = RunService.Heartbeat:Connect(function(dt)
+            state.lifecycleAccumulator += dt
+            if state.lifecycleAccumulator < 0.20 then return end
+            state.lifecycleAccumulator = 0
+
+            local style = getCurrentStyle()
+            local team = getCurrentTeam()
+
+            if style ~= state.observedStyle then
+                state.observedStyle = style
+                state.suspendedStyle = nil
+            end
+
+            local eligible = style
+                and STYLE_CONFIG[style] ~= nil
+                and team ~= nil
+
+            if not eligible then
+                if state.enabled then
+                    state.enabled = false
+                    stopRuntime()
+                else
+                    state.pool = {}
+                    state.lastPoolStyle = nil
+                    state.lastPoolTeam = nil
+                    rebuildMarkers()
+                end
+
+                syncEnableToggle(false)
+                return
+            end
+
+            if state.suspendedStyle == style then
+                if state.enabled then
+                    state.enabled = false
+                    stopRuntime()
+                end
+                syncEnableToggle(false)
+                return
+            end
+
+            if not state.enabled then
+                state.enabled = true
+                startRuntime()
+                syncEnableToggle(state.enabled)
+            end
+        end)
+
         player.CharacterAdded:Connect(function()
-            task.wait(0.25)
+            task.wait(0.15)
             setActive(nil)
             freeFreeze()
             state.lastPoolStyle = nil
             state.lastPoolTeam = nil
-            if state.enabled then
-                rebuildPool(true)
-            end
+            state.observedStyle = nil
+            destroyAllMarkers()
+            -- lifecycleConnection restarts the correct style automatically
+            -- once the new character/state is available.
         end)
     end
 
@@ -13555,47 +13793,38 @@ do
             end)
         end
 
-        folder:Label("Recovered EvoHub physics: Yukimiya / Kaiser / Sae / Rin / Karasu")
-
-        folder:Dropdown("Predictor Style", STYLE_OPTIONS, "Auto reads your current style.", function(value)
-            state.selectedStyle = value or "Auto"
-        end)
-
-        folder:Slider("Predictor Update Rate", 30, 15, 60, 1, function(value)
-            state.updateRate = tonumber(value) or 30
-        end)
-
-        folder:Slider("Predictor Vertical Aim", 1, 0.5, 1.5, 0.05, function(value)
-            state.verticalMultiplier = tonumber(value) or 1
-        end)
-
-        folder:Slider("Predictor Line Thickness", 0.2, 0.05, 0.5, 0.05, function(value)
-            state.lineThickness = tonumber(value) or 0.2
-        end)
-
-        folder:Toggle("Predictor Only Near Enemy Goal", "Matches EvoHub's optional goal-box filter.", false, function(value)
-            state.onlyNearEnemyGoal = value == true
-        end)
-
-        folder:Toggle("Predictor Only In Our Goal", "Matches EvoHub's optional own-goal filter.", false, function(value)
+        -- V16 native section has exactly four visible controls.
+        folder:Toggle("Only In Our Goalbox", nil, false, function(value)
             state.onlyInOurGoal = value == true
         end)
 
-        folder:Toggle("Predictor Only When GK", "Only render while your role is GK.", false, function(value)
+        folder:Toggle("Only Near Goal", nil, false, function(value)
+            state.onlyNearEnemyGoal = value == true
+        end)
+
+        folder:Toggle("Only When GK", nil, false, function(value)
             state.onlyWhenGK = value == true
         end)
 
-        folder:Button("Clear Predictor Visuals", function()
-            clearVisual()
-        end)
-
-        folder:Toggle("Shot Predictor", "Recovered EvoHub trajectory simulation.", false, function(value)
-            if value then
-                start()
-            else
-                stop()
+        local predictorToggle = folder:Toggle(
+            "Shot Predictor",
+            nil,
+            true,
+            function(value)
+                if value then
+                    start()
+                else
+                    stop()
+                end
             end
-        end)
+        )
+
+        -- Captured native default is ON.
+        if predictorToggle and type(predictorToggle.SetValue) == "function" then
+            predictorToggle:SetValue(true)
+        else
+            start()
+        end
 
         player.CharacterAdded:Connect(function()
             task.wait(0.25)
