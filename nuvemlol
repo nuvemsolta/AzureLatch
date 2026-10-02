@@ -361,17 +361,17 @@ local Luna = (function()
         local brandFrame = create("Frame", {
             Name = "Frame",
             Position = UDim2.fromOffset(12, 0),
-            Size = UDim2.fromOffset(90, 28),
+            Size = UDim2.fromOffset(150, 28),
             BackgroundTransparency = 1,
             ZIndex = 3,
         }, topBar)
 
-        local brand = "evohub"
+        local brand = tostring(settings.Name or "evo hub // re")
         local brandLetters = {}
         for index = 1, #brand do
             local letter = create("TextLabel", {
                 Name = "TextLabel",
-                Position = UDim2.fromOffset((index - 1) * 11, 0),
+                Position = UDim2.fromOffset((index - 1) * 10, 0),
                 Size = UDim2.fromOffset(14, 28),
                 BackgroundTransparency = 1,
                 Text = brand:sub(index, index),
@@ -491,119 +491,23 @@ local Luna = (function()
             Name = "List",
             Position = UDim2.fromOffset(8, 15),
             Size = UDim2.new(1, -16, 1, -55),
+            AutomaticSize = Enum.AutomaticSize.None,
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            CanvasSize = UDim2.new(),
-            AutomaticCanvasSize = Enum.AutomaticSize.None,
-            Active = true,
-            ScrollingEnabled = true,
-            ScrollingDirection = Enum.ScrollingDirection.Y,
-            ElasticBehavior = Enum.ElasticBehavior.Always,
+            ClipsDescendants = true,
+            CanvasSize = UDim2.new(0, 0, 0, 0),
+            CanvasPosition = Vector2.new(0, 0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            Active = false,
+            Selectable = true,
+            ScrollingDirection = Enum.ScrollingDirection.XY,
             ScrollBarThickness = 2,
             ScrollBarImageColor3 = Theme.Accent,
+            ScrollBarImageTransparency = 0,
             ZIndex = 3,
         }, sidebar)
         setAccent(sidebarList, "ScrollBarImageColor3")
         local sidebarLayout = list(sidebarList, 4, false)
-        local function refreshSidebarCanvas()
-            local height = math.max(0, sidebarLayout.AbsoluteContentSize.Y + 8)
-
-            for _, child in ipairs(sidebarList:GetChildren()) do
-                if child:IsA("GuiObject") and child.Visible then
-                    local bottom =
-                        child.AbsolutePosition.Y
-                        - sidebarList.AbsolutePosition.Y
-                        + sidebarList.CanvasPosition.Y
-                        + child.AbsoluteSize.Y
-                        + 8
-
-                    if bottom > height then
-                        height = bottom
-                    end
-                end
-            end
-
-            local trailingRoom = math.max(30, sidebarList.AbsoluteSize.Y * 0.35)
-            sidebarList.CanvasSize = UDim2.new(0, 0, 0, height + trailingRoom)
-        end
-        sidebarLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(refreshSidebarCanvas)
-
-        -- V10: mobile vertical pan that still works when a swipe begins on
-        -- interactive descendants such as sliders and TextButtons.
-        local function installTouchPan(scroller)
-            local active = false
-            local startPos = nil
-            local startCanvas = nil
-            local mode = nil
-
-            local function containsPoint(pos)
-                local p = scroller.AbsolutePosition
-                local z = scroller.AbsoluteSize
-                return pos.X >= p.X and pos.X <= p.X + z.X
-                    and pos.Y >= p.Y and pos.Y <= p.Y + z.Y
-            end
-
-            UIS.InputBegan:Connect(function(input)
-                if input.UserInputType ~= Enum.UserInputType.Touch then return end
-                if not scroller.Visible or not scroller.ScrollingEnabled then return end
-                if not containsPoint(input.Position) then return end
-
-                active = true
-                startPos = input.Position
-                startCanvas = scroller.CanvasPosition
-                mode = nil
-            end)
-
-            UIS.InputChanged:Connect(function(input)
-                if not active or input.UserInputType ~= Enum.UserInputType.Touch then
-                    return
-                end
-
-                local delta = input.Position - startPos
-
-                if mode == nil and delta.Magnitude >= 7 then
-                    if math.abs(delta.Y) > math.abs(delta.X) * 1.10 then
-                        mode = "scroll"
-                    else
-                        mode = "other"
-                    end
-                end
-
-                if mode == "scroll" then
-                    local canvasHeight = scroller.CanvasSize.Y.Offset
-                    if canvasHeight <= 0 then
-                        canvasHeight = scroller.AbsoluteCanvasSize.Y
-                    end
-
-                    local maxY = math.max(
-                        0,
-                        canvasHeight - scroller.AbsoluteSize.Y
-                    )
-                    scroller.CanvasPosition = Vector2.new(
-                        scroller.CanvasPosition.X,
-                        math.clamp(startCanvas.Y - delta.Y, 0, maxY)
-                    )
-                end
-            end)
-
-            UIS.InputEnded:Connect(function(input)
-                if active and input.UserInputType == Enum.UserInputType.Touch then
-                    active = false
-                    startPos = nil
-                    startCanvas = nil
-                    mode = nil
-                end
-            end)
-        end
-
-        installTouchPan(sidebarList)
-
-        task.spawn(function()
-            while gui and gui.Parent and sidebarList and sidebarList.Parent do
-                refreshSidebarCanvas()
-                task.wait(0.10)
-            end
-        end)
 
         local info = create("Frame", {
             Name = "Info",
@@ -746,7 +650,6 @@ local Luna = (function()
 
             contentScroll.CanvasPosition = Vector2.new(0, 0)
             setSidebarSelected(groupName)
-            task.defer(refreshSidebarCanvas)
         end
 
         local function addSidebarEntry(tab, groupName)
@@ -808,7 +711,6 @@ local Luna = (function()
             for _, groupName in ipairs(tab.Groups) do
                 addSidebarEntry(tab, groupName)
             end
-            task.defer(refreshSidebarCanvas)
 
             local target = tab.SelectedGroup
                 or (tab.DefaultGroup and tab.GroupSet[tab.DefaultGroup] and tab.DefaultGroup)
@@ -2168,10 +2070,10 @@ local Luna = (function()
     return Library
 end)()
 
--- V13: ORIGINAL single-ContentScroll architecture + organized features
+-- V15: native EvoHub feature-body pass + exact sidebar
 local Window = Luna:CreateWindow({
-    Name = "evohub",
-    Subtitle = "alpha",
+    Name = "evo hub // re",
+    Subtitle = "re",
     LogoID = "6031097225",
     LoadingEnabled = false,
     ConfigSettings = {
@@ -2272,7 +2174,6 @@ local function sectionDisplayName(tabName, groupName, folderName)
         if n == "auto position features" then return "Auto Position" end
         if n == "ball magnet features" then return "Ball Magnet" end
         if n == "auto goalkeeper features" then return "Auto Goalkeeper" end
-        if n == "auto goal features" then return "Auto Goal" end
         if n == "auto activate features" then return "Auto Activate" end
         if n == "mobile simulation keys" then return "Mobile Keyboard" end
         if n == "utility features" then return "Misc Features" end
@@ -2293,21 +2194,38 @@ local function sectionPlacement(tabName, groupName, sectionName)
         if n == "distance increase" or n == "movement buffs" then
             return "left", 10
         end
-        if n == "trap helper" or n == "aimbots" or n == "run flow aimbot"
-            or n == "rabona nutmeg aimbot" then
-            return "left", 20
+
+        if n == "trap helper" then
+            return "left", 30
         end
+
+        if n == "aimbots" then
+            if groupName == "Aiku" then return "left", 20 end
+            return "right", 10
+        end
+
+        if n == "run flow aimbot" then
+            return "left", 25
+        end
+
+        if n == "rabona nutmeg aimbot" then
+            return "right", 20
+        end
+
         if n == "instant skills" then
             if groupName == "Nel Isagi" then return "left", 20 end
             return "right", 10
         end
+
         if n == "auto venom trap" or n == "auto defense"
             or n == "auto volley" or n == "auto frost guard"
             or n == "justice header defense" or n == "silent steal defense" then
             return "right", 10
         end
+
         if n == "animation predict" then return "right", 20 end
-        if n == "formless macro" or n == "ost" then return "right", 20 end
+        if n == "formless macro" then return "right", 20 end
+        if n == "ost" then return "right", 30 end
 
     elseif tabName == "Visuals" then
         if groupName == "ESP" and n == "style indicator" then
@@ -2341,7 +2259,6 @@ local function sectionPlacement(tabName, groupName, sectionName)
         local right = {
             ["auto position"] = 10,
             ["ball magnet"] = 20,
-            ["auto goal"] = 30,
             ["auto goalkeeper"] = 40,
             ["auto activate"] = 50,
             ["ball features"] = 60,
@@ -2633,6 +2550,2274 @@ end
 
 local maintab = makeLegacyRouter("Blatant")
 local maintab2 = makeLegacyRouter("Silent")
+
+
+-- ================================================================
+-- EVOHUB NATIVE FEATURE PASS V15 - CONTINUED
+-- Recovered from the original MoonVeil stage + FeatureBodyRip V8.
+--
+-- This pass intentionally uses the EvoHub behavior/configs instead of
+-- reusing similarly named legacy Celeron implementations.
+-- ================================================================
+task.spawn(function()
+    local okNative, nativeErr = pcall(function()
+        local PlayersN = game:GetService("Players")
+        local RunServiceN = game:GetService("RunService")
+        local ReplicatedStorageN = game:GetService("ReplicatedStorage")
+        local WorkspaceN = game:GetService("Workspace")
+        local StarterGuiN = game:GetService("StarterGui")
+        local UserInputServiceN = game:GetService("UserInputService")
+
+        local LocalPlayerN = PlayersN.LocalPlayer
+
+        -- ------------------------------------------------------------
+        -- Shared helpers recovered from EvoHub semantics.
+        -- ------------------------------------------------------------
+        local function notifyN(text)
+            pcall(function()
+                StarterGuiN:SetCore("SendNotification", {
+                    Title = "evo hub // re",
+                    Text = tostring(text or ""),
+                    Duration = 2,
+                })
+            end)
+        end
+
+        local function getStyleN()
+            local style = LocalPlayerN:GetAttribute("style")
+            if style == nil and LocalPlayerN.Character then
+                style = LocalPlayerN.Character:GetAttribute("style")
+            end
+            return tostring(style or ""):lower()
+        end
+
+        local function realCharacterN()
+            local chars = WorkspaceN:FindFirstChild("characters")
+            return (chars and chars:FindFirstChild(LocalPlayerN.Name))
+                or LocalPlayerN.Character
+        end
+
+        local function hasBallN(player)
+            player = player or LocalPlayerN
+            local chars = WorkspaceN:FindFirstChild("characters")
+            local char = chars and chars:FindFirstChild(player.Name)
+            if not char then char = player.Character end
+            return char and char:FindFirstChild("Ball") ~= nil
+        end
+
+        local function stateTeamN(player)
+            player = player or LocalPlayerN
+            local chars = WorkspaceN:FindFirstChild("characters")
+            local char = chars and chars:FindFirstChild(player.Name)
+            if char then
+                local state = char:FindFirstChild("state")
+                local team = state and (state:FindFirstChild("team") or state:FindFirstChild("Team"))
+                if team and team:IsA("ValueBase") then
+                    return tostring(team.Value)
+                end
+            end
+            return player.Team and tostring(player.Team.Name) or nil
+        end
+
+        local function aliveN(player)
+            local char = player and player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            return hum and hum.Health > 0
+        end
+
+        local usePacketIdN = 30
+        pcall(function()
+            local networking = ReplicatedStorageN
+                :WaitForChild("BytenetStorage", 4)
+                :WaitForChild("Networking", 4)
+            if networking and networking:IsA("StringValue") then
+                local found = networking.Value:match('"bytenet_use"%s*:%s*(%d+)')
+                if found then
+                    usePacketIdN = tonumber(found) or usePacketIdN
+                end
+            end
+        end)
+
+        local function useBufferN()
+            return buffer.fromstring(string.char(usePacketIdN) .. string.char(1))
+        end
+
+        local function reliableN()
+            return ReplicatedStorageN:FindFirstChild("ByteNetReliable")
+        end
+
+        local function fireUseN(payload)
+            local remote = reliableN()
+            if not remote then return false end
+            local ok = pcall(function()
+                remote:FireServer(useBufferN(), payload)
+            end)
+            return ok
+        end
+
+        local function fireSkillN(skill)
+            return fireUseN({ { tostring(skill) } })
+        end
+
+        local function fireKickN(power, vector)
+            return fireUseN({
+                { "kick", tonumber(power) or 24 },
+                false,
+                vector
+            })
+        end
+
+        local function onCooldownN(skillName)
+            local pg = LocalPlayerN:FindFirstChildOfClass("PlayerGui")
+            local hotbar = pg
+                and pg:FindFirstChild("Hotbar")
+                and pg.Hotbar:FindFirstChild("Backpack")
+                and pg.Hotbar.Backpack:FindFirstChild("Hotbar")
+
+            local slot = hotbar and hotbar:FindFirstChild(tostring(skillName))
+            local cooldown = slot and slot:FindFirstChild("Cooldown")
+            return cooldown and cooldown.Visible == true or false
+        end
+
+        local function getFlowN()
+            local char = realCharacterN()
+            local state = char and char:FindFirstChild("state")
+            local flow = state and (state:FindFirstChild("flow") or state:FindFirstChild("Flow"))
+            return flow and tonumber(flow.Value) or 0
+        end
+
+        local function lastAwakenIsMeN()
+            local folder = ReplicatedStorageN:FindFirstChild("workspace")
+            local last = folder and folder:FindFirstChild("lastAwaken")
+            if not last then return false end
+
+            local value = last.Value
+            if value == LocalPlayerN then return true end
+            if tostring(value) == LocalPlayerN.Name then return true end
+            if typeof(value) == "Instance" and value.Name == LocalPlayerN.Name then return true end
+            return false
+        end
+
+        local function toolTextMatchesN(slotName, wanted)
+            local pg = LocalPlayerN:FindFirstChildOfClass("PlayerGui")
+            local hotbar = pg
+                and pg:FindFirstChild("Hotbar")
+                and pg.Hotbar:FindFirstChild("Backpack")
+                and pg.Hotbar.Backpack:FindFirstChild("Hotbar")
+
+            local slot = hotbar and hotbar:FindFirstChild(tostring(slotName))
+            local base = slot and slot:FindFirstChild("Base")
+            local name = base and base:FindFirstChild("ToolName")
+            return name and tostring(name.Text) == tostring(wanted)
+        end
+
+        local function styleAllowedN(styles)
+            local style = getStyleN()
+            if type(styles) == "string" then
+                return styles == "all" or style == styles
+            end
+            if type(styles) == "table" then
+                for _, allowed in ipairs(styles) do
+                    if allowed == "all" or style == tostring(allowed):lower() then
+                        return true
+                    end
+                end
+            end
+            return false
+        end
+
+        local function sectionN(tabReal, tabName, group, name)
+            tabReal:EnsureGroup(group)
+            local section = tabReal:CreateSection(name, group)
+            placeSection(tabReal, section, tabName, group, name)
+            return section
+        end
+
+        local function savedBoolN(key, default)
+            local v = configGet(key, default)
+            if type(v) ~= "boolean" then v = default end
+            return v
+        end
+
+        local function savedNumberN(key, default)
+            local v = configGet(key, default)
+            if type(v) ~= "number" then v = default end
+            return v
+        end
+
+        local function savedKeyN(key, default)
+            local v = configGet(key, default.Name)
+            if typeof(v) == "EnumItem" then return v end
+            if type(v) == "string" then
+                return Enum.KeyCode[v] or default
+            end
+            return default
+        end
+
+        local function addToggleN(section, key, name, default, callback)
+            local initial = savedBoolN(key, default)
+            local object = section:CreateToggle({
+                Name = name,
+                CurrentValue = initial,
+                Callback = function(v)
+                    configSet(key, v == true)
+                    callback(v == true)
+                end
+            }, key)
+            return object, initial
+        end
+
+        local function addSliderN(section, key, name, min, max, default, step, callback)
+            local initial = savedNumberN(key, default)
+            local object = section:CreateSlider({
+                Name = name,
+                Range = { min, max },
+                CurrentValue = initial,
+                Increment = step,
+                Callback = function(v)
+                    configSet(key, v)
+                    callback(v)
+                end
+            }, key)
+            return object, initial
+        end
+
+        local function addKeybindN(section, key, name, default, mode, callback)
+            local initial = savedKeyN(key, default)
+            return section:CreateKeybind({
+                Name = name,
+                CurrentKeybind = initial,
+                Mode = mode or "Hold",
+                ManualWatermark = true,
+                ChangedCallback = function(newKey)
+                    configSet(key, newKey.Name)
+                end,
+                Callback = callback,
+            }, key), initial
+        end
+
+        local function makeTrackN(animationId)
+            local char = LocalPlayerN.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not hum then return nil end
+            local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 2)
+            if not animator then return nil end
+
+            local anim = Instance.new("Animation")
+            anim.AnimationId = "rbxassetid://" .. tostring(animationId)
+            local track
+            pcall(function()
+                track = animator:LoadAnimation(anim)
+            end)
+            anim:Destroy()
+            return track
+        end
+
+        -- ========================================================
+        -- AIR DRIBBLE (original EvoHub behavior)
+        -- ========================================================
+        do
+            local section = sectionN(mainReal, "Main", "Main", "Air Dribble")
+            local state = {
+                Enabled = false,
+                CurrentTrack = nil,
+                LastExecution = 0,
+                ExecutionDelay = 0.15,
+                IsActive = false,
+                IsPlayingAnimation = false,
+                AnimationDuration = 0.5,
+                AutoJumpEnabled = false,
+                JumpAfterKick = true,
+                IsKeyHeld = false,
+                Height = 50,
+                Forward = 1,
+                Power = 29,
+                VectorScale = 50,
+                MobileGui = nil,
+            }
+
+            local function cameraBlocked()
+                local cam = WorkspaceN.CurrentCamera
+                return cam and (
+                    cam.CameraType == Enum.CameraType.Scriptable
+                    or cam.CameraType == Enum.CameraType.Fixed
+                )
+            end
+
+            local function stopAnim()
+                if state.CurrentTrack then
+                    pcall(function() state.CurrentTrack:Stop() end)
+                    state.CurrentTrack = nil
+                end
+                state.IsPlayingAnimation = false
+                state.JumpAfterKick = false
+            end
+
+            local function playAnim()
+                if state.CurrentTrack then
+                    pcall(function() state.CurrentTrack:Stop() end)
+                end
+
+                local track = makeTrackN("76587445975710")
+                state.CurrentTrack = track
+                if track then pcall(function() track:Play() end) end
+                state.IsPlayingAnimation = true
+                state.JumpAfterKick = true
+
+                task.delay(state.AnimationDuration, function()
+                    if state.Enabled then
+                        state.IsPlayingAnimation = false
+                    end
+                end)
+            end
+
+            local function kickVector(root)
+                local look = root.CFrame.LookVector
+                local v = Vector3.new(
+                    look.X * state.Forward,
+                    state.Height,
+                    look.Z * state.Forward
+                )
+                if v.Magnitude <= 0 then
+                    return Vector3.new(0, state.VectorScale, 0)
+                end
+                return v.Unit * state.VectorScale
+            end
+
+            local function autoJump()
+                if not state.AutoJumpEnabled then return end
+
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+
+                local start = tick()
+                while tick() - start <= 1 do
+                    local humState = hum:GetState()
+                    if humState == Enum.HumanoidStateType.Landed
+                        or humState == Enum.HumanoidStateType.Running
+                        or humState == Enum.HumanoidStateType.RunningNoPhysics then
+
+                        task.wait(0.03)
+                        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                        hum.Jump = true
+                        return
+                    end
+                    task.wait()
+                end
+            end
+
+            local function execute()
+                if not state.Enabled or cameraBlocked() then return false end
+
+                local now = tick()
+                if now - state.LastExecution < state.ExecutionDelay then
+                    return false
+                end
+
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return false end
+
+                if not hasBallN() then
+                    stopAnim()
+                    return false
+                end
+
+                playAnim()
+                fireKickN(state.Power, kickVector(root))
+
+                if state.AutoJumpEnabled then
+                    task.spawn(function()
+                        task.wait(0.15)
+                        autoJump()
+                    end)
+                end
+
+                state.LastExecution = now
+                return true
+            end
+
+            local function holdLoop()
+                while state.Enabled and state.IsKeyHeld do
+                    if cameraBlocked() then
+                        task.wait(0.1)
+                    elseif hasBallN() then
+                        execute()
+                        task.wait()
+                    else
+                        task.wait()
+                    end
+                end
+            end
+
+            local function setEnabled(v)
+                state.Enabled = v == true
+                state.IsPlayingAnimation = false
+                state.JumpAfterKick = state.Enabled
+                state.IsKeyHeld = false
+                state.IsActive = false
+
+                if not state.Enabled then
+                    stopAnim()
+                end
+
+                notifyN("Air Dribble " .. (state.Enabled and "Enabled" or "Disabled"))
+            end
+
+            local function removeMobile()
+                if state.MobileGui then
+                    pcall(function() state.MobileGui:Destroy() end)
+                    state.MobileGui = nil
+                end
+            end
+
+            local function setMobileButton(v)
+                removeMobile()
+                if not v then return end
+                if not (UserInputServiceN.TouchEnabled and not UserInputServiceN.KeyboardEnabled) then
+                    return
+                end
+
+                local pg = LocalPlayerN:WaitForChild("PlayerGui")
+                local gui = Instance.new("ScreenGui")
+                gui.Name = "MobileButton_Air Dribble"
+                gui.ResetOnSpawn = false
+                gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                gui.Parent = pg
+
+                local frame = Instance.new("Frame")
+                frame.Size = UDim2.fromOffset(60, 60)
+                frame.Position = UDim2.new(0.42, 0, 0.5, 0)
+                frame.AnchorPoint = Vector2.new(0.5, 0.5)
+                frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+                frame.BackgroundTransparency = 0.3
+                frame.BorderSizePixel = 0
+                frame.Parent = gui
+
+                local corner = Instance.new("UICorner")
+                corner.CornerRadius = UDim.new(0, 12)
+                corner.Parent = frame
+
+                local stroke = Instance.new("UIStroke")
+                stroke.Color = Color3.fromRGB(255, 255, 255)
+                stroke.Thickness = 2
+                stroke.Transparency = 0.5
+                stroke.Parent = frame
+
+                local label = Instance.new("TextLabel")
+                label.BackgroundTransparency = 1
+                label.Size = UDim2.fromScale(1, 1)
+                label.Text = "Air Dribble"
+                label.TextColor3 = Color3.new(1, 1, 1)
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 12
+                label.TextWrapped = true
+                label.Parent = frame
+
+                local button = Instance.new("TextButton")
+                button.BackgroundTransparency = 1
+                button.Text = ""
+                button.Size = UDim2.fromScale(1, 1)
+                button.Parent = frame
+                button.Activated:Connect(execute)
+
+                state.MobileGui = gui
+            end
+
+            local toggle, initialEnabled = addToggleN(
+                section,
+                "Main_Main_Air Dribble_Enable",
+                "Enable",
+                false,
+                setEnabled
+            )
+
+            local _, initialJump = addToggleN(
+                section,
+                "Main_Main_Air Dribble_Auto Jump",
+                "Auto Jump",
+                false,
+                function(v) state.AutoJumpEnabled = v end
+            )
+            state.AutoJumpEnabled = initialJump
+
+            local _, initialForward = addSliderN(
+                section,
+                "Main_Main_Air Dribble_Forward",
+                "Forward",
+                0, 20, 1, 0.05,
+                function(v) state.Forward = v end
+            )
+            state.Forward = initialForward
+
+            local _, initialPower = addSliderN(
+                section,
+                "Main_Main_Air Dribble_Power",
+                "Power",
+                1, 100, 29, 0.5,
+                function(v) state.Power = v end
+            )
+            state.Power = initialPower
+
+            local keybind
+            keybind = addKeybindN(
+                section,
+                "Main_Main_Air Dribble_Air Dribble",
+                "Air Dribble",
+                Enum.KeyCode.LeftAlt,
+                "Hold",
+                function(pressed)
+                    if not state.Enabled then return end
+
+                    if keybind and keybind.Mode == "Toggle" then
+                        if pressed and not cameraBlocked() and hasBallN() and not state.IsPlayingAnimation then
+                            execute()
+                        end
+                        return
+                    end
+
+                    if pressed then
+                        state.IsKeyHeld = true
+                        state.IsActive = true
+                        task.spawn(holdLoop)
+                    else
+                        state.IsKeyHeld = false
+                        state.IsActive = false
+                    end
+                end
+            )
+
+            local _, initialMobile = addToggleN(
+                section,
+                "Main_Main_Air Dribble_Mobile Button",
+                "Mobile Button",
+                true,
+                setMobileButton
+            )
+
+            if initialEnabled then
+                setEnabled(true)
+            end
+            if initialMobile then
+                setMobileButton(true)
+            end
+        end
+
+        -- ========================================================
+        -- GENERIC EVOHUB INSTANT-SKILL ENGINE
+        -- ========================================================
+        local function newInstantSkill(section, groupName, cfg)
+            local state = {
+                enabled = false,
+                executing = false,
+                wasFlow100 = false,
+                ready = false,
+                animUsed = false,
+                track = nil,
+                heartbeat = nil,
+                charConn = nil,
+            }
+
+            local styles = cfg.styles or cfg.style
+            local requireBall = cfg.requireBall ~= false
+            local requireFlowDrop = cfg.requireFlowDrop ~= false
+            local requireLastAwaken = cfg.requireLastAwaken == true
+            local blockOnce = cfg.blockOnce ~= false
+            local blockAnimIds = cfg.blockAnimIds or {}
+
+            local function reset()
+                state.wasFlow100 = false
+                state.ready = false
+                state.animUsed = false
+                state.executing = false
+            end
+
+            local function stopAnim()
+                if state.track then
+                    pcall(function() state.track:Stop() end)
+                    state.track = nil
+                end
+            end
+
+            local function playAnim()
+                stopAnim()
+                if cfg.playAnimId then
+                    state.track = makeTrackN(cfg.playAnimId)
+                    if state.track then pcall(function() state.track:Play() end) end
+                end
+            end
+
+            local function hasBlockedAnimation()
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local animator = hum and hum:FindFirstChildOfClass("Animator")
+                if not animator then return false end
+
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    for _, blockId in ipairs(blockAnimIds) do
+                        if id:find(tostring(blockId), 1, true) then
+                            return true
+                        end
+                    end
+                end
+                return false
+            end
+
+            local function nearestCheck(radius, enemiesOnly)
+                if not radius then return true end
+
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return false end
+                local myTeam = stateTeamN(LocalPlayerN)
+
+                for _, player in ipairs(PlayersN:GetPlayers()) do
+                    if player ~= LocalPlayerN and aliveN(player) then
+                        local team = stateTeamN(player)
+                        if team ~= "lobby" and (not enemiesOnly or team ~= myTeam) then
+                            local otherRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                            if otherRoot and (otherRoot.Position - root.Position).Magnitude <= radius then
+                                return true
+                            end
+                        end
+                    end
+                end
+                return false
+            end
+
+            local function tickState()
+                if not state.enabled then return end
+
+                if requireLastAwaken and not lastAwakenIsMeN() then
+                    reset()
+                    return
+                end
+
+                local flow = getFlowN()
+
+                if flow >= 100 then
+                    state.wasFlow100 = true
+                    state.ready = false
+                    state.animUsed = false
+                elseif state.wasFlow100 and flow < 100 then
+                    state.ready = true
+                else
+                    state.ready = false
+                end
+
+                if flow <= 0 then
+                    reset()
+                elseif hasBlockedAnimation() then
+                    state.animUsed = true
+                end
+            end
+
+            local function execute()
+                if state.executing or not state.enabled then return false end
+                if not styleAllowedN(styles) then return false end
+                if requireBall and not hasBallN() then return false end
+
+                if cfg.toolSlot and cfg.toolText
+                    and not toolTextMatchesN(cfg.toolSlot, cfg.toolText) then
+                    return false
+                end
+
+                if cfg.enemyRadius and not nearestCheck(cfg.enemyRadius, true) then
+                    return false
+                end
+
+                if cfg.playerRadius and not nearestCheck(cfg.playerRadius, false) then
+                    return false
+                end
+
+                if requireLastAwaken and not lastAwakenIsMeN() then
+                    return false
+                end
+
+                if requireFlowDrop and (not state.ready or (blockOnce and state.animUsed)) then
+                    return false
+                end
+
+                if onCooldownN(cfg.skillName) then
+                    return false
+                end
+
+                state.executing = true
+                state.animUsed = true
+
+                playAnim()
+                task.wait(cfg.delay or 0.1)
+
+                if cfg.kickPower then
+                    local vector = cfg.kickVector or Vector3.new(0, 1, 0)
+
+                    if cfg.kickFromLook then
+                        local char = LocalPlayerN.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        if not root then
+                            state.executing = false
+                            return false
+                        end
+                        vector = root.CFrame.LookVector + Vector3.new(0, 1, 0) * 50
+                    end
+
+                    fireKickN(cfg.kickPower, vector)
+                end
+
+                fireSkillN(cfg.skillName)
+                notifyN(cfg.name .. " Executed")
+                state.executing = false
+                return true
+            end
+
+            local function start()
+                if state.enabled then return end
+                state.enabled = true
+                reset()
+
+                if state.heartbeat then state.heartbeat:Disconnect() end
+                state.heartbeat = RunServiceN.Heartbeat:Connect(tickState)
+
+                if state.charConn then state.charConn:Disconnect() end
+                state.charConn = LocalPlayerN.CharacterAdded:Connect(function()
+                    task.wait(1)
+                    reset()
+                end)
+
+                notifyN(cfg.name .. " Enabled")
+            end
+
+            local function stop()
+                state.enabled = false
+                stopAnim()
+                reset()
+
+                if state.heartbeat then
+                    state.heartbeat:Disconnect()
+                    state.heartbeat = nil
+                end
+                if state.charConn then
+                    state.charConn:Disconnect()
+                    state.charConn = nil
+                end
+
+                notifyN(cfg.name .. " Disabled")
+            end
+
+            local path = "Player_" .. groupName .. "_Instant Skills_" .. cfg.name
+            local toggle, initial = addToggleN(
+                section, path, cfg.name, false,
+                function(v)
+                    if v then start() else stop() end
+                end
+            )
+
+            addKeybindN(
+                section,
+                path .. " Keybind",
+                cfg.name .. " Keybind",
+                cfg.key or Enum.KeyCode.V,
+                "Hold",
+                function(pressed)
+                    if pressed then execute() end
+                end
+            )
+
+            if initial then start() end
+            return state
+        end
+
+        local instantGroups = {
+            Bachira = {
+                {
+                    name = "Instant Monster Leap",
+                    style = "bachira",
+                    skillName = "Tspecialer",
+                    playAnimId = "76587445975710",
+                    requireFlowDrop = false,
+                    kickPower = 29,
+                    kickFromLook = true,
+                    key = Enum.KeyCode.Y,
+                },
+                {
+                    name = "Instant Air Bon",
+                    style = "bachira",
+                    skillName = "skill3",
+                    playAnimId = "76587445975710",
+                    requireFlowDrop = false,
+                    kickPower = 29,
+                    kickFromLook = true,
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Otoya = {
+                {
+                    name = "Instant Center Of The World",
+                    style = "otoya",
+                    skillName = "skill5",
+                    playAnimId = "76587445975710",
+                    playerRadius = 40,
+                    blockOnce = false,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Shidou = {
+                {
+                    name = "Instant Big Bang Drive",
+                    style = "shidou",
+                    skillName = "skill4",
+                    playAnimId = "76587445975710",
+                    blockAnimIds = { "132876424584395" },
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+                {
+                    name = "Instant Dragon Drive",
+                    style = "shidou",
+                    skillName = "skill5",
+                    playAnimId = "76587445975710",
+                    blockAnimIds = { "92214239049423" },
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.Y,
+                },
+            },
+            Nagi = {
+                {
+                    name = "Instant Heavy Variant",
+                    style = "nagi",
+                    skillName = "skill3",
+                    blockAnimIds = { "130372168910538" },
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Karasu = {
+                {
+                    name = "Instant Dive-Bomb Assault",
+                    style = "karasu",
+                    skillName = "skill3",
+                    blockOnce = false,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Kunigami = {
+                {
+                    name = "Instant Demon's Contract",
+                    style = "kunigami",
+                    skillName = "skill5",
+                    enemyRadius = 50,
+                    blockOnce = false,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Sae = {
+                {
+                    name = "Instant Drive Shot Variant",
+                    style = "sae",
+                    skillName = "skill3",
+                    blockAnimIds = { "83477287588669" },
+                    requireLastAwaken = true,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Reo = {
+                {
+                    name = "Instant Chameleon Volley",
+                    style = "reo",
+                    skillName = "skill5",
+                    toolSlot = "skill5",
+                    toolText = "Chameleon Volley",
+                    enemyRadius = 50,
+                    blockAnimIds = { "127577513196952" },
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            Rin = {
+                {
+                    name = "Instant Curve Shot Variant",
+                    style = "rin",
+                    skillName = "skill3",
+                    enemyRadius = 50,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+            ["Nel Isagi"] = {
+                {
+                    name = "Instant Two Gun Volley",
+                    style = "nelisagi",
+                    skillName = "skill5",
+                    blockAnimIds = { "116783590202845" },
+                    enemyRadius = 40,
+                    kickPower = 24,
+                    kickVector = Vector3.new(0, 1, 0),
+                    key = Enum.KeyCode.V,
+                },
+            },
+        }
+
+        for groupName, configs in pairs(instantGroups) do
+            local section = sectionN(playerReal, "Player", groupName, "Instant Skills")
+            for _, cfg in ipairs(configs) do
+                newInstantSkill(section, groupName, cfg)
+            end
+        end
+
+        -- ========================================================
+        -- GENERIC EVOHUB ANIMATION AIMBOT ENGINE
+        -- ========================================================
+        local function newAimbot(section, groupName, sectionName, cfg)
+            local state = {
+                enabled = false,
+                aiming = false,
+                currentTarget = nil,
+                animator = nil,
+                velocity = Vector3.zero,
+                oldPos = nil,
+                usePrediction = true,
+                prediction = 0.5,
+                smoothness = 0.5,
+                aimConn = nil,
+                monitorConn = nil,
+                charConn = nil,
+            }
+
+            local function getClosestEnemy()
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local myTeam = stateTeamN(LocalPlayerN)
+                if not root or not myTeam or myTeam == "lobby" then return nil end
+
+                local closest, closestDistance = nil, cfg.maxDistance or 1000
+
+                for _, player in ipairs(PlayersN:GetPlayers()) do
+                    if player ~= LocalPlayerN and aliveN(player) then
+                        local team = stateTeamN(player)
+                        if team and team ~= "lobby" and team ~= myTeam then
+                            if not cfg.requireBall or hasBallN(player) then
+                                local targetRoot = player.Character
+                                    and player.Character:FindFirstChild("HumanoidRootPart")
+                                if targetRoot then
+                                    local dist = (targetRoot.Position - root.Position).Magnitude
+                                    if dist < closestDistance then
+                                        closest = player
+                                        closestDistance = dist
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                return closest
+            end
+
+            local function stopAim()
+                state.aiming = false
+                state.currentTarget = nil
+                state.velocity = Vector3.zero
+                state.oldPos = nil
+                if state.aimConn then
+                    state.aimConn:Disconnect()
+                    state.aimConn = nil
+                end
+            end
+
+            local function aimTick(dt)
+                if not state.aiming then
+                    stopAim()
+                    return
+                end
+
+                local target = state.currentTarget
+                if not target or not target.Character
+                    or (cfg.requireBall and not hasBallN(target)) then
+                    target = getClosestEnemy()
+                    state.currentTarget = target
+                    state.oldPos = nil
+                    state.velocity = Vector3.zero
+                end
+
+                local targetRoot = target and target.Character
+                    and target.Character:FindFirstChild("HumanoidRootPart")
+                local camera = WorkspaceN.CurrentCamera
+
+                if not targetRoot or not camera then return end
+
+                if state.oldPos and dt > 0 then
+                    local delta = targetRoot.Position - state.oldPos
+                    local measured = Vector3.new(
+                        delta.X / dt,
+                        (delta.Y / dt) * 0.94,
+                        delta.Z / dt
+                    )
+                    state.velocity = state.velocity:Lerp(measured, 0.4)
+                end
+                state.oldPos = targetRoot.Position
+
+                local pos = targetRoot.Position
+                if cfg.hasPrediction and state.usePrediction then
+                    pos += state.velocity * state.prediction
+                end
+
+                local desired = CFrame.new(camera.CFrame.Position, pos)
+                if cfg.hasPrediction then
+                    camera.CFrame = camera.CFrame:Lerp(desired, state.smoothness)
+                else
+                    camera.CFrame = desired
+                end
+            end
+
+            local function startAim()
+                if state.aiming then return end
+                state.aiming = true
+                state.currentTarget = getClosestEnemy()
+                state.velocity = Vector3.zero
+                state.oldPos = nil
+
+                if state.aimConn then state.aimConn:Disconnect() end
+                state.aimConn = RunServiceN.RenderStepped:Connect(aimTick)
+            end
+
+            local function animationPlaying()
+                if not state.animator then return false end
+                for _, track in ipairs(state.animator:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    if id:find(tostring(cfg.animId), 1, true)
+                        and track.TimePosition >= (cfg.delay or 0) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function monitor()
+                if not state.enabled or not styleAllowedN(cfg.styles or cfg.style)
+                    or not state.animator then
+                    if state.aiming then stopAim() end
+                    return
+                end
+
+                local playing = animationPlaying()
+                if playing and not state.aiming then
+                    startAim()
+                elseif not playing and state.aiming then
+                    stopAim()
+                end
+            end
+
+            local function setupCharacter(char)
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+                state.animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
+
+                if state.monitorConn then state.monitorConn:Disconnect() end
+                state.monitorConn = RunServiceN.Heartbeat:Connect(monitor)
+            end
+
+            local function start()
+                if state.enabled then return end
+                state.enabled = true
+                if LocalPlayerN.Character then setupCharacter(LocalPlayerN.Character) end
+
+                if state.charConn then state.charConn:Disconnect() end
+                state.charConn = LocalPlayerN.CharacterAdded:Connect(function(char)
+                    task.wait(1)
+                    if state.enabled then setupCharacter(char) end
+                end)
+
+                notifyN(cfg.name .. " Enabled")
+            end
+
+            local function stop()
+                state.enabled = false
+                stopAim()
+                state.animator = nil
+
+                if state.monitorConn then
+                    state.monitorConn:Disconnect()
+                    state.monitorConn = nil
+                end
+                if state.charConn then
+                    state.charConn:Disconnect()
+                    state.charConn = nil
+                end
+
+                notifyN(cfg.name .. " Disabled")
+            end
+
+            local path = "Player_" .. groupName .. "_" .. sectionName .. "_" .. cfg.name
+            local toggle, initial = addToggleN(
+                section, path, cfg.name, false,
+                function(v)
+                    if v then start() else stop() end
+                end
+            )
+
+            if cfg.defaultKey then
+                addKeybindN(
+                    section,
+                    path .. " Keybind",
+                    cfg.name,
+                    cfg.defaultKey,
+                    "Toggle",
+                    function(pressed)
+                        if pressed then
+                            toggle:SetValue(not toggle.Value)
+                        end
+                    end
+                )
+            end
+
+            if cfg.hasPrediction then
+                local _, initialPredictionToggle = addToggleN(
+                    section,
+                    path .. " Prediction",
+                    cfg.name .. " Prediction",
+                    true,
+                    function(v) state.usePrediction = v end
+                )
+                state.usePrediction = initialPredictionToggle
+
+                local _, initialPrediction = addSliderN(
+                    section,
+                    path .. " Prediction Value",
+                    cfg.name .. " Prediction Value",
+                    0, 1, 0.5, 0.1,
+                    function(v) state.prediction = v end
+                )
+                state.prediction = initialPrediction
+            end
+
+            if initial then start() end
+            return state
+        end
+
+        -- ========================================================
+        -- SAE AUTO REFLEX RABONA NUTMEG TACKLING
+        -- Recovered behavior:
+        --   * only while Sae's generic tackle animation is playing
+        --   * remember a nearby (<=15) ball owner
+        --   * after the local player wins the ball, listen for one of the
+        --     three captured reflex sounds on that previous owner
+        --   * when still within 12 studs, trigger Tspecialer (when ready)
+        --     followed by skill2
+        -- ========================================================
+        local function addSaeAutoReflexN(section)
+            local state = {
+                enabled = false,
+                target = nil,
+                triggered = false,
+            }
+
+            local tackleAnimation = "109744655458082"
+            local reflexSounds = {
+                ["91659314150979"] = true,
+                ["113245624532376"] = true,
+                ["101213707639775"] = true,
+            }
+
+            local function localTacklePlaying()
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then return false end
+
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    if id:find(tackleAnimation, 1, true) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function hasReflexSound(model)
+                local root = model and model:FindFirstChild("HumanoidRootPart")
+                if not root then return false end
+
+                for _, child in ipairs(root:GetChildren()) do
+                    if child:IsA("Sound") then
+                        local id = tostring(child.SoundId or "")
+                        for wanted in pairs(reflexSounds) do
+                            if id:find(wanted, 1, true) then
+                                return true
+                            end
+                        end
+                    end
+                end
+                return false
+            end
+
+            local function reset()
+                state.target = nil
+                state.triggered = false
+            end
+
+            task.spawn(function()
+                while true do
+                    if not state.enabled then
+                        task.wait(1)
+                        continue
+                    end
+
+                    if getStyleN() ~= "sae" then
+                        reset()
+                        task.wait(1)
+                        continue
+                    end
+
+                    local char = LocalPlayerN.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not hum or not root then
+                        task.wait()
+                        continue
+                    end
+
+                    if not localTacklePlaying() then
+                        reset()
+                        task.wait()
+                        continue
+                    end
+
+                    local characters = WorkspaceN:FindFirstChild("characters")
+                    if not characters then
+                        task.wait()
+                        continue
+                    end
+
+                    if not state.target then
+                        for _, model in ipairs(characters:GetChildren()) do
+                            if model.Name ~= LocalPlayerN.Name and model:FindFirstChild("Ball") then
+                                local targetRoot = model:FindFirstChild("HumanoidRootPart")
+                                if targetRoot and (targetRoot.Position - root.Position).Magnitude <= 15 then
+                                    state.target = model
+                                    break
+                                end
+                            end
+                        end
+                    else
+                        local localHasBall = char:FindFirstChild("Ball") ~= nil
+                        local targetHasBall = state.target:FindFirstChild("Ball") ~= nil
+
+                        if localHasBall and not targetHasBall and not state.triggered then
+                            local targetRoot = state.target:FindFirstChild("HumanoidRootPart")
+                            if targetRoot
+                                and (targetRoot.Position - root.Position).Magnitude <= 12
+                                and hasReflexSound(state.target) then
+
+                                state.triggered = true
+                                if not onCooldownN("Tspecialer") then
+                                    fireSkillN("Tspecialer")
+                                    task.wait()
+                                end
+                                fireSkillN("skill2")
+                            end
+                        end
+                    end
+
+                    task.wait()
+                end
+            end)
+
+            local path = "Player_Sae_Rabona Nutmeg Aimbot_Auto Reflex Rabona Nutmeg Tackling"
+            local _, initial = addToggleN(
+                section,
+                path,
+                "Auto Reflex Rabona Nutmeg Tackling",
+                false,
+                function(v)
+                    state.enabled = v
+                    if not v then reset() end
+                end
+            )
+            state.enabled = initial
+            return state
+        end
+
+        local aimbotSections = {
+            {
+                group = "Base Moves",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Tackle Aimbot",
+                        styles = { "all" },
+                        animId = "109744655458082",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                        hasPrediction = true,
+                        defaultKey = Enum.KeyCode.H,
+                    },
+                },
+            },
+            {
+                group = "Kiyora",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Twister Pass Steal Aimbot",
+                        styles = { "kiyora", "reo" },
+                        animId = "80730958176662",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Kurona",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Guard Dog Aimbot",
+                        styles = { "kurona", "reo" },
+                        animId = "111439544531399",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Karasu",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Silent Steal Aimbot",
+                        styles = { "karasu", "reo" },
+                        animId = "89782964116671",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                    {
+                        name = "Corvine Feint Aimbot",
+                        styles = { "karasu", "reo" },
+                        animId = "79459013513539",
+                        maxDistance = 1000,
+                        requireBall = false,
+                        delay = 1,
+                    },
+                    {
+                        -- Original Karasu-only Flow Aimbot.
+                        -- The captured source hard-locks the camera while this animation plays.
+                        name = "Flow Aimbot",
+                        style = "karasu",
+                        animId = "130479203653055",
+                        maxDistance = 1000,
+                        requireBall = false,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Aiku",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Snake's Grasp Aimbot",
+                        styles = { "aiku", "aiku2", "reo" },
+                        animId = "130345228612384",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                    {
+                        name = "Reflex Tackle Aimbot",
+                        styles = { "aiku", "aiku2", "reo" },
+                        animId = "113088324958896",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Aiku",
+                section = "Run Flow Aimbot",
+                configs = {
+                    {
+                        name = "Run Flow Aimbot",
+                        styles = { "aiku", "aiku2" },
+                        animId = "119774966094217",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Sae",
+                section = "Rabona Nutmeg Aimbot",
+                configs = {
+                    {
+                        name = "Rabona Nutmeg Aimbot",
+                        style = "sae",
+                        animId = "73266865968554",
+                        maxDistance = 1000,
+                        requireBall = false,
+                        delay = 0,
+                    },
+                },
+            },
+            {
+                group = "Reo",
+                section = "Aimbots",
+                configs = {
+                    {
+                        name = "Doberman Press Aimbot",
+                        style = "reo",
+                        animId = "131986477806061",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                    {
+                        name = "Metavision Run Aimbot",
+                        style = "reo",
+                        animId = "98607356585505",
+                        maxDistance = 1000,
+                        requireBall = true,
+                        delay = 0,
+                    },
+                },
+            },
+        }
+
+        for _, block in ipairs(aimbotSections) do
+            local section = sectionN(playerReal, "Player", block.group, block.section)
+            for _, cfg in ipairs(block.configs) do
+                newAimbot(section, block.group, block.section, cfg)
+            end
+
+            if block.group == "Sae" and block.section == "Rabona Nutmeg Aimbot" then
+                addSaeAutoReflexN(section)
+            end
+        end
+
+        -- ========================================================
+        -- RECOVERED STANDALONE DEFENSES
+        -- Kunigami: Justice Header Defense
+        -- Karasu:    Silent Steal Defense
+        --
+        -- These are intentionally NOT routed through the later generic
+        -- AutoDefensive reconstruction: the original features use a six
+        -- second defense throttle and Justice Header has its own jump /
+        -- +55 Y velocity / directional skill4 payload.
+        -- ========================================================
+        local COMMON_DEFENSE_ANIMS_N = {
+            { name = "Isagi",      id = "rbxassetid://131229402549770", delay = 0.27 },
+            { name = "Nagi",       id = "rbxassetid://80063325550268",  delay = 0.10 },
+            { name = "Chigiri",    id = "rbxassetid://107869643584417", delay = 0.10 },
+            { name = "Shidou",     id = "rbxassetid://119133025118742", delay = 0.30 },
+            { name = "Yukimiya",   id = "rbxassetid://71166281570409",  delay = 0.30 },
+            { name = "Kaiser",     id = "rbxassetid://88985413044521",  delay = 0.20 },
+            { name = "Kunigami",   id = "rbxassetid://138598504314653", delay = 0.20 },
+            { name = "Barou",      id = "rbxassetid://98869531447623",  delay = 0.30 },
+            { name = "Nel Isagi",  id = "rbxassetid://97103063277850",  delay = 0.20 },
+            { name = "Reo",        id = "rbxassetid://98975331828005",  delay = 0.50 },
+            { name = "Kiyora",     id = "rbxassetid://114955963969575", delay = 1.10 },
+            { name = "Otoya",      id = "rbxassetid://94714913486342",  delay = 0.30 },
+        }
+
+        local DEFENSE_GOALBOXES_N = {
+            A = { minX = -668.15, maxX = -407.51, minZ = 1611.19, maxZ = 1706.13 },
+            B = { minX = -668.01, maxX = -407.68, minZ = 841.70,  maxZ = 935.59 },
+        }
+
+        local function newRecoveredDefenseN(section, predictSection, groupName, cfg)
+            local state = {
+                enabled = false,
+                goalboxOnly = false,
+                animationPredict = false,
+                maxBallDistance = 53,
+                maxVerticalDistance = 65,
+                minBallSpeed = 100,
+                lastDefenseTime = 0,
+                lastBallOwnerTeam = nil,
+                animationTracking = {},
+                animDelays = {},
+                conn = nil,
+            }
+
+            for _, entry in ipairs(COMMON_DEFENSE_ANIMS_N) do
+                state.animDelays[entry.id] = entry.delay
+            end
+
+            local function charactersFolder()
+                return WorkspaceN:FindFirstChild("characters")
+            end
+
+            local function worldBall()
+                local terrain = WorkspaceN:FindFirstChildOfClass("Terrain")
+                return (terrain and terrain:FindFirstChild("Ball"))
+                    or WorkspaceN:FindFirstChild("Ball")
+            end
+
+            local function ballVelocity(ball)
+                local cfBall = ReplicatedStorageN:FindFirstChild("CFBall")
+                local velocity = cfBall and cfBall:FindFirstChild("velocity")
+                if velocity and velocity:IsA("Vector3Value") then
+                    return velocity.Value
+                end
+                return ball and ball.AssemblyLinearVelocity or Vector3.zero
+            end
+
+            local function currentBallOwnerTeam()
+                local characters = charactersFolder()
+                if not characters then return nil end
+
+                for _, model in ipairs(characters:GetChildren()) do
+                    if model:FindFirstChild("Ball") then
+                        local modelState = model:FindFirstChild("state")
+                        local team = modelState and (modelState:FindFirstChild("team") or modelState:FindFirstChild("Team"))
+                        if team and team:IsA("ValueBase") then
+                            return tostring(team.Value)
+                        end
+                    end
+                end
+                return nil
+            end
+
+            local function inGoalbox(position, team)
+                local box = DEFENSE_GOALBOXES_N[tostring(team or "")]
+                if not box then return false end
+                return position.X >= box.minX and position.X <= box.maxX
+                    and position.Z >= box.minZ and position.Z <= box.maxZ
+            end
+
+            local function ballMovingToward(ball, velocity, rootPosition)
+                if not ball or velocity.Magnitude <= 0.001 then return false end
+                local toward = rootPosition - ball.Position
+                if toward.Magnitude <= 0.001 then return true end
+                return velocity.Unit:Dot(toward.Unit) > math.cos(math.rad(45))
+            end
+
+            local function ballWithinLimits(ball, rootPosition)
+                if not ball then return false end
+                local horizontal = (
+                    Vector3.new(rootPosition.X, 0, rootPosition.Z)
+                    - Vector3.new(ball.Position.X, 0, ball.Position.Z)
+                ).Magnitude
+                local vertical = math.abs(rootPosition.Y - ball.Position.Y)
+                return horizontal <= state.maxBallDistance
+                    and vertical <= state.maxVerticalDistance
+            end
+
+            local function cardinalDirection(root, hum)
+                local move = root.CFrame:VectorToObjectSpace(hum.MoveDirection)
+                local x = math.round(move.X)
+                local z = math.round(move.Z)
+                if x == 1 then return "Right" end
+                if x == -1 then return "Left" end
+                if z == 1 then return "Back" end
+                return "Front"
+            end
+
+            local function fallbackInput()
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                    task.wait(0.02)
+                    vim:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                    task.wait(0.01)
+                    vim:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+                    task.wait(0.05)
+                    vim:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+                end)
+            end
+
+            local function performDefense()
+                if onCooldownN("skill4") then return false end
+
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not hum or not root then return false end
+
+                local payload
+                if cfg.justiceHeader then
+                    -- Exact special Justice Header behavior recovered from stage1.
+                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                    root.Velocity = root.Velocity + Vector3.new(0, 55, 0)
+                    payload = { { "skill4", true, cardinalDirection(root, hum) } }
+                else
+                    payload = { { "skill4", true } }
+                end
+
+                if fireUseN(payload) then
+                    return true
+                end
+
+                fallbackInput()
+                return true
+            end
+
+            local function processBall(myTeam, rootPosition)
+                local ownerTeam = currentBallOwnerTeam()
+                if ownerTeam then
+                    state.lastBallOwnerTeam = ownerTeam
+                end
+
+                if hasBallN(LocalPlayerN) then return end
+
+                local ball = worldBall()
+                if not ball then return end
+                local velocity = ballVelocity(ball)
+                if velocity.Magnitude < state.minBallSpeed then return end
+                if not ballMovingToward(ball, velocity, rootPosition) then return end
+                if not ballWithinLimits(ball, rootPosition) then return end
+
+                if not state.lastBallOwnerTeam or not myTeam then return end
+                if state.lastBallOwnerTeam == "lobby" or myTeam == "lobby" then return end
+                if state.lastBallOwnerTeam == myTeam then return end
+                if state.goalboxOnly and not inGoalbox(rootPosition, myTeam) then return end
+
+                if tick() - state.lastDefenseTime > 6 then
+                    state.lastDefenseTime = tick()
+                    performDefense()
+                end
+            end
+
+            local function processAnimationPredict(myTeam, rootPosition)
+                if not state.animationPredict then return end
+                if state.goalboxOnly and not inGoalbox(rootPosition, myTeam) then return end
+
+                local characters = charactersFolder()
+                if not characters then return end
+                local now = tick()
+
+                for _, model in ipairs(characters:GetChildren()) do
+                    if model.Name ~= LocalPlayerN.Name then
+                        local modelState = model:FindFirstChild("state")
+                        local team = modelState and (modelState:FindFirstChild("team") or modelState:FindFirstChild("Team"))
+                        local teamValue = team and tostring(team.Value) or nil
+
+                        if teamValue and teamValue ~= myTeam and teamValue ~= "lobby" then
+                            local hum = model:FindFirstChildOfClass("Humanoid")
+                            local animator = hum and hum:FindFirstChildOfClass("Animator")
+                            if animator then
+                                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                                    local id = track.Animation and tostring(track.Animation.AnimationId) or nil
+                                    local delayValue = id and state.animDelays[id]
+                                    if id and track.IsPlaying and delayValue ~= nil then
+                                        local key = model.Name .. "_" .. id
+                                        local record = state.animationTracking[key]
+                                        if not record then
+                                            record = {
+                                                detectedTime = now,
+                                                hasTriggered = false,
+                                                delay = delayValue,
+                                            }
+                                            state.animationTracking[key] = record
+                                        end
+
+                                        if not record.hasTriggered
+                                            and now - record.detectedTime >= record.delay
+                                            and now - state.lastDefenseTime > 6 then
+                                            state.lastDefenseTime = now
+                                            performDefense()
+                                            record.hasTriggered = true
+                                        end
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                for key, record in pairs(state.animationTracking) do
+                    if now - record.detectedTime > 5 then
+                        state.animationTracking[key] = nil
+                    end
+                end
+            end
+
+            local function heartbeat()
+                if not state.enabled or getStyleN() ~= cfg.style then return end
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                local myTeam = stateTeamN(LocalPlayerN)
+                if not myTeam or myTeam == "lobby" then return end
+
+                processBall(myTeam, root.Position)
+                processAnimationPredict(myTeam, root.Position)
+            end
+
+            local function start()
+                if state.enabled then return end
+                state.enabled = true
+                if state.conn then state.conn:Disconnect() end
+                state.conn = RunServiceN.Heartbeat:Connect(heartbeat)
+                notifyN(cfg.name .. " Enabled")
+            end
+
+            local function stop()
+                state.enabled = false
+                if state.conn then
+                    state.conn:Disconnect()
+                    state.conn = nil
+                end
+                state.animationTracking = {}
+                state.lastDefenseTime = 0
+                notifyN(cfg.name .. " Disabled")
+            end
+
+            local prefix = "Player_" .. groupName .. "_" .. cfg.name .. "_"
+            local toggle, initial = addToggleN(
+                section,
+                prefix .. cfg.name,
+                cfg.name,
+                false,
+                function(v)
+                    if v then start() else stop() end
+                end
+            )
+
+            local _, initialGoalbox = addToggleN(
+                section,
+                prefix .. "Goalbox Only",
+                "Goalbox Only",
+                false,
+                function(v) state.goalboxOnly = v end
+            )
+            state.goalboxOnly = initialGoalbox
+
+            local _, initialPredict = addToggleN(
+                section,
+                prefix .. "Animation Predict",
+                "Animation Predict",
+                false,
+                function(v) state.animationPredict = v end
+            )
+            state.animationPredict = initialPredict
+
+            local _, initialSpeed = addSliderN(
+                section,
+                prefix .. "Min Ball Speed",
+                "Min Ball Speed",
+                0.1, 100, 100, 0.1,
+                function(v) state.minBallSpeed = v end
+            )
+            state.minBallSpeed = initialSpeed
+
+            local _, initialDist = addSliderN(
+                section,
+                prefix .. "Max Ball Distance",
+                "Max Ball Distance",
+                10, 200, 53, 1,
+                function(v) state.maxBallDistance = v end
+            )
+            state.maxBallDistance = initialDist
+
+            local _, initialVert = addSliderN(
+                section,
+                prefix .. "Max Vertical Distance",
+                "Max Vertical Distance",
+                10, 200, 65, 1,
+                function(v) state.maxVerticalDistance = v end
+            )
+            state.maxVerticalDistance = initialVert
+
+            local predictPrefix = "Player_" .. groupName .. "_Animation Predict_"
+            for _, entry in ipairs(COMMON_DEFENSE_ANIMS_N) do
+                local _, initialDelay = addSliderN(
+                    predictSection,
+                    predictPrefix .. entry.name,
+                    entry.name,
+                    0, 1.5, entry.delay, 0.01,
+                    function(v) state.animDelays[entry.id] = v end
+                )
+                state.animDelays[entry.id] = initialDelay
+            end
+
+            addKeybindN(
+                section,
+                prefix .. cfg.name .. " Keybind",
+                cfg.name,
+                cfg.defaultKey,
+                "Toggle",
+                function(active)
+                    if getStyleN() ~= cfg.style then return end
+                    if toggle and toggle.SetValue and toggle.Value ~= active then
+                        toggle:SetValue(active == true)
+                    end
+                end
+            )
+
+            if initial then start() end
+            return state
+        end
+
+        do
+            local section = sectionN(playerReal, "Player", "Karasu", "Silent Steal Defense")
+            local predict = sectionN(playerReal, "Player", "Karasu", "Animation Predict")
+            newRecoveredDefenseN(section, predict, "Karasu", {
+                name = "Silent Steal Defense",
+                style = "karasu",
+                defaultKey = Enum.KeyCode.V,
+                justiceHeader = false,
+            })
+        end
+
+        do
+            local section = sectionN(playerReal, "Player", "Kunigami", "Justice Header Defense")
+            local predict = sectionN(playerReal, "Player", "Kunigami", "Animation Predict")
+            newRecoveredDefenseN(section, predict, "Kunigami", {
+                name = "Justice Header Defense",
+                style = "kunigami",
+                defaultKey = Enum.KeyCode.C,
+                justiceHeader = true,
+            })
+        end
+
+        -- ========================================================
+        -- EVOHUB TRAP HELPER ENGINE
+        -- ========================================================
+        local function newTrapHelper(section, groupName, cfg)
+            local state = {
+                enabled = false,
+                active = false,
+                startTime = 0,
+                magnetRadius = 55,
+                magnetSpeed = 0.07,
+                activationDelay = 0.01,
+                magnetDuration = 1.5,
+                verticalOffset = 2,
+                minBallHeight = 5,
+                magnetConn = nil,
+                animConn = nil,
+                charConn = nil,
+            }
+
+            local function ball()
+                local terrain = WorkspaceN:FindFirstChildOfClass("Terrain")
+                return (terrain and terrain:FindFirstChild("Ball"))
+                    or WorkspaceN:FindFirstChild("Ball")
+            end
+
+            local function validBall(b)
+                if not b then return false end
+
+                local char = LocalPlayerN.Character
+                if not char or char:FindFirstChild("Ball") then return false end
+                if b.Position.Y < state.minBallHeight then return false end
+
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if not root then return false end
+                return (root.Position - b.Position).Magnitude <= state.magnetRadius
+            end
+
+            local function movingAnimation()
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then return false end
+
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    if id:find(tostring(cfg.animId), 1, true) then
+                        return true
+                    end
+                end
+                return false
+            end
+
+            local function magnetTick()
+                local b = ball()
+                if not b or not validBall(b) then return false end
+
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return false end
+
+                local target = b.Position + Vector3.new(0, state.verticalOffset, 0)
+                local current = root.Position
+                if (current - target).Magnitude < 2 then return true end
+
+                local nextPos = current:Lerp(target, state.magnetSpeed)
+                if current.Y > 10 then
+                    nextPos = Vector3.new(nextPos.X, current.Y, nextPos.Z)
+                end
+
+                root.CFrame = CFrame.new(nextPos)
+                return true
+            end
+
+            local function stopMagnet()
+                state.active = false
+                if state.magnetConn then
+                    state.magnetConn:Disconnect()
+                    state.magnetConn = nil
+                end
+            end
+
+            local function startMagnet()
+                if state.active then return end
+                state.startTime = tick()
+                state.active = true
+
+                if state.magnetConn then state.magnetConn:Disconnect() end
+                state.magnetConn = RunServiceN.Heartbeat:Connect(function()
+                    if not state.active or not movingAnimation() then
+                        stopMagnet()
+                        return
+                    end
+
+                    local elapsed = tick() - state.startTime
+                    if elapsed < state.activationDelay then return end
+                    if elapsed > state.magnetDuration then
+                        stopMagnet()
+                        return
+                    end
+
+                    magnetTick()
+                end)
+
+                task.delay(state.magnetDuration + 0.1, stopMagnet)
+            end
+
+            local function setupMonitor()
+                local char = LocalPlayerN.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum then return end
+
+                if state.animConn then state.animConn:Disconnect() end
+                state.animConn = hum.AnimationPlayed:Connect(function(track)
+                    if not state.enabled then return end
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    if id:find(tostring(cfg.animId), 1, true) then
+                        task.delay(state.activationDelay, function()
+                            local b = ball()
+                            if state.enabled and b and validBall(b) then
+                                startMagnet()
+                            end
+                        end)
+                    end
+                end)
+
+                for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                    local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                    if id:find(tostring(cfg.animId), 1, true) then
+                        task.delay(0.3, function()
+                            local b = ball()
+                            if state.enabled and b and validBall(b) then
+                                startMagnet()
+                            end
+                        end)
+                    end
+                end
+            end
+
+            local function start()
+                if state.enabled then return end
+                state.enabled = true
+                setupMonitor()
+
+                if state.charConn then state.charConn:Disconnect() end
+                state.charConn = LocalPlayerN.CharacterAdded:Connect(function()
+                    stopMagnet()
+                    task.wait(1)
+                    if state.enabled then setupMonitor() end
+                end)
+
+                notifyN(cfg.name .. " Trap Helper Enabled")
+            end
+
+            local function stop()
+                state.enabled = false
+                stopMagnet()
+
+                if state.animConn then
+                    state.animConn:Disconnect()
+                    state.animConn = nil
+                end
+                if state.charConn then
+                    state.charConn:Disconnect()
+                    state.charConn = nil
+                end
+
+                notifyN(cfg.name .. " Trap Helper Disabled")
+            end
+
+            local prefix = "Player_" .. groupName .. "_Trap Helper_"
+
+            local _, initialRadius = addSliderN(
+                section, prefix .. "Helper Radius",
+                "Helper Radius", 10, 100, cfg.radius or 55, 1,
+                function(v) state.magnetRadius = v end
+            )
+            state.magnetRadius = initialRadius
+
+            local _, initialSpeed = addSliderN(
+                section, prefix .. "Helper Speed",
+                "Helper Speed", 0.01, 1, cfg.speed or 0.07, 0.01,
+                function(v) state.magnetSpeed = v end
+            )
+            state.magnetSpeed = initialSpeed
+
+            local _, initial = addToggleN(
+                section, prefix .. "Trap Helper",
+                "Trap Helper", false,
+                function(v)
+                    if v then start() else stop() end
+                end
+            )
+
+            if initial then start() end
+            return state
+        end
+
+        local trapConfigs = {
+            { group = "Aiku", name = "Aiku", animId = "116422938520670", radius = 55, speed = 0.07 },
+            { group = "Kiyora", name = "Kiyora", animId = "101043441232233", radius = 55, speed = 0.07 },
+            { group = "Don Lorenzo", name = "Don Lorenzo", animId = "90734196141468", radius = 55, speed = 0.07 },
+            { group = "Nel Isagi", name = "Nel Isagi", animId = "111091327490255", radius = 55, speed = 0.07 },
+        }
+
+        for _, cfg in ipairs(trapConfigs) do
+            local section = sectionN(playerReal, "Player", cfg.group, "Trap Helper")
+            newTrapHelper(section, cfg.group, cfg)
+        end
+
+        -- ========================================================
+        -- SHIDOU FORMLESS MACRO
+        -- ========================================================
+        do
+            local section = sectionN(playerReal, "Player", "Shidou", "Formless Macro")
+            local state = {
+                Enabled = false,
+                Debounce = false,
+                IsMoving = false,
+                MoveThread = nil,
+                CurrentTrack = nil,
+            }
+
+            local function isReoWithFormless()
+                if getStyleN() ~= "reo" then return false end
+                return toolTextMatchesN("skill4", "Formless")
+            end
+
+            local function stopMoving()
+                state.IsMoving = false
+                if state.MoveThread then
+                    pcall(task.cancel, state.MoveThread)
+                    state.MoveThread = nil
+                end
+            end
+
+            local function startMoving()
+                stopMoving()
+                state.IsMoving = true
+                state.MoveThread = task.spawn(function()
+                    while state.IsMoving do
+                        local char = LocalPlayerN.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        if not root then break end
+
+                        local look = root.CFrame.LookVector
+                        local horizontal = Vector3.new(look.X, 0, look.Z)
+                        if horizontal.Magnitude > 0.01 then
+                            root.CFrame += horizontal.Unit * 0.3
+                        end
+                        task.wait(0.02)
+                    end
+                end)
+            end
+
+            local function stopAnim()
+                if state.CurrentTrack then
+                    pcall(function() state.CurrentTrack:Stop() end)
+                    state.CurrentTrack = nil
+                end
+            end
+
+            local function playAnim()
+                stopAnim()
+                state.CurrentTrack = makeTrackN("76587445975710")
+                if state.CurrentTrack then pcall(function() state.CurrentTrack:Play() end) end
+            end
+
+            local function combo()
+                if not state.Enabled or state.Debounce then return false end
+
+                local style = getStyleN()
+                local isShidou = style == "shidou"
+                local reoFormless = isReoWithFormless()
+
+                if not isShidou and not reoFormless then return false end
+                if not hasBallN() then return false end
+
+                local skillName = isShidou and "skill1" or "skill4"
+                if onCooldownN(skillName) then return false end
+
+                local char = LocalPlayerN.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local camera = WorkspaceN.CurrentCamera
+                if not root or not hum or not camera then return false end
+
+                state.Debounce = true
+                startMoving()
+
+                hum.AutoRotate = false
+                root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(180), 0)
+
+                camera.CameraType = Enum.CameraType.Scriptable
+                camera.CFrame = root.CFrame + Vector3.new(0, 2, 0)
+
+                task.delay(0.1, function()
+                    if hum.Parent and camera then
+                        camera.CameraSubject = hum
+                        camera.CameraType = Enum.CameraType.Custom
+                        hum.AutoRotate = true
+                    end
+                end)
+
+                playAnim()
+                task.wait(0.05)
+
+                local vector = root.CFrame.LookVector + Vector3.new(0, 1, 0) * 50
+                fireKickN(45, vector)
+
+                task.wait(0.1)
+                fireSkillN(skillName)
+
+                task.wait(1)
+                stopMoving()
+                stopAnim()
+                state.Debounce = false
+                return true
+            end
+
+            local _, initial = addToggleN(
+                section,
+                "Player_Shidou_Formless Macro_Enable",
+                "Enable",
+                false,
+                function(v)
+                    state.Enabled = v
+                    if not v then
+                        stopMoving()
+                        stopAnim()
+                        state.Debounce = false
+                    end
+                end
+            )
+            state.Enabled = initial
+
+            addKeybindN(
+                section,
+                "Player_Shidou_Formless Macro_Formless",
+                "Formless",
+                Enum.KeyCode.C,
+                "Hold",
+                function(pressed)
+                    if pressed then combo() end
+                end
+            )
+        end
+
+        -- ========================================================
+        -- SAE OST
+        -- ========================================================
+        do
+            local section = sectionN(playerReal, "Player", "Sae", "OST")
+            local resources = ReplicatedStorageN:FindFirstChild("Resources")
+            local sae = resources and resources:FindFirstChild("sae")
+
+            local theme = sae and sae:FindFirstChild("sae theme")
+            local ipt = sae and sae:FindFirstChild("iptoshobuda")
+            local iptTheme = ipt and ipt:FindFirstChild("theme")
+
+            local originalTheme = theme and theme.SoundId or "rbxassetid://113866260852036"
+            local originalIpt = iptTheme and iptTheme.SoundId or "rbxassetid://137186387240470"
+
+            local oldToggle
+            local runToggle
+
+            local function setSound(obj, id)
+                if obj then obj.SoundId = "rbxassetid://" .. tostring(id) end
+            end
+
+            oldToggle = section:CreateToggle({
+                Name = "Old Sae OST",
+                CurrentValue = savedBoolN("Player_Sae_OST_Old Sae OST", false),
+                Callback = function(v)
+                    configSet("Player_Sae_OST_Old Sae OST", v == true)
+
+                    if v then
+                        if runToggle and runToggle.Value then
+                            runToggle:SetValue(false)
+                        end
+                        setSound(theme, "70979311703713")
+                        setSound(iptTheme, "128623853689708")
+                    else
+                        if theme then theme.SoundId = originalTheme end
+                        if iptTheme then iptTheme.SoundId = originalIpt end
+                    end
+                end
+            }, "Player_Sae_OST_Old Sae OST")
+
+            runToggle = section:CreateToggle({
+                Name = "Sae Run Up OST",
+                CurrentValue = savedBoolN("Player_Sae_OST_Sae Run Up OST", false),
+                Callback = function(v)
+                    configSet("Player_Sae_OST_Sae Run Up OST", v == true)
+
+                    if v then
+                        if oldToggle and oldToggle.Value then
+                            oldToggle:SetValue(false)
+                        end
+                        setSound(theme, "129960717755080")
+                    else
+                        if theme then theme.SoundId = originalTheme end
+                    end
+                end
+            }, "Player_Sae_OST_Sae Run Up OST")
+
+            if oldToggle.Value then
+                setSound(theme, "70979311703713")
+                setSound(iptTheme, "128623853689708")
+            elseif runToggle.Value then
+                setSound(theme, "129960717755080")
+            end
+        end
+
+        _G.EvoHubRE_NativePassV15 = {
+            AirDribble = true,
+            InstantSkillEngine = true,
+            AimbotEngine = true,
+            TrapHelperEngine = true,
+            FormlessMacro = true,
+            SaeOST = true,
+            UsePacketId = usePacketIdN,
+        }
+    end)
+
+    if not okNative then
+        warn("[evo hub // re V15 native] " .. tostring(nativeErr))
+    end
+end)
 
 
 -- ================================================================
@@ -3308,35 +5493,12 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 
-helptab:Button("Copy Owner Discord Username", "Copies The Owner's Discord Username To Your Clipboard.", function()
-    local StarterGui = game:GetService("StarterGui")
-    StarterGui:SetCore("SendNotification", {
-        Title = "Discord Username",
-        Text = "Copied to your clipboard!",
-        Duration = 3,
-        Button1 = "alright fella",
-    })
-    setclipboard("celeronstilltuff")
-end)
-
-helptab:Button("Copy Discord Server Invite", "Copies The Discord Invite To Your Clipboard.", function()
-    local StarterGui = game:GetService("StarterGui")
-    StarterGui:SetCore("SendNotification", {
-        Title = "Discord Invite",
-        Text = "Copied to your clipboard!",
-        Duration = 3,
-        Button1 = "alright fella",
-    })
-    setclipboard("https://discord.gg/mFusYUmyry")
-end)
-
-helptab:Label("Script Credits.")
-
-helptab:Label("Main Scripter: Celeron.")
-helptab:Label("Custom UI + Some Features: Daffy.")
-helptab:Label("GK Anywhere Feature: Ashura.")
-helptab:Label("Auto Config: Serlicia.")
-helptab:Label("Additional Help: nuvem.")
+helptab:Label("evo hub // re")
+helptab:Label("Reverse-engineered reconstruction.")
+helptab:Label("Original EvoHub: EvolutionHub.")
+helptab:Label("RE build / integration: nuvem.")
+helptab:Label("Selected legacy utilities adapted from Celeron.")
+helptab:Label("Goal: preserve EvoHub behavior while rebuilding readable code.")
 
 
 notifsup = maintab2:Folder("Notification Suppression.", Color3.fromRGB(24, 255, 228), true)
@@ -3359,148 +5521,7 @@ end)
 local ballfolder = maintab:Folder("Ball Features.", Color3.fromRGB(24, 255, 228), true)
 ballfolder:Label("Ball Features.")
 
-local autoGoalState = {
-    enabled = false,
-    conn = nil,
-    accumulator = 0,
-    busy = false
-}
-
-local autoGoalPlayers = game:GetService("Players")
-local autoGoalRunService = game:GetService("RunService")
-local autoGoalReplicatedStorage = game:GetService("ReplicatedStorage")
-local autoGoalRemote = autoGoalReplicatedStorage:WaitForChild("ByteNetReliable")
-local autoGoalPacket = buffer.fromstring(buffers["base"])
-local autoGoalPlayer = autoGoalPlayers.LocalPlayer
-
-local function autoGoalCharacter()
-    return autoGoalPlayer.Character
-end
-
-local function autoGoalRoot()
-    local char = autoGoalCharacter()
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
-local function autoGoalHasBall()
-    local char = autoGoalCharacter()
-    return char and char:FindFirstChild("Ball") ~= nil
-end
-
-local function autoGoalInGame()
-    local char = autoGoalCharacter()
-    local stateFolder = char and char:FindFirstChild("state")
-    local ingame = stateFolder and stateFolder:FindFirstChild("ingame")
-    return ingame and ingame.Value == true
-end
-
-local function autoGoalDisableCollisions(map, agoal, bgoal)
-    local gk = map and map:FindFirstChild("gkbarriar")
-    if gk then
-        local a = gk:FindFirstChild("A")
-        local b = gk:FindFirstChild("B")
-        if a then a.CanCollide = false end
-        if b then b.CanCollide = false end
-    end
-    if agoal then agoal.CanCollide = false end
-    if bgoal then bgoal.CanCollide = false end
-end
-
-local function autoGoalSteal(root)
-    if not root or autoGoalHasBall() then return end
-
-    local looseBall = Workspace.Terrain:FindFirstChild("Ball")
-    if looseBall then
-        root.CFrame = CFrame.new(looseBall.Position.X, 0, looseBall.Position.Z)
-        return
-    end
-
-    for _, otherPlayer in ipairs(autoGoalPlayers:GetPlayers()) do
-        if otherPlayer ~= autoGoalPlayer then
-            local otherCharacter = otherPlayer.Character
-            local heldBall = otherCharacter and otherCharacter:FindFirstChild("Ball")
-            local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
-            if heldBall and otherRoot then
-                root.CFrame = otherRoot.CFrame
-                autoGoalRemote:FireServer(autoGoalPacket, {{"tackle"}})
-                return
-            end
-        end
-    end
-end
-
-ballfolder:Toggle("Auto Goal", "Attempts To Steal The Ball And Score.", function()
-    autoGoalState.enabled = not autoGoalState.enabled
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Auto Goal",
-        Text = autoGoalState.enabled and "Enabled." or "Disabled.",
-        Duration = 1
-    })
-
-    if not autoGoalState.enabled then
-        if autoGoalState.conn then
-            autoGoalState.conn:Disconnect()
-            autoGoalState.conn = nil
-        end
-        autoGoalState.accumulator = 0
-        autoGoalState.busy = false
-        return
-    end
-
-    local map = Workspace:WaitForChild("map")
-    local agoal = map:WaitForChild("Agoal")
-    local bgoal = map:WaitForChild("Bgoal")
-    autoGoalDisableCollisions(map, agoal, bgoal)
-
-    if autoGoalState.conn then
-        autoGoalState.conn:Disconnect()
-    end
-
-    autoGoalState.accumulator = 0
-    autoGoalState.busy = false
-
-    autoGoalState.conn = autoGoalRunService.Heartbeat:Connect(function(dt)
-        if not autoGoalState.enabled then return end
-
-        autoGoalState.accumulator += dt
-        if autoGoalState.accumulator < (1 / 30) then return end
-        autoGoalState.accumulator = 0
-
-        if not autoGoalInGame() then return end
-
-        local root = autoGoalRoot()
-        if not root then return end
-
-        if not autoGoalHasBall() then
-            autoGoalSteal(root)
-            return
-        end
-
-        if autoGoalState.busy then return end
-        autoGoalState.busy = true
-
-        task.spawn(function()
-            local liveRoot = autoGoalRoot()
-            local team = autoGoalPlayer.Team
-            local goal = team and team.Name == "A" and bgoal or agoal
-
-            if liveRoot and goal and autoGoalState.enabled then
-                liveRoot.CFrame = goal.CFrame
-                task.wait(0.185)
-
-                if autoGoalState.enabled and autoGoalHasBall() then
-                    autoGoalRemote:FireServer(
-                        autoGoalPacket,
-                        {{"kick", 20, false, vector.create(0, 1, 0)}}
-                    )
-                end
-            end
-
-            autoGoalState.busy = false
-        end)
-    end)
-end)
-
+-- V14: legacy Celeron Auto Goal removed.
 local alwaysBallPlayers = game:GetService("Players")
 local alwaysBallPlayer = alwaysBallPlayers.LocalPlayer
 local alwaysBallRemote = game:GetService("ReplicatedStorage"):WaitForChild("ByteNetReliable")
@@ -4582,115 +6603,7 @@ task.spawn(function()
     end
 end)
 
-local autogoal = maintab:Folder("Auto Goal Features.", Color3.fromRGB(24, 255, 228), true)
-autogoal:Label("Auto Goal: Automatically Does Auto Goal Steps Instantly, Use In 5v5.")
-
-autogoal:Button("Isagi U-20 Goal", "Attempts To Do Isagi's U-20 Auto Goal By Teleporting To The Designated Area.", function()
-    local plr = game.Players.LocalPlayer
-    if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-        local hrp = plr.Character.HumanoidRootPart
-        
-        if plr.Team == game.Teams:FindFirstChild("A") then
-            hrp.CFrame = CFrame.new(-536, 3, 999)
-        elseif plr.Team == game.Teams:FindFirstChild("B") then
-            hrp.CFrame = CFrame.new(-537, 3, 1549)
-        end
-        task.wait(0.2)
-        ReplicatedStorage:WaitForChild("ByteNetReliable"):FireServer(
-            buffer.fromstring(buffers["base"]),
-            { { "skill3"} }
-        )
-    end
-end)
-
-autogoal:Button("Nagi Dream Goal", "Attempts To Do Nagi's Control Move Auto Goal In Flow.", function()
-    local plr = game.Players.LocalPlayer
-    if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-        local hrp = plr.Character.HumanoidRootPart
-        
-        if plr.Team == game.Teams:FindFirstChild("A") then
-            hrp.CFrame = CFrame.new(-459, 3, 862)
-        elseif plr.Team == game.Teams:FindFirstChild("B") then
-            hrp.CFrame = CFrame.new(-611, 3, 1682) * CFrame.Angles(0, math.rad(180), 0)
-        end
-        task.wait(0.2)
-        if plr.Character and plr.Character:FindFirstChild("Humanoid") then
-            plr.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        end
-        task.wait(0.2)
-        ReplicatedStorage:WaitForChild("ByteNetReliable"):FireServer(
-            buffer.fromstring(buffers["base"]),
-            { { "skill2", true } }
-        )
-    end
-end)
-
-autogoal:Button("Barou Devour Goal", "Attempts To Do Barou's Devour Auto Goal By Teleporting Behind Two Enemy Players.", function()
-    local plr = game.Players.LocalPlayer
-
-    local function countEnemyTeamMembers()
-        local op = game.Teams:FindFirstChild("A")
-        if plr.Team == game.Teams:FindFirstChild("A") then
-            op = game.Teams:FindFirstChild("B")
-        end
-        local count = 0
-        for _, player in ipairs(game.Players:GetPlayers()) do
-            if player.Team == op then
-                count += 1
-            end
-        end
-        return count
-    end
-    
-    local function getTwoRandomEnemies()
-        local enemies = {}
-        local op = game.Teams:FindFirstChild("A")
-        if plr.Team == game.Teams:FindFirstChild("A") then
-            op = game.Teams:FindFirstChild("B")
-        end
-        
-        for _, player in ipairs(game.Players:GetPlayers()) do
-            if player ~= plr and player.Team == op then
-                table.insert(enemies, player)
-            end
-        end
-        
-        for i = #enemies, 2, -1 do
-            local j = math.random(1, i)
-            enemies[i], enemies[j] = enemies[j], enemies[i]
-        end
-
-        return enemies[1], enemies[2]
-    end
-    
-    if countEnemyTeamMembers() >= 2 then
-        local p1, p2 = getTwoRandomEnemies()
-        if not p1 or not p2 then return end
-
-        local function tpToPlayer(targetPlayer)
-            local char = plr.Character or plr.CharacterAdded:Wait()
-            local root = char:WaitForChild("HumanoidRootPart")
-            local targetRoot = targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-
-            if root and targetRoot then
-                root.CFrame = targetRoot.CFrame
-            end
-        end
-
-        tpToPlayer(p1)
-        task.wait(0.3)
-        tpToPlayer(p2)
-        
-        task.wait(0.3)
-        
-        if plr.Team == game.Teams:FindFirstChild("A") then
-            plr.Character.HumanoidRootPart.Position = Vector3.new(-625, 3, 925)
-        elseif plr.Team == game.Teams:FindFirstChild("B") then
-            plr.Character.HumanoidRootPart.Position = Vector3.new(-588, 3, 1643)
-        end
-    end
-end)
-
+-- V14: legacy Celeron Auto Goal preset buttons removed.
 local add = maintab:Folder("Utility Features.", Color3.fromRGB(24, 255, 228), true)
 add:Label("Fun Features: Pretty Fun Features I'd Say.")
 
@@ -9174,6 +11087,151 @@ task.spawn(function()
             "Nel Isagi", "Hiori",
         }
 
+        -- Nagi's original Trap Helper is unusual: its controls are appended
+        -- directly to the Nagi "Distance Increase" section rather than a separate
+        -- Trap Helper section. Animation id recovered: 73387016994281.
+        local nagiTrap = {
+            enabled = false,
+            active = false,
+            radius = 55,
+            speed = 0.07,
+            activationDelay = 0.01,
+            duration = 1.5,
+            verticalOffset = 2,
+            minBallHeight = 5,
+            startTime = 0,
+            conn = nil,
+            animConn = nil,
+            charConn = nil,
+        }
+
+        local function nagiTrapBall()
+            local terrain = workspace:FindFirstChildOfClass("Terrain")
+            return (terrain and terrain:FindFirstChild("Ball")) or workspace:FindFirstChild("Ball")
+        end
+
+        local function nagiTrapAnimationPlaying()
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not hum then return false end
+            for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                if id:find("73387016994281", 1, true) then return true end
+            end
+            return false
+        end
+
+        local function nagiTrapValidBall(ball)
+            local char = player.Character
+            if not ball or not char or char:FindFirstChild("Ball") then return false end
+            if ball.Position.Y < nagiTrap.minBallHeight then return false end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            return root ~= nil and (root.Position - ball.Position).Magnitude <= nagiTrap.radius
+        end
+
+        local function stopNagiTrapMagnet()
+            nagiTrap.active = false
+            if nagiTrap.conn then
+                nagiTrap.conn:Disconnect()
+                nagiTrap.conn = nil
+            end
+        end
+
+        local function startNagiTrapMagnet()
+            if nagiTrap.active then return end
+            nagiTrap.active = true
+            nagiTrap.startTime = tick()
+
+            if nagiTrap.conn then nagiTrap.conn:Disconnect() end
+            nagiTrap.conn = RunService.Heartbeat:Connect(function()
+                if not nagiTrap.active or not nagiTrapAnimationPlaying() then
+                    stopNagiTrapMagnet()
+                    return
+                end
+
+                local elapsed = tick() - nagiTrap.startTime
+                if elapsed < nagiTrap.activationDelay then return end
+                if elapsed > nagiTrap.duration then
+                    stopNagiTrapMagnet()
+                    return
+                end
+
+                local ball = nagiTrapBall()
+                if not nagiTrapValidBall(ball) then return end
+                local char = player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+
+                local target = ball.Position + Vector3.new(0, nagiTrap.verticalOffset, 0)
+                local current = root.Position
+                if (current - target).Magnitude < 2 then return end
+
+                local nextPos = current:Lerp(target, nagiTrap.speed)
+                if current.Y > 10 then
+                    nextPos = Vector3.new(nextPos.X, current.Y, nextPos.Z)
+                end
+                root.CFrame = CFrame.new(nextPos)
+            end)
+
+            task.delay(nagiTrap.duration + 0.1, stopNagiTrapMagnet)
+        end
+
+        local function setupNagiTrapMonitor()
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not hum then return end
+
+            if nagiTrap.animConn then nagiTrap.animConn:Disconnect() end
+            nagiTrap.animConn = hum.AnimationPlayed:Connect(function(track)
+                if not nagiTrap.enabled then return end
+                local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                if id:find("73387016994281", 1, true) then
+                    task.delay(nagiTrap.activationDelay, function()
+                        local ball = nagiTrapBall()
+                        if nagiTrap.enabled and nagiTrapValidBall(ball) then
+                            startNagiTrapMagnet()
+                        end
+                    end)
+                end
+            end)
+
+            for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+                local id = track.Animation and tostring(track.Animation.AnimationId) or ""
+                if id:find("73387016994281", 1, true) then
+                    task.delay(0.3, function()
+                        local ball = nagiTrapBall()
+                        if nagiTrap.enabled and nagiTrapValidBall(ball) then
+                            startNagiTrapMagnet()
+                        end
+                    end)
+                end
+            end
+        end
+
+        local function setNagiTrapEnabled(value)
+            nagiTrap.enabled = value == true
+            if not nagiTrap.enabled then
+                stopNagiTrapMagnet()
+                if nagiTrap.animConn then
+                    nagiTrap.animConn:Disconnect()
+                    nagiTrap.animConn = nil
+                end
+                if nagiTrap.charConn then
+                    nagiTrap.charConn:Disconnect()
+                    nagiTrap.charConn = nil
+                end
+                return
+            end
+
+            setupNagiTrapMonitor()
+            if nagiTrap.charConn then nagiTrap.charConn:Disconnect() end
+            nagiTrap.charConn = player.CharacterAdded:Connect(function()
+                stopNagiTrapMagnet()
+                task.wait(1)
+                if nagiTrap.enabled then setupNagiTrapMonitor() end
+            end)
+        end
+
         for _, characterName in ipairs(characterOrder) do
             local group = movementGroups[characterName]
             if group then
@@ -9206,6 +11264,26 @@ task.spawn(function()
                                 buff.distance = value
                             end
                         )
+                    end
+                end
+
+                if characterName == "Nagi" then
+                    local trapToggle = folder:Toggle("Trap Helper", nil, false, function(value)
+                        setNagiTrapEnabled(value)
+                    end)
+                    local radiusSlider = folder:Slider("Helper Radius", nagiTrap.radius, 10, 100, 1, function(value)
+                        nagiTrap.radius = value
+                    end)
+                    local speedSlider = folder:Slider("Helper Speed", nagiTrap.speed, 0.01, 1, 0.01, function(value)
+                        nagiTrap.speed = value
+                    end)
+
+                    -- Folder wrappers restore saved UI values without firing callbacks.
+                    -- Mirror the restored values into the recovered Nagi helper state.
+                    nagiTrap.radius = radiusSlider and radiusSlider.Value or nagiTrap.radius
+                    nagiTrap.speed = speedSlider and speedSlider.Value or nagiTrap.speed
+                    if trapToggle and trapToggle.Value then
+                        setNagiTrapEnabled(true)
                     end
                 end
             end
@@ -12557,157 +14635,8 @@ task.spawn(function()
 end)
 end)
 
-local airdr = maintab2:Folder("Air Dribble Features.", Color3.fromRGB(24, 255, 228), true)
-airdr:Label("Air Dribble: Dribbles The Ball Through The Air.")
-
-local bindKey = Enum.KeyCode.LeftAlt
-
-local airDribbleState = {
-    enabled = false,
-    isHolding = false,
-    lastKick = 0
-}
-
-local cooldown = 0.255
-
-local function notiy(text)
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Air Dribble",
-        Text = text,
-        Duration = 2
-    })
-end
-
-airdr:Toggle("Air Dribble", "Kicks The Ball Forward Infront Of You And Up.", function()
-    airDribbleState.enabled = not airDribbleState.enabled
-    notiy(airDribbleState.enabled and "Enabled." or "Disabled.")
-end)
-
-airdr:Textbox("Air Dribble Bind", "Enter Key (Example: E, Q, LeftAlt.)", function(text)
-    if typeof(text) ~= "string" then
-        bindKey = Enum.KeyCode.LeftAlt
-        notiy("Invalid Key. Bind Is Now LeftAlt.")
-        return
-    end
-
-    local formatted = text:gsub("%s+", "")
-    local success, key = pcall(function()
-        return Enum.KeyCode[formatted]
-    end)
-
-    if success and key then
-        bindKey = key
-        notiy("Bind Set To: " .. key.Name)
-    else
-        bindKey = Enum.KeyCode.LeftAlt
-        notiy("Invalid Key. Bind Is Now LeftAlt.")
-    end
-end)
-
-local player = Players.LocalPlayer
-local holdingConnection = nil
-local airDribbleAccumulator = 0
-local airDribbleRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
-local airDribblePacket = buffer.fromstring(buffers["base"])
-local airDribbleAnimation = Instance.new("Animation")
-airDribbleAnimation.AnimationId = "rbxassetid://76587445975710"
-local airDribbleTrack = nil
-local airDribbleTrackHumanoid = nil
-
-local function getAirDribbleTrack(hum)
-    if airDribbleTrack and airDribbleTrackHumanoid == hum then
-        return airDribbleTrack
-    end
-
-    if airDribbleTrack then
-        pcall(function() airDribbleTrack:Stop(0) end)
-        airDribbleTrack = nil
-    end
-
-    local animator = hum:FindFirstChildOfClass("Animator")
-    if not animator then return nil end
-
-    local ok, track = pcall(function()
-        return animator:LoadAnimation(airDribbleAnimation)
-    end)
-
-    if ok then
-        airDribbleTrack = track
-        airDribbleTrackHumanoid = hum
-        return track
-    end
-
-    return nil
-end
-
-local function performAirDribble()
-    local now = tick()
-    if now - airDribbleState.lastKick < cooldown then
-        return
-    end
-
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not (hum and root) then return end
-
-    airDribbleState.lastKick = now
-
-    local track = getAirDribbleTrack(hum)
-    if track then
-        track:Play(0)
-    end
-
-    local dir = root.CFrame.LookVector
-    local kickVec = Vector3.new(dir.X * 0.75, 0.65, dir.Z * 0.75)
-
-    airDribbleRemote:FireServer(airDribblePacket, {
-        { "kick", 28, false, kickVec }
-    })
-end
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp or input.KeyCode ~= bindKey then return end
-    if not airDribbleState.enabled then return end
-
-    airDribbleState.isHolding = true
-
-    performAirDribble()
-
-    if holdingConnection then holdingConnection:Disconnect() end
-    airDribbleAccumulator = 0
-
-    holdingConnection = RunService.Heartbeat:Connect(function(dt)
-        if not airDribbleState.isHolding
-            or not airDribbleState.enabled then
-
-            holdingConnection:Disconnect()
-            holdingConnection = nil
-            airDribbleAccumulator = 0
-            return
-        end
-
-        airDribbleAccumulator += dt
-
-        if airDribbleAccumulator < (1 / 30) then
-            return
-        end
-
-        airDribbleAccumulator = 0
-        performAirDribble()
-    end)
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == bindKey then
-        airDribbleState.isHolding = false
-        if holdingConnection then
-            holdingConnection:Disconnect()
-            holdingConnection = nil
-        end
-    end
-end)
-
+-- V14: legacy Celeron Air Dribble removed.
+-- Native EvoHub Air Dribble will be restored from the feature-body deobfuscation pass.
 local othersil = maintab2:Folder("Other Features.", Color3.fromRGB(24, 255, 228), true)
 othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
 
