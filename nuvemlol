@@ -2523,6 +2523,7 @@ local mainUI, mainReal = makeTab("Main", "home", "Main")
 local playerUI, playerReal = makeTab("Player", "person", "Base Moves")
 local visualsUI, visualsReal = makeTab("Visuals", "visibility", "ESP")
 local miscUI, miscReal = makeTab("Misc", "settings", "Settings")
+local extraUI, extraReal = makeTab("Extra", "science", "Test Features")
 
 -- Exact sidebar names observed in the EvoHub runtime captures.
 mainReal:EnsureGroup("Main")
@@ -2538,6 +2539,11 @@ for _, groupName in ipairs({"ESP", "Crosshair", "Ball Metavision"}) do
     visualsReal:EnsureGroup(groupName)
 end
 miscReal:EnsureGroup("Settings")
+extraReal:EnsureGroup("Test Features")
+
+-- Five top tabs fit the current 500px native-style tab strip without clipping.
+-- If a sixth top tab is added later, switch the strip to paged < / > navigation
+-- instead of shrinking touch targets on mobile.
 
 -- Preserve old feature code and legacy config keys while routing each section
 -- into the EvoHub navigation model.
@@ -2892,15 +2898,41 @@ task.spawn(function()
 
             local function kickVector(root)
                 local look = root.CFrame.LookVector
+
+                -- V16 capture confirms the native fixed vector state:
+                -- Height=50, Forward=1.15, VectorScale=50, Power=28.
+                -- Azure Latch currently reacts badly when only the packet power
+                -- scalar changes, so preserve the native vector at Power=28 and
+                -- let the user's Power setting also scale UPWARD lift.
+                local nativePower = 28
+                local powerRatio = math.clamp(
+                    (tonumber(state.Power) or nativePower) / nativePower,
+                    0.05,
+                    4
+                )
+                local upward = math.max(1, state.Height * powerRatio)
+
                 local v = Vector3.new(
                     look.X * state.Forward,
-                    state.Height,
+                    upward,
                     look.Z * state.Forward
                 )
+
                 if v.Magnitude <= 0 then
                     return Vector3.new(0, state.VectorScale, 0)
                 end
-                return v.Unit * state.VectorScale
+
+                local result = v.Unit * state.VectorScale
+
+                -- Never allow the Air Dribble direction to become downward.
+                if result.Y <= 0 then
+                    result = Vector3.new(result.X, math.max(1, math.abs(result.Y)), result.Z)
+                    if result.Magnitude > 0 then
+                        result = result.Unit * state.VectorScale
+                    end
+                end
+
+                return result
             end
 
             local function autoJump()
@@ -5339,104 +5371,194 @@ task.spawn(function()
         end)
 
         -- ---------------- Ball Metavision ----------------
-        -- V16 capture: one native toggle, default false, StartOld/Stop/Start lifecycle.
+        -- V16 capture recovered the original lifecycle as:
+        -- Callback -> StartOld -> Stop -> Start -> StopOld,
+        -- with Workspace + RunService and several locally-created Instances.
+        -- The previous RE only created one Highlight and missed that lifecycle.
         local ballMetaEnabled = false
-        local ballHighlight = nil
-        local currentBall = nil
         local metaConnection = nil
+        local metaVisuals = {}
+        local currentBallPart = nil
+        local currentBallObject = nil
 
-        local function findBall()
+        local function resolveBallObject()
             local terrain = WorkspaceV:FindFirstChildOfClass("Terrain")
-            local ball = terrain and terrain:FindFirstChild("Ball")
-            if ball and ball:IsA("BasePart") then return ball end
-
-            local directBall = WorkspaceV:FindFirstChild("Ball")
-            if directBall then
-                if directBall:IsA("BasePart") then return directBall end
-                if directBall:IsA("Model") then
-                    local part = directBall.PrimaryPart or directBall:FindFirstChildWhichIsA("BasePart", true)
-                    if part then return part end
+            local terrainBall = terrain and terrain:FindFirstChild("Ball")
+            if terrainBall then
+                if terrainBall:IsA("BasePart") then
+                    return terrainBall, terrainBall
+                elseif terrainBall:IsA("Model") then
+                    local part = terrainBall.PrimaryPart
+                        or terrainBall:FindFirstChildWhichIsA("BasePart", true)
+                    if part then return terrainBall, part end
                 end
             end
 
-            local football = WorkspaceV:FindFirstChild("Football")
-            if football then
-                if football:IsA("BasePart") then return football end
-                if football:IsA("Model") then
-                    local part = football.PrimaryPart or football:FindFirstChildWhichIsA("BasePart", true)
-                    if part then return part end
+            local direct = WorkspaceV:FindFirstChild("Ball")
+                or WorkspaceV:FindFirstChild("Football")
+            if direct then
+                if direct:IsA("BasePart") then
+                    return direct, direct
+                elseif direct:IsA("Model") then
+                    local part = direct.PrimaryPart
+                        or direct:FindFirstChildWhichIsA("BasePart", true)
+                    if part then return direct, part end
                 end
             end
 
+            local characters = WorkspaceV:FindFirstChild("characters")
             for _, plr in ipairs(PlayersV:GetPlayers()) do
-                local char = plr.Character
+                local char = (characters and characters:FindFirstChild(plr.Name))
+                    or plr.Character
                 local held = char and char:FindFirstChild("Ball")
                 if held then
-                    if held:IsA("BasePart") then return held end
-                    if held:IsA("Model") then
-                        local part = held.PrimaryPart or held:FindFirstChildWhichIsA("BasePart", true)
-                        if part then return part end
+                    if held:IsA("BasePart") then
+                        return held, held
+                    elseif held:IsA("Model") then
+                        local part = held.PrimaryPart
+                            or held:FindFirstChildWhichIsA("BasePart", true)
+                        if part then return held, part end
+                    else
+                        local part = held:FindFirstChildWhichIsA("BasePart", true)
+                        if part then return held, part end
                     end
                 end
             end
-            return nil
+
+            return nil, nil
         end
 
-        local function destroyBallMetaVisual()
-            currentBall = nil
-            if ballHighlight then
-                pcall(function() ballHighlight:Destroy() end)
-                ballHighlight = nil
+        local function rememberMetaVisual(instance)
+            metaVisuals[#metaVisuals + 1] = instance
+            return instance
+        end
+
+        local function StopOld()
+            currentBallPart = nil
+            currentBallObject = nil
+
+            for i = #metaVisuals, 1, -1 do
+                local visual = metaVisuals[i]
+                if visual then
+                    pcall(function() visual:Destroy() end)
+                end
+                metaVisuals[i] = nil
             end
+        end
+
+        local function buildMetaVisuals(ballObject, ballPart)
+            StopOld()
+
+            if not ballObject or not ballPart or not ballPart.Parent then
+                return
+            end
+
+            currentBallObject = ballObject
+            currentBallPart = ballPart
+
+            -- World highlight.
+            local highlight = rememberMetaVisual(Instance.new("Highlight"))
+            highlight.Name = "EvoHubBallMetavision"
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.FillColor = Color3.fromRGB(149, 138, 204)
+            highlight.OutlineColor = Color3.fromRGB(235, 232, 255)
+            highlight.FillTransparency = 0.62
+            highlight.OutlineTransparency = 0
+            highlight.Adornee = ballObject
+            highlight.Parent = WorkspaceV
+
+            -- Strong local outline. This remains visible on executors/devices
+            -- where Highlight rendering on fast-moving balls is inconsistent.
+            local sphere = rememberMetaVisual(Instance.new("SphereHandleAdornment"))
+            sphere.Name = "EvoHubBallMetavisionSphere"
+            sphere.Adornee = ballPart
+            sphere.AlwaysOnTop = true
+            sphere.ZIndex = 10
+            sphere.Color3 = Color3.fromRGB(149, 138, 204)
+            sphere.Transparency = 0.36
+            sphere.Radius = math.max(
+                ballPart.Size.X,
+                ballPart.Size.Y,
+                ballPart.Size.Z
+            ) * 0.72 + 0.35
+            sphere.Parent = WorkspaceV
+
+            -- Billboard marker mirrors the original's multi-instance lifecycle
+            -- and gives mobile testers an unmistakable Ball Metavision marker.
+            local billboard = rememberMetaVisual(Instance.new("BillboardGui"))
+            billboard.Name = "EvoHubBallMetavisionBillboard"
+            billboard.Adornee = ballPart
+            billboard.AlwaysOnTop = true
+            billboard.LightInfluence = 0
+            billboard.Size = UDim2.fromOffset(42, 42)
+            billboard.StudsOffsetWorldSpace = Vector3.new(0, 1.35, 0)
+            billboard.Parent = WorkspaceV
+
+            local ring = Instance.new("Frame")
+            ring.Name = "Ring"
+            ring.AnchorPoint = Vector2.new(0.5, 0.5)
+            ring.Position = UDim2.fromScale(0.5, 0.5)
+            ring.Size = UDim2.fromOffset(28, 28)
+            ring.BackgroundTransparency = 1
+            ring.Parent = billboard
+
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(1, 0)
+            corner.Parent = ring
+
+            local ringStroke = Instance.new("UIStroke")
+            ringStroke.Thickness = 2
+            ringStroke.Transparency = 0.05
+            ringStroke.Color = Color3.fromRGB(181, 171, 235)
+            ringStroke.Parent = ring
         end
 
         local function updateBallMeta()
             if not ballMetaEnabled then return end
 
-            local ball = findBall()
-            if not ball then
-                destroyBallMetaVisual()
+            local ballObject, ballPart = resolveBallObject()
+            if not ballPart then
+                if currentBallPart then
+                    StopOld()
+                end
                 return
             end
 
-            if ball ~= currentBall or not ballHighlight or not ballHighlight.Parent then
-                destroyBallMetaVisual()
-                currentBall = ball
-
-                ballHighlight = Instance.new("Highlight")
-                ballHighlight.Name = "EvoHubBallMetavision"
-                ballHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                ballHighlight.FillColor = Color3.fromRGB(149, 138, 204)
-                ballHighlight.OutlineColor = Color3.fromRGB(225, 220, 255)
-                ballHighlight.FillTransparency = 0.45
-                ballHighlight.OutlineTransparency = 0
-                ballHighlight.Adornee = ball
-
-                -- A Highlight is a world visual; parenting it to CoreGui was the RE bug.
-                ballHighlight.Parent = WorkspaceV
-            else
-                ballHighlight.Enabled = true
+            if ballPart ~= currentBallPart
+                or ballObject ~= currentBallObject
+                or not currentBallPart
+                or not currentBallPart.Parent then
+                buildMetaVisuals(ballObject, ballPart)
             end
         end
 
-        local function stopBallMeta()
+        local function Stop()
             ballMetaEnabled = false
+
             if metaConnection then
                 metaConnection:Disconnect()
                 metaConnection = nil
             end
-            destroyBallMetaVisual()
+
+            StopOld()
         end
 
-        local function startBallMeta()
+        local function StartOld()
+            StopOld()
+            updateBallMeta()
+
             if metaConnection then
                 metaConnection:Disconnect()
-                metaConnection = nil
             end
 
+            -- Original V16 closure owns a RunService connection.
+            metaConnection = RunServiceV.RenderStepped:Connect(updateBallMeta)
+        end
+
+        local function Start()
+            Stop()
             ballMetaEnabled = true
-            updateBallMeta()
-            metaConnection = RunServiceV.Heartbeat:Connect(updateBallMeta)
+            StartOld()
         end
 
         local metaFolder = visualsUI:FolderInGroup(
@@ -5449,9 +5571,9 @@ task.spawn(function()
 
         metaFolder:Toggle("Ball Metavision", nil, false, function(v)
             if v == true then
-                startBallMeta()
+                Start()
             else
-                stopBallMeta()
+                Stop()
             end
         end)
     end)
@@ -5928,48 +6050,158 @@ ballfolder:Button("Steal Ball", "Repeatedly Attempts To Get The Ball. Click Agai
     end)
 end)
 
-ballfolder:Button("Bring Ball", "Steals The Ball Then Teleports Back. Click Again To Cancel.", function()
-    local hrp = flowPartData.LocalPlayer.Character and flowPartData.LocalPlayer.Character.HumanoidRootPart
-    if not hrp then return end
+-- ================================================================
+-- EXTRA > TEST FEATURES
+-- Celeron ball utilities kept separate from native EvoHub behavior.
+-- GitHub source reference: ghostofcelleron/Celeron / azltest.
+-- ================================================================
+local testFeatures = extraUI:FolderInGroup(
+    "Test Features",
+    "Test Features.",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Extra"
+)
+testFeatures:Label("Ball Features (Test).")
 
-    if stealActive then
-        stealActive = false
-        return
+local testBringActive = false
+
+local function testWorldCharacter(plr)
+    local characters = workspace:FindFirstChild("characters")
+    return (characters and characters:FindFirstChild(plr.Name))
+        or plr.Character
+end
+
+local function testHasBall(plr)
+    local char = testWorldCharacter(plr)
+    return char and char:FindFirstChild("Ball") ~= nil
+end
+
+local function testRoot(plr)
+    local char = testWorldCharacter(plr)
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root and plr.Character then
+        root = plr.Character:FindFirstChild("HumanoidRootPart")
+    end
+    return root
+end
+
+local function testBallTarget()
+    local terrain = workspace:FindFirstChildOfClass("Terrain")
+    local freeBall = terrain and terrain:FindFirstChild("Ball")
+    if freeBall then
+        if freeBall:IsA("BasePart") then
+            return freeBall
+        elseif freeBall:IsA("Model") then
+            return freeBall.PrimaryPart or freeBall:FindFirstChildWhichIsA("BasePart", true)
+        end
     end
 
-    stealActive = true
-
-    spawn(function()
-        local orig = hrp.CFrame
-
-        while stealActive and hrp and hrp.Parent and not flowPartData.LocalPlayer.Character:FindFirstChild("Ball") do
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if ball then
-                hrp.CFrame = CFrame.new(ball.Position)
-            end
-
-            for _, p in flowPartData.Players:GetPlayers() do
-                if not stealActive then break end
-                if p ~= flowPartData.LocalPlayer then
-                    local ob = p.Character and p.Character:FindFirstChild("Ball")
-                    if ob then
-                        hrp.CFrame = ob.CFrame
-                        flowPartData.ByteNetReliable:FireServer(flowPartData.basePacket, {{"tackle"}})
-                    end
+    for _, plr in ipairs(flowPartData.Players:GetPlayers()) do
+        if plr ~= flowPartData.LocalPlayer then
+            local char = testWorldCharacter(plr)
+            local held = char and char:FindFirstChild("Ball")
+            if held then
+                if held:IsA("BasePart") then
+                    return held
+                elseif held:IsA("Model") then
+                    return held.PrimaryPart or held:FindFirstChildWhichIsA("BasePart", true)
+                else
+                    return held:FindFirstChildWhichIsA("BasePart", true)
                 end
             end
+        end
+    end
 
-            task.wait(0.05)
+    return nil
+end
+
+testFeatures:Button(
+    "TP Ball",
+    "Teleports To The Current Ball.",
+    function()
+        local hrp = testRoot(flowPartData.LocalPlayer)
+        local ball = testBallTarget()
+        if not hrp or not ball then return end
+
+        hrp.CFrame = CFrame.new(ball.Position)
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.zero
+            hrp.AssemblyAngularVelocity = Vector3.zero
+        end)
+    end
+)
+
+testFeatures:Button(
+    "Bring Ball",
+    "Celeron Test: Steals The Ball Then Teleports Back. Click Again To Cancel.",
+    function()
+        local localPlayer = flowPartData.LocalPlayer
+        local hrp = testRoot(localPlayer)
+        if not hrp then return end
+
+        if testBringActive then
+            testBringActive = false
+            return
         end
 
-        if stealActive and hrp and hrp.Parent and flowPartData.LocalPlayer.Character:FindFirstChild("Ball") then
-            hrp.CFrame = orig
-        end
+        testBringActive = true
+        local originalCFrame = hrp.CFrame
 
-        stealActive = false
-    end)
-end)
+        task.spawn(function()
+            while testBringActive do
+                hrp = testRoot(localPlayer)
+                if not hrp or not hrp.Parent then break end
+                if testHasBall(localPlayer) then break end
 
+                local ball = testBallTarget()
+                if ball and ball.Parent then
+                    hrp.CFrame = CFrame.new(ball.Position)
+                end
+
+                -- Exact Celeron idea: when another player owns the ball,
+                -- teleport to it and issue the normal tackle packet.
+                for _, plr in ipairs(flowPartData.Players:GetPlayers()) do
+                    if not testBringActive then break end
+                    if plr ~= localPlayer and testHasBall(plr) then
+                        local otherChar = testWorldCharacter(plr)
+                        local held = otherChar and otherChar:FindFirstChild("Ball")
+                        local heldPart = held
+
+                        if held and held:IsA("Model") then
+                            heldPart = held.PrimaryPart
+                                or held:FindFirstChildWhichIsA("BasePart", true)
+                        elseif held and not held:IsA("BasePart") then
+                            heldPart = held:FindFirstChildWhichIsA("BasePart", true)
+                        end
+
+                        if heldPart and heldPart:IsA("BasePart") then
+                            hrp.CFrame = heldPart.CFrame
+                            pcall(function()
+                                flowPartData.ByteNetReliable:FireServer(
+                                    flowPartData.basePacket,
+                                    {{"tackle"}}
+                                )
+                            end)
+                        end
+                    end
+                end
+
+                task.wait(0.05)
+            end
+
+            hrp = testRoot(localPlayer)
+            if testBringActive
+                and hrp
+                and hrp.Parent
+                and testHasBall(localPlayer) then
+                hrp.CFrame = originalCFrame
+            end
+
+            testBringActive = false
+        end)
+    end
+)
 
 ballfolder:Button("Steal Ball (Aiku)", "Repeatedly Attempts To Get The Ball Via Reflex Tackle. Click Again To Cancel.", function()
     local hrp = flowPartData.LocalPlayer.Character and flowPartData.LocalPlayer.Character.HumanoidRootPart
@@ -12777,6 +13009,29 @@ do
             return best
         end
 
+        local function lineupCharacter()
+            local characters = Workspace:FindFirstChild("characters")
+            return (characters and characters:FindFirstChild(player.Name))
+                or player.Character
+        end
+
+        local function hasLineupBall()
+            local char = lineupCharacter()
+            if not char then return false end
+
+            local held = char:FindFirstChild("Ball")
+            if held then return true end
+
+            -- A few character containers nest state/tools one level deeper.
+            for _, child in ipairs(char:GetChildren()) do
+                if child.Name == "Ball" then
+                    return true
+                end
+            end
+
+            return false
+        end
+
         local function freeFreeze()
             if not state.frozen then return end
             state.frozen = false
@@ -12785,27 +13040,46 @@ do
             local root = state.freezeRoot
 
             if hum and hum.Parent then
-                if state.oldWalkSpeed ~= nil then hum.WalkSpeed = state.oldWalkSpeed end
-                if state.oldJumpPower ~= nil then hum.JumpPower = state.oldJumpPower end
-                if state.oldPlatformStand ~= nil then hum.PlatformStand = state.oldPlatformStand end
+                pcall(function()
+                    if state.oldWalkSpeed ~= nil then hum.WalkSpeed = state.oldWalkSpeed end
+                    if state.oldJumpPower ~= nil then hum.JumpPower = state.oldJumpPower end
+                    if state.oldJumpHeight ~= nil then hum.JumpHeight = state.oldJumpHeight end
+                    if state.oldAutoRotate ~= nil then hum.AutoRotate = state.oldAutoRotate end
+                    if state.oldPlatformStand ~= nil then hum.PlatformStand = state.oldPlatformStand end
+                end)
             end
 
-            if root and root.Parent then
-                root.Anchored = false
+            if root and root.Parent and state.oldRootAnchored ~= nil then
+                pcall(function()
+                    root.Anchored = state.oldRootAnchored
+                end)
             end
 
             state.freezeHumanoid = nil
             state.freezeRoot = nil
             state.oldWalkSpeed = nil
             state.oldJumpPower = nil
+            state.oldJumpHeight = nil
+            state.oldAutoRotate = nil
             state.oldPlatformStand = nil
+            state.oldRootAnchored = nil
         end
 
         local function freezeCharacter()
             if not state.useFreeze or state.frozen then return end
-            local char = player.Character
+
+            local char = lineupCharacter()
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             local root = char and char:FindFirstChild("HumanoidRootPart")
+
+            -- Fall back to the Roblox character if Azure's world character
+            -- stores movement state separately.
+            if not hum or not root then
+                char = player.Character
+                hum = char and char:FindFirstChildOfClass("Humanoid")
+                root = char and char:FindFirstChild("HumanoidRootPart")
+            end
+
             if not hum or not root then return end
 
             state.frozen = true
@@ -12813,11 +13087,21 @@ do
             state.freezeRoot = root
             state.oldWalkSpeed = hum.WalkSpeed
             state.oldJumpPower = hum.JumpPower
+            state.oldJumpHeight = hum.JumpHeight
+            state.oldAutoRotate = hum.AutoRotate
             state.oldPlatformStand = hum.PlatformStand
+            state.oldRootAnchored = root.Anchored
 
+            -- Recovered original state exposes LockCharacter / SafeRestore,
+            -- OriginalWalkSpeed=16 and OriginalJumpPower=50. Lock immediately
+            -- when the lineup becomes active, then SafeRestore after execution.
             hum.WalkSpeed = 0
             hum.JumpPower = 0
-            hum.PlatformStand = true
+            hum.JumpHeight = 0
+            hum.AutoRotate = false
+
+            -- Anchoring guarantees mobile thumbstick movement cannot slide the
+            -- player out of the lineup while the skill is being sent.
             root.Anchored = true
 
             pcall(function()
@@ -12946,51 +13230,70 @@ do
         end
 
         local function executeEntry(entry)
+            if not entry or not hasLineupBall() then
+                return false
+            end
+
             local now = os.clock()
             if state.lastExecuted == entry and now - state.lastExecuteAt < 0.75 then
-                return
+                return false
             end
 
             state.lastExecuted = entry
             state.lastExecuteAt = now
 
-            local char = player.Character
+            local char = lineupCharacter() or player.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
-            if not root then return end
-
-            if state.autoSnap then
-                root.CFrame = CFrame.new(entry.target)
-                pcall(function()
-                    root.AssemblyLinearVelocity = Vector3.zero
-                    root.AssemblyAngularVelocity = Vector3.zero
-                    root.Velocity = Vector3.zero
-                    root.RotVelocity = Vector3.zero
-                end)
+            if not root and player.Character then
+                root = player.Character:FindFirstChild("HumanoidRootPart")
             end
+            if not root then return false end
 
+            -- Native order: lock -> aim -> perform mapped lineup action.
             freezeCharacter()
             aimAt(entry)
 
-            if state.autoExecute then
-                local cfg = STYLE_CONFIG[entry.style]
-                if cfg and cfg.skill then
-                    if fireAction(cfg.skill) and cfg.follow then
-                        task.delay(cfg.followDelay or 0.1, function()
-                            if state.enabled then
-                                fireAction(cfg.follow)
-                            end
-                        end)
-                    end
+            local cfg = STYLE_CONFIG[entry.style]
+            local fired = false
+
+            if cfg and cfg.skill and hasLineupBall() then
+                fired = fireAction(cfg.skill)
+
+                if fired and cfg.follow then
+                    task.delay(cfg.followDelay or 0.1, function()
+                        if state.enabled
+                            and state.active == entry
+                            and hasLineupBall() then
+                            fireAction(cfg.follow)
+                        end
+                    end)
                 end
             end
 
+            -- V16 original state exposes postSuccessFreeze=0.5.
             task.delay(0.5, function()
                 freeFreeze()
             end)
+
+            return fired
         end
 
         local function setActive(entry)
-            if state.active == entry then return end
+            -- Lineup aiming/execution is possession-only. Markers may remain
+            -- visible, but walking over one without the ball must do nothing.
+            if entry and not hasLineupBall() then
+                entry = nil
+            end
+
+            if state.active == entry then
+                -- Possession can be lost without changing the nearest marker.
+                if entry and not hasLineupBall() then
+                    state.active = nil
+                    stopAim()
+                    freeFreeze()
+                end
+                return
+            end
 
             restoreActiveMarkerColor()
             state.active = entry
@@ -13011,11 +13314,10 @@ do
                 state.activeMarker.Color = Color3.fromRGB(0, 255, 0)
             end
 
-            if entry then
-                aimAt(entry)
-                if state.autoSnap or state.autoExecute then
-                    executeEntry(entry)
-                end
+            if entry and hasLineupBall() then
+                -- Auto-use is native lineup behavior now: entering the correct
+                -- marker with possession aims and sends the style's mapped skill.
+                executeEntry(entry)
             else
                 stopAim()
                 freeFreeze()
@@ -13070,8 +13372,16 @@ do
                     return
                 end
 
-                local char = player.Character
+                if not hasLineupBall() then
+                    setActive(nil)
+                    return
+                end
+
+                local char = lineupCharacter() or player.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
+                if not root and player.Character then
+                    root = player.Character:FindFirstChild("HumanoidRootPart")
+                end
                 if not root then
                     setActive(nil)
                     return
