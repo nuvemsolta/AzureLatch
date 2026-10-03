@@ -1,3 +1,5 @@
+-- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
+-- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
 -- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
 -- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
 -- [[ V16 CAPTURE PARITY PATCH ]]
@@ -350,9 +352,8 @@ local Luna = (function()
         }, main)
         corner(topBar, 4)
 
-        -- V20.1 hidden-instance capture recovered the original title geometry:
-        -- e/v/o/h/u/b at X offsets 0,11,22,33,44,55; base #958ACC,
-        -- one-letter shimmer #E5DFFF, TextSize=15.
+        -- Original accent/shimmer behavior from V20.1, with the requested
+        -- RE title composition: "evo hub //re".
         local brandFrame = create("Frame", {
             Name = "Frame",
             Position = UDim2.fromOffset(12, 0),
@@ -365,37 +366,49 @@ local Luna = (function()
         local brandShimmer = Color3.fromRGB(229, 223, 255)
         local brandLetters = {}
 
-        local evoText = "evohub"
-        for index = 1, #evoText do
+        -- Keep the six original evohub letters individually animated, but add
+        -- the visible word gap requested for evo hub.
+        local brandChars = {
+            {"e", 0},
+            {"v", 11},
+            {"o", 22},
+            {"h", 39},
+            {"u", 50},
+            {"b", 61},
+        }
+
+        for index, entry in ipairs(brandChars) do
             local letter = create("TextLabel", {
                 Name = "TextLabel",
-                Position = UDim2.fromOffset((index - 1) * 11, 0),
+                Position = UDim2.fromOffset(entry[2], 0),
                 Size = UDim2.fromOffset(14, 28),
                 BackgroundTransparency = 1,
-                Text = evoText:sub(index, index),
+                Text = entry[1],
                 TextColor3 = brandBase,
                 Font = Enum.Font.SourceSans,
                 TextSize = 15,
                 TextXAlignment = Enum.TextXAlignment.Left,
+                TextYAlignment = Enum.TextYAlignment.Center,
                 ZIndex = 3,
             }, brandFrame)
             brandLetters[index] = letter
         end
 
+        -- Separate label keeps the // visually centered instead of hanging high.
         local suffix = create("TextLabel", {
             Name = "RE",
-            Position = UDim2.fromOffset(70, 0),
-            Size = UDim2.fromOffset(80, 28),
+            Position = UDim2.fromOffset(80, 0),
+            Size = UDim2.fromOffset(56, 28),
             BackgroundTransparency = 1,
-            Text = " // re",
+            Text = "//re",
             TextColor3 = brandBase,
             Font = Enum.Font.SourceSans,
             TextSize = 15,
             TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Center,
             ZIndex = 3,
         }, brandFrame)
 
-        -- Native-looking single-letter shimmer instead of the old white sine wave.
         task.spawn(function()
             local TweenServiceBrand = game:GetService("TweenService")
 
@@ -434,7 +447,6 @@ local Luna = (function()
                     task.wait(0.18)
                 end
 
-                -- The original reads as a shimmer, not a constantly-white wave.
                 task.wait(1.8)
             end
         end)
@@ -1317,7 +1329,16 @@ local Luna = (function()
                         end
 
                         if not silent then
+                            Library._ToggleCallbackDepth =
+                                (Library._ToggleCallbackDepth or 0) + 1
+
                             pcall(callback, newValue)
+
+                            Library._ToggleCallbackDepth =
+                                math.max(
+                                    (Library._ToggleCallbackDepth or 1) - 1,
+                                    0
+                                )
 
                             -- V19.1 captured the ORIGINAL global EvoHub notification
                             -- using Ball Metavision as the reference. Apply the same
@@ -2247,7 +2268,7 @@ end)()
 
 -- V15: native EvoHub feature-body pass + exact sidebar
 local Window = Luna:CreateWindow({
-    Name = "evo hub // re",
+    Name = "evo hub //re",
     Subtitle = "re",
     LogoID = "6031097225",
     LoadingEnabled = false,
@@ -2257,6 +2278,60 @@ local Window = Luna:CreateWindow({
     }
 })
 Window.Bind = Enum.KeyCode.K
+
+-- ================================================================
+-- GLOBAL EVOHUB NOTIFICATION ROUTER
+-- Every feature in the combined build uses EvoHubNotifications.
+-- Legacy Celeron StarterGui:SetCore notifications are rewritten below.
+-- ================================================================
+local function EvoNotify(title, message, duration)
+    if Luna.NotificationsEnabled == false then
+        return nil
+    end
+
+    title = tostring(title or "")
+    message = tostring(message or "")
+    duration = tonumber(duration) or 2
+
+    local cleanState = message
+        :lower()
+        :gsub("%s+", "")
+        :gsub("%.", "")
+
+    -- Shared CreateToggle already emits the canonical
+    -- "<Feature> Enabled/Disabled" notification. Suppress only duplicate
+    -- legacy state notifications that happen inside that same callback.
+    if (Luna._ToggleCallbackDepth or 0) > 0
+        and (cleanState == "enabled" or cleanState == "disabled") then
+        return nil
+    end
+
+    local content
+
+    if title == ""
+        or title:lower() == "evo hub // re"
+        or title:lower() == "evo hub //re"
+        or title:lower() == "evohub // re" then
+
+        content = message
+
+    elseif cleanState == "enabled" or cleanState == "disabled" then
+        content = title .. " " .. (
+            cleanState == "enabled" and "Enabled" or "Disabled"
+        )
+
+    elseif message == "" then
+        content = title
+
+    else
+        content = title .. ": " .. message
+    end
+
+    return Luna:CreateNotification({
+        Content = content,
+        Duration = duration,
+    })
+end
 
 -- ================================================================
 -- AUTO CONFIG
@@ -2434,10 +2509,11 @@ local function sectionPlacement(tabName, groupName, sectionName)
         local right = {
             ["auto position"] = 10,
             ["ball magnet"] = 20,
+            ["auto qte"] = 30,
+            ["infinite range passing"] = 35,
             ["auto goalkeeper"] = 40,
             ["auto activate"] = 50,
             ["ball features"] = 60,
-            ["no cooldown"] = 70,
             ["break ball"] = 80,
             ["mobile silent"] = 90,
             ["mobile keyboard"] = 100,
@@ -2784,11 +2860,7 @@ task.spawn(function()
         -- ------------------------------------------------------------
         local function notifyN(text)
             pcall(function()
-                StarterGuiN:SetCore("SendNotification", {
-                    Title = "evo hub // re",
-                    Text = tostring(text or ""),
-                    Duration = 2,
-                })
+                EvoNotify("evo hub // re", tostring(text or ""), 2,)
             end)
         end
 
@@ -5919,6 +5991,7 @@ local keybindsDivider
 local keybindRows = {}
 local keybindViewportConnection
 local keybindVisibilityToken = 0
+local refreshKeybindDisplay
 
 local function keybindDisplayParent()
     return (type(gethui) == "function" and gethui())
@@ -5955,7 +6028,6 @@ local function collectNativeKeybinds()
                     Name = prettyKeybindName(path, control),
                     Key = key,
                     Active = control.Active == true,
-                    Control = control,
                 }
             end
         end
@@ -5979,39 +6051,44 @@ local function computeKeybindGeometry(rowCount)
     local camera = workspace.CurrentCamera
     local viewport =
         camera and camera.ViewportSize
-        or Vector2.new(2340, 1080)
+        or Vector2.new(1560, 740)
 
-    -- Measured from the user's original 2340x1080 EvoHub video.
+    -- User-confirmed original behavior: compact panel on the LEFT.
+    -- Keep it deliberately small on mobile instead of scaling with the hub.
     local width = math.clamp(
-        math.floor(viewport.X * 0.222),
-        360,
-        520
+        math.floor(viewport.X * 0.14),
+        205,
+        280
     )
 
-    local rightMargin = math.floor(viewport.X * 0.055)
-    local top = math.floor(viewport.Y * 0.18)
-    local headerHeight = math.floor(width * 0.13)
-    local rowHeight = math.floor(width * 0.098)
+    local leftMargin = math.clamp(
+        math.floor(viewport.X * 0.018),
+        10,
+        28
+    )
 
-    headerHeight = math.clamp(headerHeight, 46, 68)
-    rowHeight = math.clamp(rowHeight, 36, 51)
+    local top = math.clamp(
+        math.floor(viewport.Y * 0.20),
+        90,
+        165
+    )
 
-    local wantedHeight =
+    local headerHeight = 28
+    local rowHeight = 25
+    local visibleRows = math.min(math.max(rowCount, 1), 10)
+
+    local height =
         headerHeight
-        + math.max(rowCount, 1) * rowHeight
-        + 8
-
-    local maxHeight = math.floor(viewport.Y * 0.64)
-    local height = math.min(wantedHeight, maxHeight)
+        + visibleRows * rowHeight
+        + 6
 
     return {
         Width = width,
         Height = height,
         HeaderHeight = headerHeight,
         RowHeight = rowHeight,
-        RightMargin = rightMargin,
+        LeftMargin = leftMargin,
         Top = top,
-        Viewport = viewport,
     }
 end
 
@@ -6033,7 +6110,7 @@ local function ensureKeybindDisplay()
 
     keybindsHolder = Instance.new("Frame")
     keybindsHolder.Name = "Keybinds"
-    keybindsHolder.AnchorPoint = Vector2.new(1, 0)
+    keybindsHolder.AnchorPoint = Vector2.new(0, 0)
     keybindsHolder.BackgroundColor3 = Color3.fromRGB(10, 10, 13)
     keybindsHolder.BackgroundTransparency = 0.14
     keybindsHolder.BorderSizePixel = 0
@@ -6041,12 +6118,12 @@ local function ensureKeybindDisplay()
     keybindsHolder.Parent = keybindsGui
 
     local holderCorner = Instance.new("UICorner")
-    holderCorner.CornerRadius = UDim.new(0, 6)
+    holderCorner.CornerRadius = UDim.new(0, 4)
     holderCorner.Parent = keybindsHolder
 
     local holderStroke = Instance.new("UIStroke")
     holderStroke.Color = Color3.fromRGB(55, 53, 65)
-    holderStroke.Transparency = 0.28
+    holderStroke.Transparency = 0.34
     holderStroke.Thickness = 1
     holderStroke.Parent = keybindsHolder
 
@@ -6055,8 +6132,8 @@ local function ensureKeybindDisplay()
     keybindsHeader.BackgroundTransparency = 1
     keybindsHeader.Text = "k e y b i n d s"
     keybindsHeader.TextColor3 = Color3.fromRGB(204, 201, 211)
-    keybindsHeader.TextTransparency = 0
     keybindsHeader.Font = Enum.Font.SourceSans
+    keybindsHeader.TextSize = 13
     keybindsHeader.TextXAlignment = Enum.TextXAlignment.Left
     keybindsHeader.TextYAlignment = Enum.TextYAlignment.Center
     keybindsHeader.Parent = keybindsHolder
@@ -6064,7 +6141,6 @@ local function ensureKeybindDisplay()
     keybindsDivider = Instance.new("Frame")
     keybindsDivider.Name = "Accent"
     keybindsDivider.BackgroundColor3 = Color3.fromRGB(149, 138, 204)
-    keybindsDivider.BackgroundTransparency = 0
     keybindsDivider.BorderSizePixel = 0
     keybindsDivider.Parent = keybindsHolder
 
@@ -6078,21 +6154,17 @@ local function ensureKeybindDisplay()
     keybindsContent.ScrollBarThickness = 0
     keybindsContent.Parent = keybindsHolder
 
-    local contentLayout = Instance.new("UIListLayout")
-    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    contentLayout.Padding = UDim.new(0, 0)
-    contentLayout.Parent = keybindsContent
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 0)
+    layout.Parent = keybindsContent
 
     local camera = workspace.CurrentCamera
     if camera and not keybindViewportConnection then
         keybindViewportConnection =
             camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-                if settingsState.KeybindsDisplay then
-                    task.defer(function()
-                        if settingsState.KeybindsDisplay then
-                            refreshKeybindDisplay()
-                        end
-                    end)
+                if settingsState.KeybindsDisplay and refreshKeybindDisplay then
+                    task.defer(refreshKeybindDisplay)
                 end
             end)
     end
@@ -6101,10 +6173,8 @@ end
 local function applyKeybindGeometry(count)
     local g = computeKeybindGeometry(count)
 
-    keybindsHolder.Position = UDim2.new(
-        1,
-        -g.RightMargin,
-        0,
+    keybindsHolder.Position = UDim2.fromOffset(
+        g.LeftMargin,
         g.Top
     )
     keybindsHolder.Size = UDim2.fromOffset(
@@ -6112,32 +6182,14 @@ local function applyKeybindGeometry(count)
         g.Height
     )
 
-    keybindsHeader.Position = UDim2.fromOffset(
-        math.floor(g.Width * 0.055),
-        0
-    )
-    keybindsHeader.Size = UDim2.new(
-        1,
-        -math.floor(g.Width * 0.11),
-        0,
-        g.HeaderHeight
-    )
-    keybindsHeader.TextSize = math.clamp(
-        math.floor(g.RowHeight * 0.46),
-        16,
-        23
-    )
+    keybindsHeader.Position = UDim2.fromOffset(10, 0)
+    keybindsHeader.Size = UDim2.new(1, -20, 0, g.HeaderHeight)
 
     keybindsDivider.Position = UDim2.fromOffset(
         0,
         g.HeaderHeight - 1
     )
-    keybindsDivider.Size = UDim2.new(
-        1,
-        0,
-        0,
-        1
-    )
+    keybindsDivider.Size = UDim2.new(1, 0, 0, 1)
 
     keybindsContent.Position = UDim2.fromOffset(
         0,
@@ -6153,13 +6205,12 @@ local function applyKeybindGeometry(count)
     return g
 end
 
-local function destroyKeybindRows()
-    for _, row in pairs(keybindRows) do
+local function clearKeybindRows()
+    for _, row in ipairs(keybindRows) do
         if row and row.Parent then
             row:Destroy()
         end
     end
-
     table.clear(keybindRows)
 end
 
@@ -6176,7 +6227,7 @@ local function animateKeybindVisibility(showing)
         local target = keybindsHolder.Position
         keybindsHolder.Position = UDim2.new(
             target.X.Scale,
-            target.X.Offset + 12,
+            target.X.Offset - 8,
             target.Y.Scale,
             target.Y.Offset
         )
@@ -6218,14 +6269,14 @@ local function animateKeybindVisibility(showing)
             if nameLabel then nameLabel.TextTransparency = 1 end
             if keyLabel then keyLabel.TextTransparency = 1 end
 
-            task.delay(math.min((index - 1) * 0.012, 0.12), function()
+            task.delay(math.min((index - 1) * 0.01, 0.08), function()
                 if token ~= keybindVisibilityToken then return end
 
                 if nameLabel and nameLabel.Parent then
                     pcall(function()
                         TweenServiceKeybinds:Create(
                             nameLabel,
-                            TweenInfo.new(0.12),
+                            TweenInfo.new(0.11),
                             { TextTransparency = 0 }
                         ):Play()
                     end)
@@ -6235,47 +6286,36 @@ local function animateKeybindVisibility(showing)
                     pcall(function()
                         TweenServiceKeybinds:Create(
                             keyLabel,
-                            TweenInfo.new(0.12),
+                            TweenInfo.new(0.11),
                             { TextTransparency = 0 }
                         ):Play()
                     end)
                 end
             end)
         end
-
     else
         if not keybindsGui.Enabled then return end
-
-        local target = keybindsHolder.Position
 
         pcall(function()
             TweenServiceKeybinds:Create(
                 keybindsHolder,
                 TweenInfo.new(
-                    0.15,
+                    0.13,
                     Enum.EasingStyle.Quad,
                     Enum.EasingDirection.In
                 ),
-                {
-                    Position = UDim2.new(
-                        target.X.Scale,
-                        target.X.Offset + 12,
-                        target.Y.Scale,
-                        target.Y.Offset
-                    ),
-                    BackgroundTransparency = 1,
-                }
+                { BackgroundTransparency = 1 }
             ):Play()
 
             TweenServiceKeybinds:Create(
                 keybindsHeader,
-                TweenInfo.new(0.13),
+                TweenInfo.new(0.12),
                 { TextTransparency = 1 }
             ):Play()
 
             TweenServiceKeybinds:Create(
                 keybindsDivider,
-                TweenInfo.new(0.13),
+                TweenInfo.new(0.12),
                 { BackgroundTransparency = 1 }
             ):Play()
         end)
@@ -6284,28 +6324,11 @@ local function animateKeybindVisibility(showing)
             local nameLabel = row:FindFirstChild("Name")
             local keyLabel = row:FindFirstChild("Key")
 
-            if nameLabel then
-                pcall(function()
-                    TweenServiceKeybinds:Create(
-                        nameLabel,
-                        TweenInfo.new(0.10),
-                        { TextTransparency = 1 }
-                    ):Play()
-                end)
-            end
-
-            if keyLabel then
-                pcall(function()
-                    TweenServiceKeybinds:Create(
-                        keyLabel,
-                        TweenInfo.new(0.10),
-                        { TextTransparency = 1 }
-                    ):Play()
-                end)
-            end
+            if nameLabel then nameLabel.TextTransparency = 1 end
+            if keyLabel then keyLabel.TextTransparency = 1 end
         end
 
-        task.delay(0.16, function()
+        task.delay(0.14, function()
             if token == keybindVisibilityToken
                 and not settingsState.KeybindsDisplay
                 and keybindsGui then
@@ -6315,41 +6338,25 @@ local function animateKeybindVisibility(showing)
     end
 end
 
-function refreshKeybindDisplay()
+refreshKeybindDisplay = function()
     ensureKeybindDisplay()
-    destroyKeybindRows()
+    clearKeybindRows()
 
     local entries = collectNativeKeybinds()
     local geometry = applyKeybindGeometry(#entries)
-
-    local horizontalPadding =
-        math.floor(geometry.Width * 0.055)
 
     for index, entry in ipairs(entries) do
         local row = Instance.new("Frame")
         row.Name = "Item"
         row.LayoutOrder = index
-        row.Size = UDim2.new(
-            1,
-            0,
-            0,
-            geometry.RowHeight
-        )
+        row.Size = UDim2.new(1, 0, 0, geometry.RowHeight)
         row.BackgroundTransparency = 1
         row.Parent = keybindsContent
 
         local nameLabel = Instance.new("TextLabel")
         nameLabel.Name = "Name"
-        nameLabel.Position = UDim2.fromOffset(
-            horizontalPadding,
-            0
-        )
-        nameLabel.Size = UDim2.new(
-            1,
-            -(horizontalPadding * 2 + 90),
-            1,
-            0
-        )
+        nameLabel.Position = UDim2.fromOffset(10, 0)
+        nameLabel.Size = UDim2.new(1, -70, 1, 0)
         nameLabel.BackgroundTransparency = 1
         nameLabel.Text = entry.Name
         nameLabel.TextColor3 =
@@ -6357,11 +6364,7 @@ function refreshKeybindDisplay()
             and Color3.fromRGB(226, 223, 235)
             or Color3.fromRGB(198, 198, 207)
         nameLabel.Font = Enum.Font.SourceSans
-        nameLabel.TextSize = math.clamp(
-            math.floor(geometry.RowHeight * 0.43),
-            15,
-            22
-        )
+        nameLabel.TextSize = 12
         nameLabel.TextXAlignment = Enum.TextXAlignment.Left
         nameLabel.TextYAlignment = Enum.TextYAlignment.Center
         nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
@@ -6370,29 +6373,13 @@ function refreshKeybindDisplay()
         local keyLabel = Instance.new("TextLabel")
         keyLabel.Name = "Key"
         keyLabel.AnchorPoint = Vector2.new(1, 0)
-        keyLabel.Position = UDim2.new(
-            1,
-            -horizontalPadding,
-            0,
-            0
-        )
-        keyLabel.Size = UDim2.fromOffset(
-            80,
-            geometry.RowHeight
-        )
+        keyLabel.Position = UDim2.new(1, -10, 0, 0)
+        keyLabel.Size = UDim2.fromOffset(55, geometry.RowHeight)
         keyLabel.BackgroundTransparency = 1
         keyLabel.Text = "[" .. entry.Key.Name .. "]"
-        keyLabel.TextColor3 = Color3.fromRGB(
-            149,
-            138,
-            204
-        )
+        keyLabel.TextColor3 = Color3.fromRGB(149, 138, 204)
         keyLabel.Font = Enum.Font.SourceSans
-        keyLabel.TextSize = math.clamp(
-            math.floor(geometry.RowHeight * 0.43),
-            15,
-            22
-        )
+        keyLabel.TextSize = 12
         keyLabel.TextXAlignment = Enum.TextXAlignment.Right
         keyLabel.TextYAlignment = Enum.TextYAlignment.Center
         keyLabel.Parent = row
@@ -6401,7 +6388,6 @@ function refreshKeybindDisplay()
     end
 
     if settingsState.KeybindsDisplay then
-        -- Do not hard-cut the panel while its contents update.
         keybindsGui.Enabled = true
         keybindsHolder.BackgroundTransparency = 0.14
         keybindsHeader.TextTransparency = 0
@@ -6410,7 +6396,7 @@ function refreshKeybindDisplay()
 end
 
 Luna.OnControlVisualChanged = function()
-    if settingsState.KeybindsDisplay then
+    if settingsState.KeybindsDisplay and refreshKeybindDisplay then
         task.defer(refreshKeybindDisplay)
     end
 end
@@ -6548,11 +6534,7 @@ local suppressNotifs = false
 notifsup:Toggle("Suppress Notifications", "Suppresses Notifications On Some Features, Made For Competitive Players.", function()
     suppressNotifs = not suppressNotifs
     local StarterGui = game:GetService("StarterGui")
-    StarterGui:SetCore("SendNotification", {
-        Title = "Notifications",
-        Text = suppressNotifs and "Suppressed." or "Removed Suppression.",
-        Duration = 1
-    })
+    EvoNotify("Notifications", suppressNotifs and "Suppressed." or "Removed Suppression.", 1)
 end)
 
 -- V9: old Celeron Metavision V1/V2 removed.
@@ -6575,11 +6557,7 @@ ballfolder:Toggle("Always Ball", "Attempts To Always Hold The Ball (zero gravity
     alwaysBallState.threadToken += 1
     local token = alwaysBallState.threadToken
 
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Always Ball",
-        Text = alwaysBallState.enabled and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Always Ball", alwaysBallState.enabled and "Enabled." or "Disabled.", 1)
 
     if not alwaysBallState.enabled then
         workspace.Gravity = alwaysBallDefaultGravity
@@ -6674,11 +6652,7 @@ ballfolder:Button("Get Flow (Req. Ball)", "Click To Attempt Getting Flow. Click 
         end
 
         if not preferredGK then
-            game.StarterGui:SetCore("SendNotification", {
-                Title = "oops!!! error!!",
-                Text = "no AI gk found. cannot get flow.",
-                Duration = 5
-            })
+            EvoNotify("oops!!! error!!", "no AI gk found. cannot get flow.", 5)
             if flowPartData.originalCFrame and root and root.Parent then
                 root.CFrame = flowPartData.originalCFrame
             end
@@ -6760,44 +6734,6 @@ ballfolder:Button("Get Flow (Req. Ball)", "Click To Attempt Getting Flow. Click 
     end)
 end)
 
-local stealActive = false
-
-ballfolder:Button("Steal Ball", "Repeatedly Attempts To Get The Ball. Click Again To Cancel.", function()
-    local hrp = flowPartData.LocalPlayer.Character and flowPartData.LocalPlayer.Character.HumanoidRootPart
-    if not hrp then return end
-
-    if stealActive then
-        stealActive = false
-        return
-    end
-
-    stealActive = true
-
-    spawn(function()
-        while stealActive and hrp and hrp.Parent and not flowPartData.LocalPlayer.Character:FindFirstChild("Ball") do
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if ball then
-                hrp.CFrame = CFrame.new(ball.Position)
-            end
-
-            for _, p in flowPartData.Players:GetPlayers() do
-                if not stealActive then break end
-                if p ~= flowPartData.LocalPlayer then
-                    local b = p.Character and p.Character:FindFirstChild("Ball")
-                    if b then
-                        hrp.CFrame = b.CFrame
-                        flowPartData.ByteNetReliable:FireServer(flowPartData.basePacket, {{"tackle"}})
-                    end
-                end
-            end
-
-            task.wait(0.05)
-        end
-
-        stealActive = false
-    end)
-end)
-
 -- ================================================================
 -- EXTRA > TEST FEATURES
 -- Celeron ball utilities kept separate from native EvoHub behavior.
@@ -6863,22 +6799,6 @@ local function testBallTarget()
 
     return nil
 end
-
-testFeatures:Button(
-    "TP Ball",
-    "Teleports To The Current Ball.",
-    function()
-        local hrp = testRoot(flowPartData.LocalPlayer)
-        local ball = testBallTarget()
-        if not hrp or not ball then return end
-
-        hrp.CFrame = CFrame.new(ball.Position)
-        pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end)
-    end
-)
 
 testFeatures:Button(
     "Bring Ball",
@@ -6950,272 +6870,6 @@ testFeatures:Button(
         end)
     end
 )
-
-ballfolder:Button("Steal Ball (Aiku)", "Repeatedly Attempts To Get The Ball Via Reflex Tackle. Click Again To Cancel.", function()
-    local hrp = flowPartData.LocalPlayer.Character and flowPartData.LocalPlayer.Character.HumanoidRootPart
-    if not hrp then return end
-
-    if stealActive then
-        stealActive = false
-        return
-    end
-
-    stealActive = true
-
-    spawn(function()
-        while stealActive and hrp and hrp.Parent and not flowPartData.LocalPlayer.Character:FindFirstChild("Ball") do
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if ball then
-                hrp.CFrame = CFrame.new(ball.Position)
-            end
-
-            for _, p in flowPartData.Players:GetPlayers() do
-                if not stealActive then break end
-                if p ~= flowPartData.LocalPlayer then
-                    local b = p.Character and p.Character:FindFirstChild("Ball")
-                    if b then
-                        hrp.CFrame = b.CFrame
-                        flowPartData.ByteNetReliable:FireServer(flowPartData.basePacket, {{"skill2"}})
-                    end
-                end
-            end
-
-            task.wait(0.05)
-        end
-
-        stealActive = false
-    end)
-end)
-
-ballfolder:Button("Bring Ball (Aiku)", "Steals The Ball  Via Reflex Tackle Then Teleports Back. Click Again To Cancel.", function()
-    local hrp = flowPartData.LocalPlayer.Character and flowPartData.LocalPlayer.Character.HumanoidRootPart
-    if not hrp then return end
-
-    if stealActive then
-        stealActive = false
-        return
-    end
-
-    stealActive = true
-
-    spawn(function()
-        local orig = hrp.CFrame
-
-        while stealActive and hrp and hrp.Parent and not flowPartData.LocalPlayer.Character:FindFirstChild("Ball") do
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if ball then
-                hrp.CFrame = CFrame.new(ball.Position)
-            end
-
-            for _, p in flowPartData.Players:GetPlayers() do
-                if not stealActive then break end
-                if p ~= flowPartData.LocalPlayer then
-                    local ob = p.Character and p.Character:FindFirstChild("Ball")
-                    if ob then
-                        hrp.CFrame = ob.CFrame
-                        flowPartData.ByteNetReliable:FireServer(flowPartData.basePacket, {{"skill2"}})
-                    end
-                end
-            end
-
-            task.wait(0.7)
-        end
-
-        if stealActive and hrp and hrp.Parent and flowPartData.LocalPlayer.Character:FindFirstChild("Ball") then
-            hrp.CFrame = orig
-        end
-
-        stealActive = false
-    end)
-end)
-
-local nocd = maintab:Folder("No Cooldown Features.", Color3.fromRGB(24, 255, 228), true)
-nocd:Label("No Cooldown Features. Please Note This Is Exclusive To PC.")
-
-userInputService = game:GetService("UserInputService")
-runService = game:GetService("RunService")
-starterGui = game:GetService("StarterGui")
-player = game.Players.LocalPlayer
-
-dashState = {
-    ForwardRushEnabled = false,
-    SideDashEnabled = false,
-    rushing = false,
-    sideDashing = false,
-    dashBindsSetup = false,
-    lastForwardRush = 0,
-    lastSideDash = 0,
-    character = nil,
-    humanoid = nil,
-    rootPart = nil
-}
-
-forward_animm = "rbxassetid://79394729551302"
-sideright_animm = "rbxassetid://114016332539655"
-sideleft_animm = "rbxassetid://100207093237932"
-
-function updateCharacter()
-    dashState.character = player.Character or player.CharacterAdded:Wait()
-    dashState.humanoid = dashState.character:WaitForChild("Humanoid")
-    dashState.rootPart = dashState.character:WaitForChild("HumanoidRootPart")
-end
-
-updateCharacter()
-player.CharacterAdded:Connect(updateCharacter)
-
-function noty(title, text)
-    starterGui:SetCore("SendNotification", {
-        Title = title,
-        Text = text,
-        Duration = 2
-    })
-end
-
-function isAnimationPlaying(animId)
-    if not dashState.humanoid then return false end
-    local tracks = dashState.humanoid:GetPlayingAnimationTracks()
-    for _, track in ipairs(tracks) do
-        if track.Animation and track.Animation.AnimationId == animId then
-            return true
-        end
-    end
-    return false
-end
-
-function isAnySideDashPlaying()
-    return isAnimationPlaying(sideright_animm) or isAnimationPlaying(sideleft_animm)
-end
-
-function clearPreviousDashForces()
-    if not dashState.rootPart then return end
-    for _, child in ipairs(dashState.rootPart:GetChildren()) do
-        if child:IsA("BodyVelocity") and child.Name:match("^DashBV_") then
-            child:Destroy()
-        end
-    end
-end
-
-function forwardRush()
-    if not dashState.ForwardRushEnabled or not dashState.humanoid or not dashState.rootPart then return end
-    if tick() - dashState.lastForwardRush < 0.75 then return end
-    if isAnimationPlaying(forward_animm) then return end
-
-    dashState.lastForwardRush = tick()
-    dashState.rushing = true
-    clearPreviousDashForces()
-
-    local animator = dashState.humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", dashState.humanoid)
-    local animation = Instance.new("Animation")
-    animation.AnimationId = forward_animm
-    local animationTrack = animator:LoadAnimation(animation)
-    animationTrack:Play()
-
-    task.delay(0, function()
-        local sound = Instance.new("Sound")
-        sound.SoundId = "rbxassetid://105267293181745"
-        sound.Parent = dashState.rootPart
-        sound:Play()
-        sound.Ended:Connect(function() sound:Destroy() end)
-    end)
-
-    local bv = Instance.new("BodyVelocity")
-    bv.Name = "DashBV_" .. tostring(os.clock())
-    bv.MaxForce = Vector3.new(2000000, 20000, 2000000)
-    bv.P = 1500
-    bv.Parent = dashState.rootPart
-
-    local dashId = "ForwardRush_" .. tostring(os.clock())
-    runService:BindToRenderStep(dashId, Enum.RenderPriority.Character.Value + 10, function()
-        if not dashState.rootPart or not dashState.rootPart.Parent or not bv or not bv.Parent then
-            runService:UnbindFromRenderStep(dashId)
-            if bv then bv:Destroy() end
-            dashState.rushing = false
-            return
-        end
-        bv.Velocity = dashState.rootPart.CFrame.LookVector * 100
-    end)
-
-    task.delay(0.5, function()
-        runService:UnbindFromRenderStep(dashId)
-        if bv then bv:Destroy() end
-        dashState.rushing = false
-    end)
-end
-
-function sideDash(direction)
-    if not dashState.SideDashEnabled or not dashState.humanoid or not dashState.rootPart then return end
-    if tick() - dashState.lastSideDash < 0.3 then return end
-    if isAnySideDashPlaying() then return end
-
-    dashState.lastSideDash = tick()
-    dashState.sideDashing = true
-    clearPreviousDashForces()
-
-    local targetAnimId = (direction == "right") and sideright_animm or sideleft_animm
-    local animator = dashState.humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", dashState.humanoid)
-    local animation = Instance.new("Animation")
-    animation.AnimationId = targetAnimId
-    local animationTrack = animator:LoadAnimation(animation)
-    animationTrack:Play()
-
-    local sound = Instance.new("Sound")
-    sound.SoundId = "rbxassetid://71212694698006"
-    sound.Parent = dashState.rootPart
-    sound:Play()
-    sound.Ended:Connect(function() sound:Destroy() end)
-
-    local bv = Instance.new("BodyVelocity")
-    bv.Name = "DashBV_" .. tostring(os.clock())
-    bv.MaxForce = Vector3.new(2000000, 20000, 2000000)
-    bv.P = 1500
-    bv.Parent = dashState.rootPart
-
-    local dashId = "SideDash_" .. tostring(os.clock())
-    runService:BindToRenderStep(dashId, Enum.RenderPriority.Character.Value + 10, function()
-        if not dashState.rootPart or not dashState.rootPart.Parent or not bv or not bv.Parent then
-            runService:UnbindFromRenderStep(dashId)
-            if bv then bv:Destroy() end
-            dashState.sideDashing = false
-            return
-        end
-        local rightVec = dashState.rootPart.CFrame.RightVector
-        bv.Velocity = rightVec * (direction == "right" and 75 or -75)
-    end)
-
-    task.delay(0.4, function()
-        runService:UnbindFromRenderStep(dashId)
-        if bv then bv:Destroy() end
-        dashState.sideDashing = false
-    end)
-end
-
-nocd:Toggle("No Rush Cooldown", "Emulates Having No Rush Cooldown.", function()
-    dashState.ForwardRushEnabled = not dashState.ForwardRushEnabled
-    noty("No Rush CD", dashState.ForwardRushEnabled and "Enabled." or "Disabled.")
-end)
-
-nocd:Toggle("No Side Dash Cooldown", "Emulates Having No Side Dash Cooldown.", function()
-    dashState.SideDashEnabled = not dashState.SideDashEnabled
-    noty("No Side Dash CD", dashState.SideDashEnabled and "Enabled." or "Disabled.")
-end)
-
-if not dashState.dashBindsSetup then
-    dashState.dashBindsSetup = true
-    userInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.F then
-            forwardRush()
-        elseif input.KeyCode == Enum.KeyCode.Q then
-            local isA = userInputService:IsKeyDown(Enum.KeyCode.A)
-            local isD = userInputService:IsKeyDown(Enum.KeyCode.D)
-            if isD then
-                sideDash("right")
-            elseif isA then
-                sideDash("left")
-            end
-        end
-    end)
-end
 
 local breakball = maintab:Folder("Break Ball Features.", Color3.fromRGB(24, 255, 228), true)
 breakball:Label("Break Ball Features.")
@@ -7343,11 +6997,7 @@ end
 ballmag:Toggle("Ball Magnet", "Ball Magnet, Uses Set Radius As Range.", function()
     ballMagnetState.active = not ballMagnetState.active
 
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Ball Magnet",
-        Text = ballMagnetState.active and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Ball Magnet", ballMagnetState.active and "Enabled." or "Disabled.", 1)
 
     if ballMagnetState.active then
         startBallMagnetLoop()
@@ -7363,21 +7013,13 @@ end)
 ballmag:Toggle("Magnet Uses M2 Hold", "If Enabled, Ball Magnet Only Grabs While Right Click Is Held Down.", function()
     ballMagnetState.useM2Hold = not ballMagnetState.useM2Hold
 
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Magnet Uses M2 Hold",
-        Text = ballMagnetState.useM2Hold and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Magnet Uses M2 Hold", ballMagnetState.useM2Hold and "Enabled." or "Disabled.", 1)
 end)
 
 ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.", function()
     ballMagnetState.vizEnabled = not ballMagnetState.vizEnabled
 
-    game.StarterGui:SetCore("SendNotification", {
-        Title = "Ball Magnet Radius Hitbox",
-        Text = ballMagnetState.vizEnabled and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Ball Magnet Radius Hitbox", ballMagnetState.vizEnabled and "Enabled." or "Disabled.", 1)
 
     local function removeHitbox()
         if ballMagnetState.hitbox then
@@ -7752,305 +7394,6 @@ task.spawn(function()
         warn("[AutoCounter AttachedCore V5][BOOT] " .. tostring(bootError))
     end
 end)
-
--- V14: legacy Celeron Auto Goal preset buttons removed.
-local add = maintab:Folder("Utility Features.", Color3.fromRGB(24, 255, 228), true)
-add:Label("Fun Features: Pretty Fun Features I'd Say.")
-
-do
-    local passState = {
-        enabled = false,
-        busy = false,
-        lastUse = {},
-        hotbar = nil,
-        slots = {},
-        connections = {},
-        dirty = true,
-        watchConnection = nil,
-        watchAccumulator = 0
-    }
-
-    local passPlayer = Players.LocalPlayer
-    local passRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
-    local passKeys = {
-        [Enum.KeyCode.One] = "skill1",
-        [Enum.KeyCode.Two] = "skill2",
-        [Enum.KeyCode.Three] = "skill3",
-        [Enum.KeyCode.Four] = "skill4"
-    }
-
-    local function isTouchInput()
-        local ok, preferred = pcall(function()
-            return UserInputService.PreferredInput
-        end)
-
-        if ok then
-            return preferred == Enum.PreferredInput.Touch
-        end
-
-        return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-    end
-
-    local function aimPoint(useCenter)
-        local camera = Workspace.CurrentCamera
-        if not camera then return nil end
-
-        if useCenter then
-            return Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
-        end
-
-        local mouse = UserInputService:GetMouseLocation()
-        return Vector2.new(mouse.X, mouse.Y)
-    end
-
-    local function closestTeammate(useCenter)
-        local camera = Workspace.CurrentCamera
-        local point = aimPoint(useCenter)
-        if not camera or not point then return nil end
-
-        local bestOnScreen, bestOnScreenDist = nil, math.huge
-        local bestForward, bestForwardDist = nil, math.huge
-
-        for _, other in ipairs(Players:GetPlayers()) do
-            if other ~= passPlayer and other.Team == passPlayer.Team then
-                local character = other.Character
-                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-                local root = character and character:FindFirstChild("HumanoidRootPart")
-
-                if humanoid and root and humanoid.Health > 0 then
-                    local screen, onScreen = camera:WorldToViewportPoint(root.Position)
-                    if screen.Z > 0 then
-                        local distance = (Vector2.new(screen.X, screen.Y) - point).Magnitude
-
-                        if onScreen and distance < bestOnScreenDist then
-                            bestOnScreenDist = distance
-                            bestOnScreen = character
-                        end
-
-                        if useCenter and distance < bestForwardDist then
-                            bestForwardDist = distance
-                            bestForward = character
-                        end
-                    end
-                end
-            end
-        end
-
-        return bestOnScreen or (useCenter and bestForward or nil)
-    end
-
-    local function inLobby()
-        local teams = game:GetService("Teams")
-        local lobby = teams:FindFirstChild("lobby")
-        return lobby and passPlayer.Team == lobby
-    end
-
-    local function sendInfinitePass(skillName, useCenter)
-        if not passState.enabled or passState.busy or inLobby() then return end
-
-        local now = os.clock()
-        local last = passState.lastUse[skillName] or 0
-        if now - last < 0.18 then return end
-
-        local target = closestTeammate(useCenter)
-        if not target then return end
-
-        passState.lastUse[skillName] = now
-        passState.busy = true
-
-        pcall(function()
-            passRemote:FireServer(
-                buffer.fromstring(buffers["base"]),
-                {{skillName, target}}
-            )
-        end)
-
-        task.delay(0.12, function()
-            passState.busy = false
-        end)
-    end
-
-    local function currentHotbar()
-        local gui = passPlayer:FindFirstChild("PlayerGui")
-        local hotbar = gui and gui:FindFirstChild("Hotbar")
-        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
-        return backpack and backpack:FindFirstChild("Hotbar") or nil
-    end
-
-    local function disconnectMobileHooks()
-        for _, connection in ipairs(passState.connections) do
-            connection:Disconnect()
-        end
-        table.clear(passState.connections)
-        table.clear(passState.slots)
-    end
-
-    local function addConnection(connection)
-        passState.connections[#passState.connections + 1] = connection
-    end
-
-    local function hookSkillButton(button, skillName)
-        if not button:IsA("GuiButton") then return end
-
-        addConnection(button.Activated:Connect(function()
-            if isTouchInput() then
-                sendInfinitePass(skillName, true)
-            end
-        end))
-
-        addConnection(button.InputBegan:Connect(function(input)
-            if isTouchInput() and input.UserInputType == Enum.UserInputType.Touch then
-                sendInfinitePass(skillName, true)
-            end
-        end))
-    end
-
-    local function hookSkillSlot(slot, skillName)
-        passState.slots[skillName] = slot
-
-        if slot:IsA("GuiButton") then
-            hookSkillButton(slot, skillName)
-        elseif slot:IsA("GuiObject") then
-            addConnection(slot.InputBegan:Connect(function(input)
-                if isTouchInput() and input.UserInputType == Enum.UserInputType.Touch then
-                    sendInfinitePass(skillName, true)
-                end
-            end))
-        end
-
-        for _, object in ipairs(slot:GetDescendants()) do
-            if object:IsA("GuiButton") then
-                hookSkillButton(object, skillName)
-            end
-        end
-
-        local cooldown = slot:FindFirstChild("Cooldown", true)
-        if cooldown and cooldown:IsA("GuiObject") then
-            local wasVisible = cooldown.Visible
-            addConnection(cooldown:GetPropertyChangedSignal("Visible"):Connect(function()
-                local visible = cooldown.Visible
-                if isTouchInput() and visible and not wasVisible then
-                    sendInfinitePass(skillName, true)
-                end
-                wasVisible = visible
-            end))
-        end
-
-        addConnection(slot.DescendantAdded:Connect(function()
-            passState.dirty = true
-        end))
-        addConnection(slot.DescendantRemoving:Connect(function()
-            passState.dirty = true
-        end))
-    end
-
-    local function rebuildMobileHooks()
-        local hotbar = currentHotbar()
-        disconnectMobileHooks()
-        passState.hotbar = hotbar
-        passState.dirty = false
-
-        if not hotbar then return end
-
-        for index = 1, 4 do
-            local skillName = "skill" .. index
-            local slot = hotbar:FindFirstChild(skillName)
-            if slot then
-                hookSkillSlot(slot, skillName)
-            end
-        end
-
-        addConnection(hotbar.ChildAdded:Connect(function()
-            passState.dirty = true
-        end))
-        addConnection(hotbar.ChildRemoved:Connect(function()
-            passState.dirty = true
-        end))
-    end
-
-    UserInputService.InputBegan:Connect(function(input, processed)
-        if processed or isTouchInput() then return end
-        local skillName = passKeys[input.KeyCode]
-        if skillName then
-            sendInfinitePass(skillName, false)
-        end
-    end)
-
-    local function stopPassWatcher()
-        if passState.watchConnection then
-            passState.watchConnection:Disconnect()
-            passState.watchConnection = nil
-        end
-
-        passState.watchAccumulator = 0
-        disconnectMobileHooks()
-        passState.hotbar = nil
-        passState.dirty = true
-    end
-
-    local function startPassWatcher()
-        stopPassWatcher()
-        rebuildMobileHooks()
-
-        passState.watchConnection =
-            RunService.Heartbeat:Connect(function(dt)
-                if not passState.enabled then
-                    return
-                end
-
-                passState.watchAccumulator += dt
-
-                if passState.watchAccumulator < 0.2 then
-                    return
-                end
-
-                passState.watchAccumulator = 0
-
-                local hotbar = currentHotbar()
-
-                if hotbar ~= passState.hotbar then
-                    passState.dirty = true
-                end
-
-                if not passState.dirty and hotbar then
-                    for index = 1, 4 do
-                        local name = "skill" .. index
-
-                        if hotbar:FindFirstChild(name)
-                            ~= passState.slots[name] then
-
-                            passState.dirty = true
-                            break
-                        end
-                    end
-                end
-
-                if passState.dirty then
-                    rebuildMobileHooks()
-                end
-            end)
-    end
-
-    add:Toggle(
-        "Infinite Range Passing",
-        "Passes to the teammate closest to your cursor or screen center.",
-        function(value)
-            passState.enabled = value == true
-
-            if passState.enabled then
-                startPassWatcher()
-            else
-                stopPassWatcher()
-            end
-
-            StarterGui:SetCore("SendNotification", {
-                Title = "Infinite Pass",
-                Text = passState.enabled and "Enabled." or "Disabled.",
-                Duration = 3
-            })
-        end
-    )
-end
 
 -- Auto Trap v13: strict team-safe trap core.
 do
@@ -13688,11 +13031,7 @@ do
 
         local function notify(text, duration)
             pcall(function()
-                StarterGui:SetCore("SendNotification", {
-                    Title = "EvoHub RE Lineups",
-                    Text = tostring(text),
-                    Duration = duration or 3
-                })
+                EvoNotify("EvoHub RE Lineups", tostring(text), duration or 3)
             end)
         end
 
@@ -15314,11 +14653,7 @@ linecreator:Button("Copy Current Lineup", function()
 
     setclipboard(code)
 
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Custom Lineup Copied!",
-        Text = code,
-        Duration = 5
-    })
+    EvoNotify("Custom Lineup Copied!", code, 5)
 end)
 
 local lineupColorsss = {
@@ -15402,11 +14737,7 @@ linecreator:Textbox("Lineup Codes", "Paste code(s), comma-separated...", functio
         colorIndex += 1
     end
 
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Lineups Loaded",
-        Text = string.format("%d lineup(s) created.", colorIndex - 1),
-        Duration = 5
-    })
+    EvoNotify("Lineups Loaded", string.format("%d lineup(s) created.", colorIndex - 1), 5)
 end)
 
 local autopos = maintab2:Folder("Auto Position Features.", Color3.fromRGB(24, 255, 228), true)
@@ -15451,11 +14782,7 @@ end
 autopos:Toggle("Auto Pick CF", "Automatically Picks Center Field Position On Respawn Or Enable.", function()
     autoPositionState.CF = not autoPositionState.CF
 
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Auto Pick CF",
-        Text = autoPositionState.CF and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Auto Pick CF", autoPositionState.CF and "Enabled." or "Disabled.", 1)
 
     if autoPositionState.CF then
         autoPositionState.CFConn = game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
@@ -15478,11 +14805,7 @@ end)
 autopos:Toggle("Auto Pick GK", "Automatically Picks Goalkeeper Position On Respawn Or Enable.", function()
     autoPositionState.GK = not autoPositionState.GK
 
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Auto Pick GK",
-        Text = autoPositionState.GK and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("Auto Pick GK", autoPositionState.GK and "Enabled." or "Disabled.", 1)
 
     if autoPositionState.GK then
         autoPositionState.GKConn = game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
@@ -15713,6 +15036,17 @@ end)
 -- Native EvoHub Air Dribble will be restored from the feature-body deobfuscation pass.
 local othersil = maintab2:Folder("Other Features.", Color3.fromRGB(24, 255, 228), true)
 othersil:Label("Other Features: Self Explanatory, Other Silent Features.")
+
+-- V18 capture native path:
+-- Main_Main_Auto QTE_Auto QTE
+-- Original UI location: Main.Content.ContentScroll.RightColumn.Auto QTE
+local autoQteSection = mainUI:FolderInGroup(
+    "Main",
+    "Auto QTE",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Main"
+)
 
 do
     local LocalPlayer = Players.LocalPlayer
@@ -16046,11 +15380,321 @@ do
         end)
     end
 
-    othersil:Toggle(
-        "Auto QuickTimeEvent",
-        "Automatically Does QuickTimeEvents.",
+    local nativeAutoQteToggle = autoQteSection:Toggle(
+        "Auto QTE",
+        nil,
+        true,
         function(value)
             setQTEEnabled(value)
+        end
+    )
+
+    -- CreateToggle restores config silently, so start the runtime if the
+    -- recovered/default state is already ON. V18 capture recorded Value=true.
+    if nativeAutoQteToggle
+        and nativeAutoQteToggle.Value == true then
+        setQTEEnabled(true)
+    end
+end
+
+
+
+-- Requested Main placement: directly below native Auto QTE.
+local infinitePassSection = mainUI:FolderInGroup(
+    "Main",
+    "Infinite Range Passing",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Main"
+)
+
+do
+    local passState = {
+        enabled = false,
+        busy = false,
+        lastUse = {},
+        hotbar = nil,
+        slots = {},
+        connections = {},
+        dirty = true,
+        watchConnection = nil,
+        watchAccumulator = 0
+    }
+
+    local passPlayer = Players.LocalPlayer
+    local passRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
+    local passKeys = {
+        [Enum.KeyCode.One] = "skill1",
+        [Enum.KeyCode.Two] = "skill2",
+        [Enum.KeyCode.Three] = "skill3",
+        [Enum.KeyCode.Four] = "skill4"
+    }
+
+    local function isTouchInput()
+        local ok, preferred = pcall(function()
+            return UserInputService.PreferredInput
+        end)
+
+        if ok then
+            return preferred == Enum.PreferredInput.Touch
+        end
+
+        return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+    end
+
+    local function aimPoint(useCenter)
+        local camera = Workspace.CurrentCamera
+        if not camera then return nil end
+
+        if useCenter then
+            return Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+        end
+
+        local mouse = UserInputService:GetMouseLocation()
+        return Vector2.new(mouse.X, mouse.Y)
+    end
+
+    local function closestTeammate(useCenter)
+        local camera = Workspace.CurrentCamera
+        local point = aimPoint(useCenter)
+        if not camera or not point then return nil end
+
+        local bestOnScreen, bestOnScreenDist = nil, math.huge
+        local bestForward, bestForwardDist = nil, math.huge
+
+        for _, other in ipairs(Players:GetPlayers()) do
+            if other ~= passPlayer and other.Team == passPlayer.Team then
+                local character = other.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+
+                if humanoid and root and humanoid.Health > 0 then
+                    local screen, onScreen = camera:WorldToViewportPoint(root.Position)
+                    if screen.Z > 0 then
+                        local distance = (Vector2.new(screen.X, screen.Y) - point).Magnitude
+
+                        if onScreen and distance < bestOnScreenDist then
+                            bestOnScreenDist = distance
+                            bestOnScreen = character
+                        end
+
+                        if useCenter and distance < bestForwardDist then
+                            bestForwardDist = distance
+                            bestForward = character
+                        end
+                    end
+                end
+            end
+        end
+
+        return bestOnScreen or (useCenter and bestForward or nil)
+    end
+
+    local function inLobby()
+        local teams = game:GetService("Teams")
+        local lobby = teams:FindFirstChild("lobby")
+        return lobby and passPlayer.Team == lobby
+    end
+
+    local function sendInfinitePass(skillName, useCenter)
+        if not passState.enabled or passState.busy or inLobby() then return end
+
+        local now = os.clock()
+        local last = passState.lastUse[skillName] or 0
+        if now - last < 0.18 then return end
+
+        local target = closestTeammate(useCenter)
+        if not target then return end
+
+        passState.lastUse[skillName] = now
+        passState.busy = true
+
+        pcall(function()
+            passRemote:FireServer(
+                buffer.fromstring(buffers["base"]),
+                {{skillName, target}}
+            )
+        end)
+
+        task.delay(0.12, function()
+            passState.busy = false
+        end)
+    end
+
+    local function currentHotbar()
+        local gui = passPlayer:FindFirstChild("PlayerGui")
+        local hotbar = gui and gui:FindFirstChild("Hotbar")
+        local backpack = hotbar and hotbar:FindFirstChild("Backpack")
+        return backpack and backpack:FindFirstChild("Hotbar") or nil
+    end
+
+    local function disconnectMobileHooks()
+        for _, connection in ipairs(passState.connections) do
+            connection:Disconnect()
+        end
+        table.clear(passState.connections)
+        table.clear(passState.slots)
+    end
+
+    local function addConnection(connection)
+        passState.connections[#passState.connections + 1] = connection
+    end
+
+    local function hookSkillButton(button, skillName)
+        if not button:IsA("GuiButton") then return end
+
+        addConnection(button.Activated:Connect(function()
+            if isTouchInput() then
+                sendInfinitePass(skillName, true)
+            end
+        end))
+
+        addConnection(button.InputBegan:Connect(function(input)
+            if isTouchInput() and input.UserInputType == Enum.UserInputType.Touch then
+                sendInfinitePass(skillName, true)
+            end
+        end))
+    end
+
+    local function hookSkillSlot(slot, skillName)
+        passState.slots[skillName] = slot
+
+        if slot:IsA("GuiButton") then
+            hookSkillButton(slot, skillName)
+        elseif slot:IsA("GuiObject") then
+            addConnection(slot.InputBegan:Connect(function(input)
+                if isTouchInput() and input.UserInputType == Enum.UserInputType.Touch then
+                    sendInfinitePass(skillName, true)
+                end
+            end))
+        end
+
+        for _, object in ipairs(slot:GetDescendants()) do
+            if object:IsA("GuiButton") then
+                hookSkillButton(object, skillName)
+            end
+        end
+
+        local cooldown = slot:FindFirstChild("Cooldown", true)
+        if cooldown and cooldown:IsA("GuiObject") then
+            local wasVisible = cooldown.Visible
+            addConnection(cooldown:GetPropertyChangedSignal("Visible"):Connect(function()
+                local visible = cooldown.Visible
+                if isTouchInput() and visible and not wasVisible then
+                    sendInfinitePass(skillName, true)
+                end
+                wasVisible = visible
+            end))
+        end
+
+        addConnection(slot.DescendantAdded:Connect(function()
+            passState.dirty = true
+        end))
+        addConnection(slot.DescendantRemoving:Connect(function()
+            passState.dirty = true
+        end))
+    end
+
+    local function rebuildMobileHooks()
+        local hotbar = currentHotbar()
+        disconnectMobileHooks()
+        passState.hotbar = hotbar
+        passState.dirty = false
+
+        if not hotbar then return end
+
+        for index = 1, 4 do
+            local skillName = "skill" .. index
+            local slot = hotbar:FindFirstChild(skillName)
+            if slot then
+                hookSkillSlot(slot, skillName)
+            end
+        end
+
+        addConnection(hotbar.ChildAdded:Connect(function()
+            passState.dirty = true
+        end))
+        addConnection(hotbar.ChildRemoved:Connect(function()
+            passState.dirty = true
+        end))
+    end
+
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed or isTouchInput() then return end
+        local skillName = passKeys[input.KeyCode]
+        if skillName then
+            sendInfinitePass(skillName, false)
+        end
+    end)
+
+    local function stopPassWatcher()
+        if passState.watchConnection then
+            passState.watchConnection:Disconnect()
+            passState.watchConnection = nil
+        end
+
+        passState.watchAccumulator = 0
+        disconnectMobileHooks()
+        passState.hotbar = nil
+        passState.dirty = true
+    end
+
+    local function startPassWatcher()
+        stopPassWatcher()
+        rebuildMobileHooks()
+
+        passState.watchConnection =
+            RunService.Heartbeat:Connect(function(dt)
+                if not passState.enabled then
+                    return
+                end
+
+                passState.watchAccumulator += dt
+
+                if passState.watchAccumulator < 0.2 then
+                    return
+                end
+
+                passState.watchAccumulator = 0
+
+                local hotbar = currentHotbar()
+
+                if hotbar ~= passState.hotbar then
+                    passState.dirty = true
+                end
+
+                if not passState.dirty and hotbar then
+                    for index = 1, 4 do
+                        local name = "skill" .. index
+
+                        if hotbar:FindFirstChild(name)
+                            ~= passState.slots[name] then
+
+                            passState.dirty = true
+                            break
+                        end
+                    end
+                end
+
+                if passState.dirty then
+                    rebuildMobileHooks()
+                end
+            end)
+    end
+
+    infinitePassSection:Toggle(
+        "Infinite Range Passing",
+        "Passes to the teammate closest to your cursor or screen center.",
+        function(value)
+            passState.enabled = value == true
+
+            if passState.enabled then
+                startPassWatcher()
+            else
+                stopPassWatcher()
+            end
+
+            EvoNotify("Infinite Pass", passState.enabled and "Enabled." or "Disabled.", 3)
         end
     )
 end
@@ -16064,11 +15708,7 @@ local teamHighlightState = {
 }
 
 local function teamHighlightNotify(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "Team Highlighting",
-        Text = text,
-        Duration = 2
-    })
+    EvoNotify("Team Highlighting", text, 2)
 end
 
 local function disconnectTeamHighlightConnections()
@@ -16276,19 +15916,11 @@ othersil:Toggle("Auto Steal Ball", "Automatically Attempts To Steal When Opponen
         end 
         table.clear(state.connections) 
         
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Auto Steal",
-            Text = "Disabled.",
-            Duration = 2
-        })
+        EvoNotify("Auto Steal", "Disabled.", 2)
         return 
     end 
     
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Auto Steal",
-        Text = "Enabled.",
-        Duration = 2
-    })
+    EvoNotify("Auto Steal", "Enabled.", 2)
     
     for _, p in ipairs(Players:GetPlayers()) do 
         hookPlayer(p) 
@@ -16308,11 +15940,7 @@ othersil:Toggle("No Cutscene", "Shitty Feature For Right Now That Disables Cutsc
     tempFolder.Name = "celerontemp"
     local crowdSound = SoundService:FindFirstChild("football-crowd-3-69245") or tempFolder:FindFirstChild("football-crowd-3-69245")
 
-    StarterGui:SetCore("SendNotification", {
-        Title = "No Cutscene",
-        Text = cutsceneState.nocutscene and "Enabled." or "Disabled.",
-        Duration = 1
-    })
+    EvoNotify("No Cutscene", cutsceneState.nocutscene and "Enabled." or "Disabled.", 1)
 
     if cutsceneState.nocutscene then
         if crowdSound and crowdSound:IsDescendantOf(SoundService) then
@@ -16353,11 +15981,7 @@ local formlessAnimation = Instance.new("Animation")
 formlessAnimation.AnimationId = "rbxassetid://76587445975710"
 
 local function notifyFormless(text)
-    StarterGui:SetCore("SendNotification", {
-        Title = "Auto Formless",
-        Text = text,
-        Duration = 2
-    })
+    EvoNotify("Auto Formless", text, 2)
 end
 
 local function getFormlessTrack(humanoid)
@@ -16704,11 +16328,7 @@ mobileSimulation:Textbox("Key To Simulate", "C, Z, LeftAlt...", function(value)
     mobileKeySystem.keyName = keyCode and keyCode.Name or ""
 
     if not keyCode then
-        StarterGui:SetCore("SendNotification", {
-            Title = "Mobile Simulation",
-            Text = "Invalid Key.",
-            Duration = 2
-        })
+        EvoNotify("Mobile Simulation", "Invalid Key.", 2)
     end
 end)
 
