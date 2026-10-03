@@ -1,3 +1,4 @@
+-- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
 -- [[ V16 CAPTURE PARITY PATCH ]]
 -- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
 -- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
@@ -513,7 +514,7 @@ local Luna = (function()
             Size = UDim2.new(1, 0, 0, 14),
             BackgroundTransparency = 1,
             RichText = true,
-            Text = 'build: <font color="rgb(148,138,204)">alpha</font>',
+            Text = 'build: <font color="rgb(148,138,204)">re</font>',
             TextColor3 = Theme.Text,
             Font = Enum.Font.SourceSans,
             TextSize = 13,
@@ -1175,6 +1176,13 @@ local Luna = (function()
                     corner(box, 2)
                     if value then setAccent(box) end
 
+                    -- V18 native SetValue evidence shows the original control
+                    -- path performs a short animated state transition (~0.2s)
+                    -- and then updates the keybind watermark/display.
+                    local toggleScale = create("UIScale", {
+                        Scale = 1,
+                    }, box)
+
                     makeControlText(row, nameText, UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), Enum.Font.SourceSans, 14)
 
                     local button = create("TextButton", {
@@ -1189,14 +1197,59 @@ local Luna = (function()
                     local object = {
                         Instance = row,
                         Value = value,
+                        Name = nameText,
+                        ConfigPath = key and tostring(key) or nameText,
+                        HasKeybind = false,
                     }
 
                     function object:SetValue(newValue, silent)
                         newValue = newValue == true
+                        local changed = self.Value ~= newValue
                         self.Value = newValue
-                        box.BackgroundColor3 = newValue and Theme.Accent or Theme.Control
-                        if newValue then setAccent(box) end
-                        if not silent then pcall(callback, newValue) end
+
+                        local targetColor =
+                            newValue and Theme.Accent or Theme.Control
+
+                        if changed then
+                            pcall(function()
+                                toggleScale.Scale = 0.72
+
+                                TweenService:Create(
+                                    box,
+                                    TweenInfo.new(
+                                        0.20,
+                                        Enum.EasingStyle.Quad,
+                                        Enum.EasingDirection.Out
+                                    ),
+                                    { BackgroundColor3 = targetColor }
+                                ):Play()
+
+                                TweenService:Create(
+                                    toggleScale,
+                                    TweenInfo.new(
+                                        0.22,
+                                        Enum.EasingStyle.Back,
+                                        Enum.EasingDirection.Out
+                                    ),
+                                    { Scale = 1 }
+                                ):Play()
+                            end)
+                        else
+                            box.BackgroundColor3 = targetColor
+                        end
+
+                        if newValue then
+                            -- Keep the active color synced with the user's UI accent.
+                            box.BackgroundColor3 = Theme.Accent
+                        end
+
+                        if type(Library.OnControlVisualChanged) == "function" then
+                            pcall(Library.OnControlVisualChanged, self, "toggle")
+                        end
+
+                        if not silent then
+                            pcall(callback, newValue)
+                        end
                     end
 
                     function object:GetValue()
@@ -1586,14 +1639,25 @@ local Luna = (function()
                     local object = {
                         Instance = keyButton,
                         Value = current,
+                        Key = current,
+                        Active = false,
                         Editing = false,
                         Mode = controlSettings.Mode or "Toggle",
+                        Name = nameText,
+                        ManualWatermark = controlSettings.ManualWatermark ~= false,
+                        ConfigPath = key and tostring(key) or nameText,
                     }
 
                     function object:SetKey(newKey)
                         if typeof(newKey) == "EnumItem" then
                             self.Value = newKey
+                            self.Key = newKey
                             keyButton.Text = "[" .. newKey.Name .. "]"
+
+                            if type(Library.OnControlVisualChanged) == "function" then
+                                pcall(Library.OnControlVisualChanged, self, "key")
+                            end
+
                             if type(controlSettings.ChangedCallback) == "function" then
                                 pcall(controlSettings.ChangedCallback, newKey)
                             end
@@ -1602,6 +1666,18 @@ local Luna = (function()
 
                     function object:SetValue(newKey)
                         self:SetKey(newKey)
+                    end
+
+                    function object:SetActive(active, silent)
+                        self.Active = active == true
+
+                        if type(Library.OnControlVisualChanged) == "function" then
+                            pcall(Library.OnControlVisualChanged, self, "active")
+                        end
+
+                        if not silent then
+                            pcall(callback, self.Active)
+                        end
                     end
 
                     function object:GetValue()
@@ -1621,13 +1697,34 @@ local Luna = (function()
                             end
                             return
                         end
+
                         if not processed and input.KeyCode == object.Value then
-                            pcall(callback, true)
+                            if object.Mode == "Hold" then
+                                object.Active = true
+                                if type(Library.OnControlVisualChanged) == "function" then
+                                    pcall(Library.OnControlVisualChanged, object, "active")
+                                end
+                                pcall(callback, true)
+
+                            elseif object.Mode == "Toggle" then
+                                object.Active = not object.Active
+                                if type(Library.OnControlVisualChanged) == "function" then
+                                    pcall(Library.OnControlVisualChanged, object, "active")
+                                end
+                                pcall(callback, object.Active)
+
+                            else
+                                pcall(callback, true)
+                            end
                         end
                     end)
 
                     UIS.InputEnded:Connect(function(input)
                         if input.KeyCode == object.Value and object.Mode == "Hold" then
+                            object.Active = false
+                            if type(Library.OnControlVisualChanged) == "function" then
+                                pcall(Library.OnControlVisualChanged, object, "active")
+                            end
                             pcall(callback, false)
                         end
                     end)
@@ -3801,9 +3898,9 @@ task.spawn(function()
                     cfg.name,
                     cfg.defaultKey,
                     "Toggle",
-                    function(pressed)
-                        if pressed then
-                            toggle:SetValue(not toggle.Value)
+                    function(active)
+                        if toggle and toggle.SetValue then
+                            toggle:SetValue(active == true)
                         end
                     end
                 )
@@ -5640,12 +5737,12 @@ local function setWatermark(enabled)
     local label = Instance.new("TextLabel")
     label.Name = "Watermark"
     label.Position = UDim2.fromOffset(10, 10)
-    label.Size = UDim2.fromOffset(135, 20)
+    label.Size = UDim2.fromOffset(105, 20)
     label.BackgroundColor3 = Color3.fromRGB(18,18,20)
     label.BackgroundTransparency = 0.2
     label.BorderSizePixel = 0
-    label.RichText = true
-    label.Text = 'evohub <font color="rgb(149,138,204)">alpha</font>'
+    label.RichText = false
+    label.Text = "evohub // re"
     label.TextColor3 = Color3.fromRGB(210,210,220)
     label.Font = Enum.Font.SourceSans
     label.TextSize = 13
@@ -5657,53 +5754,266 @@ end
 
 local keybindsGui
 local keybindsHolder
-local function refreshKeybindDisplay()
-    if not keybindsGui or not keybindsGui.Parent then
-        keybindsGui = Instance.new("ScreenGui")
-        keybindsGui.Name = "EvoHubKeybinds"
-        keybindsGui.ResetOnSpawn = false
-        keybindsGui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-        keybindsHolder = Instance.new("Frame")
-        keybindsHolder.Name = "Keybinds"
-        keybindsHolder.Position = UDim2.new(1, -170, 0.5, -90)
-        keybindsHolder.Size = UDim2.fromOffset(160, 180)
-        keybindsHolder.BackgroundColor3 = Color3.fromRGB(18,18,20)
-        keybindsHolder.BackgroundTransparency = 0.15
-        keybindsHolder.BorderSizePixel = 0
-        keybindsHolder.Parent = keybindsGui
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0,3)
-        c.Parent = keybindsHolder
-        local layout = Instance.new("UIListLayout")
-        layout.Padding = UDim.new(0,3)
-        layout.Parent = keybindsHolder
-        local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0,6)
-        pad.PaddingBottom = UDim.new(0,6)
-        pad.PaddingLeft = UDim.new(0,8)
-        pad.PaddingRight = UDim.new(0,8)
-        pad.Parent = keybindsHolder
+local keybindsContent
+local keybindsHeaderLetters = {}
+local keybindRows = {}
+
+local function keybindDisplayParent()
+    return (type(gethui) == "function" and gethui())
+        or game:GetService("CoreGui")
+end
+
+local function ensureKeybindDisplay()
+    if keybindsGui and keybindsGui.Parent
+        and keybindsHolder and keybindsHolder.Parent then
+        return
     end
-    keybindsGui.Enabled = settingsState.KeybindsDisplay
-    for _, child in ipairs(keybindsHolder:GetChildren()) do
-        if child:IsA("TextLabel") then child:Destroy() end
+
+    keybindsGui = Instance.new("ScreenGui")
+    keybindsGui.Name = "EvoHubKeybinds"
+    keybindsGui.ResetOnSpawn = false
+    keybindsGui.IgnoreGuiInset = true
+    keybindsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    keybindsGui.Enabled = false
+    keybindsGui.Parent = keybindDisplayParent()
+
+    keybindsHolder = Instance.new("Frame")
+    keybindsHolder.Name = "Keybinds"
+    keybindsHolder.AnchorPoint = Vector2.new(1, 0.5)
+    keybindsHolder.Position = UDim2.new(1, -14, 0.5, 0)
+    keybindsHolder.Size = UDim2.fromOffset(190, 32)
+    keybindsHolder.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
+    keybindsHolder.BackgroundTransparency = 0.08
+    keybindsHolder.BorderSizePixel = 0
+    keybindsHolder.Parent = keybindsGui
+
+    local holderCorner = Instance.new("UICorner")
+    holderCorner.CornerRadius = UDim.new(0, 3)
+    holderCorner.Parent = keybindsHolder
+
+    local holderStroke = Instance.new("UIStroke")
+    holderStroke.Color = Color3.fromRGB(49, 49, 58)
+    holderStroke.Transparency = 0.42
+    holderStroke.Thickness = 1
+    holderStroke.Parent = keybindsHolder
+
+    local header = Instance.new("Frame")
+    header.Name = "Header"
+    header.Size = UDim2.new(1, 0, 0, 26)
+    header.BackgroundTransparency = 1
+    header.Parent = keybindsHolder
+
+    local headerAccent = Instance.new("Frame")
+    headerAccent.Name = "Accent"
+    headerAccent.AnchorPoint = Vector2.new(0, 1)
+    headerAccent.Position = UDim2.new(0, 0, 1, 0)
+    headerAccent.Size = UDim2.new(1, 0, 0, 1)
+    headerAccent.BackgroundColor3 = Color3.fromRGB(149, 138, 204)
+    headerAccent.BorderSizePixel = 0
+    headerAccent.Parent = header
+
+    -- The captured native object exposes HeaderLetters. Keep the header
+    -- split into letters instead of one giant reconstructed label.
+    local title = "keybinds"
+    local x = 9
+    for index = 1, #title do
+        local letter = Instance.new("TextLabel")
+        letter.Name = "Letter_" .. tostring(index)
+        letter.Position = UDim2.fromOffset(x, 0)
+        letter.Size = UDim2.fromOffset(10, 25)
+        letter.BackgroundTransparency = 1
+        letter.Text = title:sub(index, index)
+        letter.TextColor3 = Color3.fromRGB(210, 210, 220)
+        letter.TextTransparency = 0
+        letter.Font = Enum.Font.SourceSans
+        letter.TextSize = 13
+        letter.TextXAlignment = Enum.TextXAlignment.Left
+        letter.Parent = header
+        keybindsHeaderLetters[index] = letter
+        x += 8
     end
-    if not settingsState.KeybindsDisplay then return end
-    for key, control in pairs(Luna.ConfigSystem.Controls) do
-        if control and control.Mode and control.GetValue then
-            local value = control:GetValue()
-            if typeof(value) == "EnumItem" then
-                local label = Instance.new("TextLabel")
-                label.Size = UDim2.new(1,0,0,18)
-                label.BackgroundTransparency = 1
-                label.Text = tostring(key) .. "  [" .. value.Name .. "]"
-                label.TextColor3 = Color3.fromRGB(210,210,220)
-                label.Font = Enum.Font.SourceSans
-                label.TextSize = 12
-                label.TextXAlignment = Enum.TextXAlignment.Left
-                label.Parent = keybindsHolder
+
+    keybindsContent = Instance.new("Frame")
+    keybindsContent.Name = "Items"
+    keybindsContent.Position = UDim2.fromOffset(0, 27)
+    keybindsContent.Size = UDim2.new(1, 0, 1, -27)
+    keybindsContent.BackgroundTransparency = 1
+    keybindsContent.Parent = keybindsHolder
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingTop = UDim.new(0, 4)
+    padding.PaddingBottom = UDim.new(0, 5)
+    padding.PaddingLeft = UDim.new(0, 8)
+    padding.PaddingRight = UDim.new(0, 8)
+    padding.Parent = keybindsContent
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 2)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = keybindsContent
+end
+
+local function prettyKeybindName(path, control)
+    local name = control and control.Name
+    if type(name) == "string" and name ~= "" then
+        return name
+    end
+
+    local raw = tostring(path or "Keybind")
+    local tail = raw:match("([^_]+)$") or raw
+    tail = tail:gsub(" Keybind$", "")
+    return tail
+end
+
+local function collectNativeKeybinds()
+    local entries = {}
+
+    for path, control in pairs(Luna.ConfigSystem.Controls) do
+        if type(control) == "table"
+            and type(control.GetValue) == "function"
+            and control.Mode ~= nil
+            and control.ManualWatermark ~= false then
+
+            local key = control:GetValue()
+
+            if typeof(key) == "EnumItem"
+                and key ~= Enum.KeyCode.Unknown then
+                entries[#entries + 1] = {
+                    Path = tostring(path),
+                    Name = prettyKeybindName(path, control),
+                    Key = key,
+                    Active = control.Active == true,
+                    Control = control,
+                }
             end
         end
+    end
+
+    table.sort(entries, function(a, b)
+        local an = tostring(a.Name):lower()
+        local bn = tostring(b.Name):lower()
+        if an == bn then
+            return a.Path < b.Path
+        end
+        return an < bn
+    end)
+
+    return entries
+end
+
+local function animateKeybindWindow(showing)
+    if not keybindsHolder then return end
+
+    local TweenServiceSettings = game:GetService("TweenService")
+
+    if showing then
+        keybindsHolder.Position = UDim2.new(1, -6, 0.5, 0)
+        keybindsHolder.BackgroundTransparency = 1
+
+        pcall(function()
+            TweenServiceSettings:Create(
+                keybindsHolder,
+                TweenInfo.new(
+                    0.20,
+                    Enum.EasingStyle.Quad,
+                    Enum.EasingDirection.Out
+                ),
+                {
+                    Position = UDim2.new(1, -14, 0.5, 0),
+                    BackgroundTransparency = 0.08,
+                }
+            ):Play()
+        end)
+
+        for index, letter in ipairs(keybindsHeaderLetters) do
+            letter.TextTransparency = 1
+            task.delay((index - 1) * 0.018, function()
+                if letter and letter.Parent then
+                    pcall(function()
+                        TweenServiceSettings:Create(
+                            letter,
+                            TweenInfo.new(0.12),
+                            { TextTransparency = 0 }
+                        ):Play()
+                    end)
+                end
+            end)
+        end
+    end
+end
+
+local function refreshKeybindDisplay()
+    ensureKeybindDisplay()
+
+    for _, row in pairs(keybindRows) do
+        if row and row.Parent then
+            row:Destroy()
+        end
+    end
+    table.clear(keybindRows)
+
+    local entries = collectNativeKeybinds()
+
+    for index, entry in ipairs(entries) do
+        local row = Instance.new("Frame")
+        row.Name = "Item"
+        row.LayoutOrder = index
+        row.Size = UDim2.new(1, 0, 0, 18)
+        row.BackgroundTransparency = 1
+        row.Parent = keybindsContent
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Name = "Name"
+        nameLabel.Size = UDim2.new(1, -48, 1, 0)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Text = entry.Name
+        nameLabel.TextColor3 = entry.Active
+            and Color3.fromRGB(196, 187, 242)
+            or Color3.fromRGB(205, 205, 215)
+        nameLabel.Font = Enum.Font.SourceSans
+        nameLabel.TextSize = 12
+        nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLabel.Parent = row
+
+        local keyLabel = Instance.new("TextLabel")
+        keyLabel.Name = "Key"
+        keyLabel.AnchorPoint = Vector2.new(1, 0)
+        keyLabel.Position = UDim2.new(1, 0, 0, 0)
+        keyLabel.Size = UDim2.fromOffset(46, 18)
+        keyLabel.BackgroundTransparency = 1
+        keyLabel.Text = "[" .. entry.Key.Name .. "]"
+        keyLabel.TextColor3 = Color3.fromRGB(149, 138, 204)
+        keyLabel.Font = Enum.Font.SourceSans
+        keyLabel.TextSize = 12
+        keyLabel.TextXAlignment = Enum.TextXAlignment.Right
+        keyLabel.Parent = row
+
+        keybindRows[entry.Path] = row
+    end
+
+    local visibleRows = math.min(#entries, 11)
+    local bodyHeight = visibleRows > 0
+        and (visibleRows * 20 + 7)
+        or 6
+
+    keybindsHolder.Size = UDim2.fromOffset(
+        190,
+        27 + bodyHeight
+    )
+
+    keybindsGui.Enabled = settingsState.KeybindsDisplay
+
+    if settingsState.KeybindsDisplay then
+        animateKeybindWindow(true)
+    end
+end
+
+-- Native SetValue paths call UpdateKeybind. Route every relevant control
+-- change through the same display refresh hook.
+Luna.OnControlVisualChanged = function()
+    if settingsState.KeybindsDisplay then
+        task.defer(refreshKeybindDisplay)
     end
 end
 
@@ -11899,6 +12209,79 @@ task.spawn(function()
             return nil, nil
         end
 
+        local function normalizeDefensiveStyle(raw)
+            return tostring(raw or "")
+                :lower()
+                :gsub("[%s_%-]", "")
+        end
+
+        local function currentDefensiveStyle()
+            local raw =
+                player:GetAttribute("style")
+                or player:GetAttribute("Style")
+
+            local char = player.Character
+            if char then
+                raw =
+                    char:GetAttribute("style")
+                    or char:GetAttribute("Style")
+                    or raw
+
+                local stateFolder = char:FindFirstChild("state")
+                local styleValue =
+                    stateFolder
+                    and (
+                        stateFolder:FindFirstChild("style")
+                        or stateFolder:FindFirstChild("Style")
+                    )
+
+                if styleValue
+                    and styleValue:IsA("ValueBase")
+                    and tostring(styleValue.Value) ~= "" then
+                    raw = styleValue.Value
+                end
+            end
+
+            local characters = workspace:FindFirstChild("characters")
+            local worldChar =
+                characters
+                and characters:FindFirstChild(player.Name)
+            local worldState =
+                worldChar
+                and worldChar:FindFirstChild("state")
+            local worldStyle =
+                worldState
+                and (
+                    worldState:FindFirstChild("style")
+                    or worldState:FindFirstChild("Style")
+                )
+
+            if worldStyle
+                and worldStyle:IsA("ValueBase")
+                and tostring(worldStyle.Value) ~= "" then
+                raw = worldStyle.Value
+            end
+
+            return normalizeDefensiveStyle(raw)
+        end
+
+        local function variantSupportedNow(variant)
+            if not variant
+                or type(variant.isSupported) ~= "function" then
+                return false
+            end
+
+            local ok, supported =
+                pcall(
+                    variant.isSupported,
+                    currentDefensiveStyle()
+                )
+
+            return ok and supported == true
+        end
+
+        local defensiveToggleRecords = {}
+
         for _, variant in ipairs(defensive.Variants) do
             local pageName, sectionName = variantPage(variant)
             if pageName then
@@ -11910,10 +12293,50 @@ task.spawn(function()
                     "Player"
                 )
 
-                folder:Toggle(sectionName, function(value)
-                    variant.enabled = value == true
+                local variantToggle
+                variantToggle = folder:Toggle(sectionName, function(value)
+                    value = value == true
+
+                    -- Original variants expose isSupported(). Do not merely
+                    -- ignore the runtime when the wrong style is equipped:
+                    -- reject the UI state itself.
+                    if value and not variantSupportedNow(variant) then
+                        variant.enabled = false
+                        defensive:CheckAnyEnabled()
+
+                        task.defer(function()
+                            if variantToggle
+                                and variantToggle.Value == true then
+                                variantToggle:SetValue(false)
+                            end
+                        end)
+
+                        return
+                    end
+
+                    variant.enabled = value
                     defensive:CheckAnyEnabled()
                 end)
+
+                variant._uiToggle = variantToggle
+
+                defensiveToggleRecords[#defensiveToggleRecords + 1] = {
+                    Variant = variant,
+                    Toggle = variantToggle,
+                    Page = pageName,
+                    Name = sectionName,
+                }
+
+                -- Saved configs are restored visually without callbacks.
+                -- Only restore an enabled defense if this style supports it.
+                if variantToggle and variantToggle.Value == true then
+                    if variantSupportedNow(variant) then
+                        variant.enabled = true
+                    else
+                        variant.enabled = false
+                        variantToggle:SetValue(false)
+                    end
+                end
 
                 if variant.goalboxOnly ~= nil then
                     folder:Toggle("Goalbox Only", nil, variant.goalboxOnly, function(value)
@@ -12024,20 +12447,71 @@ task.spawn(function()
             end
         end
 
+        defensive:CheckAnyEnabled()
+
+        local defensiveGuardAccumulator = 0
+        local defensiveStyleGuard =
+            RunService.Heartbeat:Connect(function(dt)
+                defensiveGuardAccumulator += dt
+                if defensiveGuardAccumulator < 0.05 then
+                    return
+                end
+                defensiveGuardAccumulator = 0
+
+                local changed = false
+
+                for _, record in ipairs(defensiveToggleRecords) do
+                    local variant = record.Variant
+                    local toggle = record.Toggle
+                    local supported = variantSupportedNow(variant)
+
+                    if not supported then
+                        if variant.enabled then
+                            variant.enabled = false
+                            changed = true
+                        end
+
+                        if toggle and toggle.Value == true then
+                            -- Non-silent SetValue updates saved config and
+                            -- visibly plays the same toggle-off animation.
+                            toggle:SetValue(false)
+                            changed = true
+                        end
+                    end
+                end
+
+                if changed then
+                    defensive:CheckAnyEnabled()
+                end
+            end)
+
         local runtime = {
             core = core,
             distance = distanceEngine,
             defensive = defensive,
             movementGroups = movementGroups,
+            defensiveStyleGuard = defensiveStyleGuard,
         }
 
         function runtime.destroy()
+            pcall(function()
+                if runtime.defensiveStyleGuard then
+                    runtime.defensiveStyleGuard:Disconnect()
+                    runtime.defensiveStyleGuard = nil
+                end
+            end)
             pcall(function()
                 if distanceEngine and distanceEngine.destroy then distanceEngine:destroy() end
             end)
             pcall(function()
                 if defensive then
-                    for _, variant in ipairs(defensive.Variants) do variant.enabled = false end
+                    for _, variant in ipairs(defensive.Variants) do
+                        variant.enabled = false
+                        if variant._uiToggle
+                            and variant._uiToggle.Value == true then
+                            variant._uiToggle:SetValue(false)
+                        end
+                    end
                     defensive:CheckAnyEnabled()
                 end
             end)
@@ -13667,9 +14141,8 @@ do
             "Toggle Line Ups",
             Enum.KeyCode.C,
             "Toggle",
-            function(pressed)
-                if not pressed then return end
-                manualSetEnabled(not state.enabled)
+            function(active)
+                manualSetEnabled(active == true)
             end
         )
 
@@ -14342,539 +14815,17 @@ do
     installEvoHubREShotPredictor()
 end
 
-autoline:Toggle("Sae Line Ups", "Sae's Drive Shot Line Ups.", function(s)
-	if s then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Sae Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(255, 182, 193),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(255, 182, 193),
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(-58, -9, -127), target = Vector3.new(71, 35, -13)},
-			{pad = Vector3.new(-38, -9, -171), target = Vector3.new(70, 18, -13)},
-			{pad = Vector3.new(-16, -9, -176), target = Vector3.new(45, 45, -14)},
-			{pad = Vector3.new(15, -9, -174),  target = Vector3.new(25, 25, -14)},
-			{pad = Vector3.new(48, -9, -161),  target = Vector3.new(20, 32, -14)},
-			{pad = Vector3.new(71, -9, -134),  target = Vector3.new(22, 5, -12)},
-			{pad = Vector3.new(86, -9, -113),  target = Vector3.new(31, 19, -14)},
-			{pad = Vector3.new(99, -9, -137),  target = Vector3.new(29, 34, -14)},
-			{pad = Vector3.new(-47, -9, -145), target = Vector3.new(53, 28, -14)},
-			{pad = Vector3.new(132, -9, -111), target = Vector3.new(30, 8, -13)},
-
-			{pad = Vector3.new(58, -9, 127),   target = Vector3.new(-71, 35, 13)},
-			{pad = Vector3.new(38, -9, 171),   target = Vector3.new(-70, 18, 13)},
-			{pad = Vector3.new(16, -9, 176),   target = Vector3.new(-45, 45, 14)},
-			{pad = Vector3.new(-15, -9, 174),  target = Vector3.new(-25, 25, 14)},
-			{pad = Vector3.new(-48, -9, 161),  target = Vector3.new(-20, 32, 14)},
-			{pad = Vector3.new(-71, -9, 134),  target = Vector3.new(-22, 5, 12)},
-			{pad = Vector3.new(-86, -9, 113),  target = Vector3.new(-31, 19, 14)},
-			{pad = Vector3.new(-99, -9, 137),  target = Vector3.new(-29, 34, 14)},
-			{pad = Vector3.new(47, -9, 145),   target = Vector3.new(-53, 28, 14)},
-			{pad = Vector3.new(-132, -9, 111), target = Vector3.new(-30, 8, 13)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 20 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 10) and agoalPos or bgoalPos
-			local col = colors[(i - 1) % #colors + 1]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Sae Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
-
-autoline:Toggle("Kaiser Line Ups", "Kaiser's Impact Magnus Line Ups.", function(k)
-	if k then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Kaiser Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(255, 182, 193),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(255, 182, 193),
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(-76, -9, 140),  target = Vector3.new(108, 19, 14)},
-			{pad = Vector3.new(-35, -9, 178),  target = Vector3.new(80, -5, 14)},
-			{pad = Vector3.new(17, -9, 170),   target = Vector3.new(26, 18, 14)},
-			{pad = Vector3.new(81, -9, 178),   target = Vector3.new(35, 34, 14)},
-			{pad = Vector3.new(54, -9, 165),   target = Vector3.new(34, 2, 14)},
-			{pad = Vector3.new(-55, -9, 171),  target = Vector3.new(87, -1, 14)},
-			{pad = Vector3.new(-13, -9, 161),  target = Vector3.new(76, 15, 14)},
-			{pad = Vector3.new(-42, -9, 122),  target = Vector3.new(73, 5, 14)},
-			{pad = Vector3.new(61, -9, 114),   target = Vector3.new(35, 16, 14)},
-			{pad = Vector3.new(130, -9, 110),  target = Vector3.new(50, 25, 14)},
-			{pad = Vector3.new(110, -9, 151),  target = Vector3.new(34, 25, 14)},
-			{pad = Vector3.new(39, -9, 194),   target = Vector3.new(32, 28, 14)},
-
-			{pad = Vector3.new(76, -9, -140),  target = Vector3.new(-108, 19, -14)},
-			{pad = Vector3.new(35, -9, -178),  target = Vector3.new(-80, -5, -14)},
-			{pad = Vector3.new(-17, -9, -170), target = Vector3.new(-26, 18, -14)},
-			{pad = Vector3.new(-81, -9, -178), target = Vector3.new(-35, 34, -14)},
-			{pad = Vector3.new(-54, -9, -165), target = Vector3.new(-34, 2, -14)},
-			{pad = Vector3.new(55, -9, -171),  target = Vector3.new(-87, -1, -14)},
-			{pad = Vector3.new(13, -9, -161),  target = Vector3.new(-76, 15, -14)},
-			{pad = Vector3.new(42, -9, -122),  target = Vector3.new(-73, 5, -14)},
-			{pad = Vector3.new(-61, -9, -114), target = Vector3.new(-35, 16, -14)},
-			{pad = Vector3.new(-130, -9, -110),target = Vector3.new(-50, 25, -14)},
-			{pad = Vector3.new(-110, -9, -151),target = Vector3.new(-34, 25, -14)},
-			{pad = Vector3.new(-39, -9, -194), target = Vector3.new(-32, 28, -14)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 24 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 12) and bgoalPos or agoalPos
-			local col = colors[(i - 1) % #colors + 1]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Kaiser Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
-
-autoline:Toggle("Yukimiya Line Ups", "Yukimiya's Gyro Shot Line Ups.", function(y)
-	if y then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Yukimiya Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(0, 255, 0),
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(3, -9, -216),   target = Vector3.new(68, 144, -16)},
-			{pad = Vector3.new(62, -9, -193),  target = Vector3.new(50, 91, -16)},
-			{pad = Vector3.new(-39, -9, -128), target = Vector3.new(6, 0, -12)},
-			{pad = Vector3.new(-32, -9, -134), target = Vector3.new(15, 8, -15)},
-			{pad = Vector3.new(-142, -9, -97), target = Vector3.new(81, 65, -16)},
-			{pad = Vector3.new(-69, -9, -212), target = Vector3.new(158, 223, -16)},
-			{pad = Vector3.new(32, -9, -130),  target = Vector3.new(-10, 24, -14)},
-			{pad = Vector3.new(-115, -9, -160),target = Vector3.new(33, 72, -14)},
-			{pad = Vector3.new(-92, -9, -188), target = Vector3.new(99, 133, -13)},
-			{pad = Vector3.new(-40, -9, -208), target = Vector3.new(50, 116, -14)},
-			{pad = Vector3.new(57, -9, -122),  target = Vector3.new(-8, 23, -15)},
-
-			{pad = Vector3.new(-3, -9, 216),   target = Vector3.new(-68, 144, 16)},
-			{pad = Vector3.new(-62, -9, 193),  target = Vector3.new(-50, 91, 16)},
-			{pad = Vector3.new(39, -9, 128),   target = Vector3.new(-6, 0, 12)},
-			{pad = Vector3.new(32, -9, 134),   target = Vector3.new(-15, 8, 15)},
-			{pad = Vector3.new(142, -9, 97),   target = Vector3.new(-81, 65, 16)},
-			{pad = Vector3.new(69, -9, 212),   target = Vector3.new(-158, 223, 16)},
-			{pad = Vector3.new(-32, -9, 130),  target = Vector3.new(10, 24, 14)},
-			{pad = Vector3.new(115, -9, 160),  target = Vector3.new(-33, 72, 14)},
-			{pad = Vector3.new(92, -9, 188),   target = Vector3.new(-99, 133, 13)},
-			{pad = Vector3.new(40, -9, 208),   target = Vector3.new(-50, 116, 14)},
-			{pad = Vector3.new(-57, -9, 122),  target = Vector3.new(8, 23, 15)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 22 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 11) and agoalPos or bgoalPos
-			local col = colors[(i - 1) % #colors + 1]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Yukimiya Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
-
-autoline:Toggle("Karasu Line Ups", "Karasu's Dive Bomb Line Ups.", function(kar)
-	if kar then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Karasu Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(255, 128, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(128, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(128, 255, 0),
-			Color3.fromRGB(120, 72, 0),
-			Color3.fromRGB(255, 255, 255),
-			Color3.fromRGB(0, 0, 0),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(255, 128, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(128, 0, 255),
-			Color3.fromRGB(255, 0, 255),
-			Color3.fromRGB(128, 255, 0),
-			Color3.fromRGB(120, 72, 0),
-			Color3.fromRGB(255, 255, 255),
-			Color3.fromRGB(0, 0, 0)
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(66, -9, 135),   target = Vector3.new(-44, 39, 14)},
-			{pad = Vector3.new(24, -9, 159),   target = Vector3.new(-70, 19, 13)},
-			{pad = Vector3.new(43, -9, 147),   target = Vector3.new(-72, 34, 13)},
-			{pad = Vector3.new(-12, -9, 160),  target = Vector3.new(-23, 25, 14)},
-			{pad = Vector3.new(-46, -9, 184),  target = Vector3.new(5, 110, 14)},
-			{pad = Vector3.new(-76, -9, 160),  target = Vector3.new(-6, 74, 14)},
-			{pad = Vector3.new(-28, -9, 178),  target = Vector3.new(-11, 65, 14)},
-			{pad = Vector3.new(-96, -9, 134),  target = Vector3.new(-25, 45, 14)},
-			{pad = Vector3.new(-47, -9, 142),  target = Vector3.new(-19, 18, 14)},
-			{pad = Vector3.new(47, -9, 124),   target = Vector3.new(-67, 20, 13)},
-
-			{pad = Vector3.new(-66, -9, -135), target = Vector3.new(44, 39, -14)},
-			{pad = Vector3.new(-24, -9, -159), target = Vector3.new(70, 19, -13)},
-			{pad = Vector3.new(-43, -9, -147), target = Vector3.new(72, 34, -13)},
-			{pad = Vector3.new(12, -9, -160),  target = Vector3.new(23, 25, -14)},
-			{pad = Vector3.new(46, -9, -184),  target = Vector3.new(-5, 110, -14)},
-			{pad = Vector3.new(76, -9, -160),  target = Vector3.new(6, 74, -14)},
-			{pad = Vector3.new(28, -9, -178),  target = Vector3.new(11, 65, -14)},
-			{pad = Vector3.new(96, -9, -134),  target = Vector3.new(25, 45, -14)},
-			{pad = Vector3.new(47, -9, -142),  target = Vector3.new(19, 18, -14)},
-			{pad = Vector3.new(-47, -9, -124), target = Vector3.new(67, 20, -13)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 20 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 10) and bgoalPos or agoalPos
-			local col = colors[i]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Karasu Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
-
-autoline:Toggle("Rin Line Ups", "Rin's Curve Shot Line Ups.", function(r)
-	if r then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Rin Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(0, 255, 0),
-			Color3.fromRGB(255, 255, 0),
-			Color3.fromRGB(0, 0, 255),
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(62, -9, 121),   target = Vector3.new(-29, -9, 38)},
-			{pad = Vector3.new(35, -9, 150),   target = Vector3.new(-26, -9, 50)},
-			{pad = Vector3.new(0, -9, 161),    target = Vector3.new(-33, 39, 14)},
-			{pad = Vector3.new(-28, -9, 154),  target = Vector3.new(-16, 28, 14)},
-			{pad = Vector3.new(-56, -9, 135),  target = Vector3.new(-28, 10, 14)},
-			{pad = Vector3.new(21, -9, 161),   target = Vector3.new(-40, -6, 13)},
-			{pad = Vector3.new(-107, -9, 113), target = Vector3.new(-89, -9, 90)},
-			{pad = Vector3.new(-133, -9, 102), target = Vector3.new(-27, 0, 15)},
-			{pad = Vector3.new(-78, -9, 128),  target = Vector3.new(-27, 9, 17)},
-			{pad = Vector3.new(50, -9, 135),   target = Vector3.new(-44, -3, 13)},
-
-			{pad = Vector3.new(-62, -9, -121), target = Vector3.new(29, -9, -38)},
-			{pad = Vector3.new(-35, -9, -150), target = Vector3.new(26, -9, -50)},
-			{pad = Vector3.new(0, -9, -161),   target = Vector3.new(33, 39, -14)},
-			{pad = Vector3.new(28, -9, -154),  target = Vector3.new(16, 28, -14)},
-			{pad = Vector3.new(56, -9, -135),  target = Vector3.new(28, 10, -14)},
-			{pad = Vector3.new(-21, -9, -161), target = Vector3.new(40, -6, -13)},
-			{pad = Vector3.new(107, -9, -113), target = Vector3.new(89, -9, -90)},
-			{pad = Vector3.new(133, -9, -102), target = Vector3.new(27, 0, -15)},
-			{pad = Vector3.new(78, -9, -128),  target = Vector3.new(27, 9, -17)},
-			{pad = Vector3.new(-50, -9, -135), target = Vector3.new(44, -3, -13)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 20 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 10) and bgoalPos or agoalPos
-			local col = colors[(i - 1) % #colors + 1]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Rin Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
-
-autoline:Toggle("Rin Flow Line Ups", "Rin's Kill Shot Line Ups.", function(k)
-	if k then
-		StarterGui:SetCore("SendNotification", {
-			Title = "Rin Flow Line Ups",
-			Text = "Enabled.",
-			Duration = 3
-		})
-
-		local colors = {
-			Color3.fromRGB(147, 112, 219),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(147, 112, 219),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(147, 112, 219),
-			Color3.fromRGB(255, 0, 0),
-			Color3.fromRGB(147, 112, 219),
-			Color3.fromRGB(255, 0, 0),
-		}
-
-		local goalRelative = {
-			{pad = Vector3.new(-134, -9, 266), target = Vector3.new(-73, -9, 74)},
-			{pad = Vector3.new(51, -9, 237),   target = Vector3.new(-87, 34, 13)},
-			{pad = Vector3.new(-189, -9, 192), target = Vector3.new(-65, 24, 13)},
-			{pad = Vector3.new(111, -9, 187),  target = Vector3.new(-116, 16, 13)},
-
-			{pad = Vector3.new(134, -9, -266), target = Vector3.new(73, -9, -74)},
-			{pad = Vector3.new(-51, -9, -237), target = Vector3.new(87, 34, -13)},
-			{pad = Vector3.new(189, -9, -192), target = Vector3.new(65, 24, -13)},
-			{pad = Vector3.new(-111, -9, -187),target = Vector3.new(116, 16, -13)},
-		}
-
-		local map = Workspace:WaitForChild("map", 8)
-		if not map then return end
-
-		local agoal = map:FindFirstChild("Agoal")
-		local bgoal = map:FindFirstChild("Bgoal")
-
-		local agoalPos = agoal.Position
-		local bgoalPos = bgoal.Position
-
-		for i = 1, 8 do
-			local entry = goalRelative[i]
-			if not entry then continue end
-
-			local basePos = (i <= 4) and bgoalPos or agoalPos
-			local col = colors[i]
-
-			pad(basePos + entry.pad, col)
-			target(basePos + entry.target, col)
-		end
-
-	else
-		StarterGui:SetCore("SendNotification", {
-			Title = "Rin Flow Line Ups",
-			Text = "Disabled.",
-			Duration = 3
-		})
-
-		for i = 1, padCount do
-			local p = Workspace:FindFirstChild("pad" .. i)
-			if p then p:Destroy() end
-		end
-
-		for i = 1, targetCount do
-			local t = Workspace:FindFirstChild("target" .. i)
-			if t then t:Destroy() end
-		end
-
-		padCount = 0
-		targetCount = 0
-	end
-end)
+-- Legacy Celeron fixed per-style lineups removed.
+-- Native EvoHub Auto Line Ups above is now the only lineup runtime shown here.
+-- Clean any pad/target remnants if this build is re-executed in the same server.
+for _, object in ipairs(Workspace:GetChildren()) do
+    if object.Name:match("^pad%d+$")
+        or object.Name:match("^target%d+$") then
+        pcall(function() object:Destroy() end)
+    end
+end
+padCount = 0
+targetCount = 0
 
 local linecreator = maintab2:Folder("Line Up Creator Features.", Color3.fromRGB(24, 255, 228), true)
 linecreator:Label("Lineup Creator")
