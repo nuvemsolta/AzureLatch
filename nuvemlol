@@ -1,21 +1,3 @@
--- [[ EVORE18.6.1 COMPILE HOTFIX ]]
--- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
--- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
--- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
--- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
--- [[ V16 CAPTURE PARITY PATCH ]]
--- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
--- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
--- Native UI settings are evidence-driven; custom extras remain separate.
-
--- evo hub // re — STABLE ROLLBACK BASE
--- V15_CONTINUED local build restored after V19 bootstrap regression.
--- No PlaceId redirect / no optional remote feature-pack loaders.
--- Gameplay parity work must be ported into this executable base feature-by-feature.
-
-
--- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
--- Built from the exact 3,552-instance runtime tree and callback captures.
 local Luna = (function()
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
@@ -395,13 +377,28 @@ local Luna = (function()
             brandLetters[index] = letter
         end
 
-        -- Separate label keeps the // visually centered instead of hanging high.
+        -- Keep the separators independent so the // sits visually centered
+        -- between "hub" and "re" instead of reading as a raised "//re" glyph.
+        local slash = create("TextLabel", {
+            Name = "Slash",
+            Position = UDim2.fromOffset(82, 0),
+            Size = UDim2.fromOffset(22, 28),
+            BackgroundTransparency = 1,
+            Text = "//",
+            TextColor3 = brandBase,
+            Font = Enum.Font.SourceSans,
+            TextSize = 14,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            TextYAlignment = Enum.TextYAlignment.Center,
+            ZIndex = 3,
+        }, brandFrame)
+
         local suffix = create("TextLabel", {
             Name = "RE",
-            Position = UDim2.fromOffset(80, 0),
-            Size = UDim2.fromOffset(56, 28),
+            Position = UDim2.fromOffset(108, 0),
+            Size = UDim2.fromOffset(24, 28),
             BackgroundTransparency = 1,
-            Text = "//re",
+            Text = "re",
             TextColor3 = brandBase,
             Font = Enum.Font.SourceSans,
             TextSize = 15,
@@ -2514,8 +2511,6 @@ local function sectionPlacement(tabName, groupName, sectionName)
             ["infinite range passing"] = 35,
             ["auto goalkeeper"] = 40,
             ["auto activate"] = 50,
-            ["ball features"] = 60,
-            ["break ball"] = 80,
             ["mobile silent"] = 90,
             ["mobile keyboard"] = 100,
             ["other features"] = 110,
@@ -6541,200 +6536,6 @@ end)
 -- V9: old Celeron Metavision V1/V2 removed.
 -- Visuals > Ball Metavision below is the EvoHub semantic reconstruction.
 
-local ballfolder = maintab:Folder("Ball Features.", Color3.fromRGB(24, 255, 228), true)
-ballfolder:Label("Ball Features.")
-
--- V14: legacy Celeron Auto Goal removed.
-local alwaysBallPlayers = game:GetService("Players")
-local alwaysBallPlayer = alwaysBallPlayers.LocalPlayer
-local alwaysBallRemote = game:GetService("ReplicatedStorage"):WaitForChild("ByteNetReliable")
-local alwaysBallPacket = buffer.fromstring(buffers["base"])
-local alwaysBallTerrain = workspace.Terrain
-local alwaysBallDefaultGravity = workspace.Gravity
-local alwaysBallState = { enabled = false, threadToken = 0 }
-
-ballfolder:Toggle("Always Ball", "Attempts To Always Hold The Ball (zero gravity while active).", function()
-    alwaysBallState.enabled = not alwaysBallState.enabled
-    alwaysBallState.threadToken += 1
-    local token = alwaysBallState.threadToken
-
-    EvoNotify("Always Ball", alwaysBallState.enabled and "Enabled." or "Disabled.", 1)
-
-    if not alwaysBallState.enabled then
-        workspace.Gravity = alwaysBallDefaultGravity
-        return
-    end
-
-    workspace.Gravity = 0
-    task.spawn(function()
-        while alwaysBallState.enabled and token == alwaysBallState.threadToken do
-            local character = alwaysBallPlayer.Character
-            local root = character and character:FindFirstChild("HumanoidRootPart")
-            if root then
-                local looseBall = alwaysBallTerrain:FindFirstChild("Ball")
-                if looseBall then
-                    root.CFrame = CFrame.new(looseBall.Position)
-                else
-                    for _, plr in ipairs(alwaysBallPlayers:GetPlayers()) do
-                        if plr ~= alwaysBallPlayer and plr.Character then
-                            local heldBall = plr.Character:FindFirstChild("Ball")
-                            local otherRoot = plr.Character:FindFirstChild("HumanoidRootPart")
-                            if heldBall and otherRoot then
-                                root.CFrame = otherRoot.CFrame
-                                alwaysBallRemote:FireServer(alwaysBallPacket, {{"tackle"}})
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-            task.wait(0.1)
-        end
-    end)
-end)
-
-local flowPartData = {
-    Players = game:GetService("Players"),
-    LocalPlayer = game:GetService("Players").LocalPlayer,
-    ByteNetReliable = game:GetService("ReplicatedStorage"):WaitForChild("ByteNetReliable"),
-    basePacket = buffer.fromstring(buffers["base"]),
-    flowPart = nil,
-    flowActive = false,
-    flowConnection = nil,
-    originalCFrame = nil
-}
-
-flowPartData.flowPart = Instance.new("Part")
-flowPartData.flowPart.Size = Vector3.new(150, 1, 150)
-flowPartData.flowPart.Anchored = true
-flowPartData.flowPart.CanCollide = true
-flowPartData.flowPart.Position = Vector3.new(-782, 2500, 1262)
-flowPartData.flowPart.Parent = workspace
-
-ballfolder:Button("Get Flow (Req. Ball)", "Click To Attempt Getting Flow. Click Again To Cancel.", function()
-    local char = flowPartData.LocalPlayer.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    if flowPartData.flowActive then
-        flowPartData.flowActive = false
-        if flowPartData.flowConnection then
-            task.cancel(flowPartData.flowConnection)
-            flowPartData.flowConnection = nil
-        end
-        if flowPartData.originalCFrame then
-            root.CFrame = flowPartData.originalCFrame
-        end
-        return
-    end
-
-    flowPartData.flowActive = true
-    flowPartData.originalCFrame = root.CFrame
-
-    root.CFrame = flowPartData.flowPart.CFrame + Vector3.new(0, 5, 0)
-    task.wait(0.67)
-
-    flowPartData.flowConnection = task.spawn(function()
-        local playerFolder = workspace:WaitForChild("characters"):WaitForChild(flowPartData.LocalPlayer.Name)
-        local flow = playerFolder:WaitForChild("state"):WaitForChild("flow")
-
-        local gks = {A = workspace.gks:FindFirstChild("A"), B = workspace.gks:FindFirstChild("B")}
-
-        local preferredGK = nil
-        local playerTeam = flowPartData.LocalPlayer.Team
-        if playerTeam then
-            local teamName = playerTeam.Name:lower()
-            if teamName:find("a") or teamName == "red" then
-                preferredGK = gks.A or gks.B
-            elseif teamName:find("b") or teamName == "blue" then
-                preferredGK = gks.B or gks.A
-            end
-        end
-
-        if not preferredGK then
-            EvoNotify("oops!!! error!!", "no AI gk found. cannot get flow.", 5)
-            if flowPartData.originalCFrame and root and root.Parent then
-                root.CFrame = flowPartData.originalCFrame
-            end
-            flowPartData.flowActive = false
-            return
-        end
-
-        while flowPartData.flowActive and flow.Value < 100 do
-            for i = 1, 25 do
-                if not flowPartData.flowActive or flow.Value >= 100 then break end
-                flowPartData.ByteNetReliable:FireServer(
-                    flowPartData.basePacket,
-                    { { "kick", 1, false, vector.create(0, 1, 0) } }
-                )
-                task.wait(0.15)
-            end
-
-            if not flowPartData.flowActive or flow.Value >= 100 then break end
-            task.wait(0.5)
-
-            local targetGK = preferredGK
-            if targetGK then
-                local targetCFrame = targetGK.PrimaryPart and targetGK.PrimaryPart.CFrame or targetGK:GetPivot()
-                root.CFrame = targetCFrame + Vector3.new(0, 5, 0)
-            end
-            task.wait(0.25)
-
-            for i = 1, 2 do
-                if not flowPartData.flowActive or flow.Value >= 100 then break end
-                flowPartData.ByteNetReliable:FireServer(
-                    flowPartData.basePacket,
-                    { { "kick", 1, false, vector.create(0, 1, 0) } }
-                )
-                task.wait(0.12)
-            end
-
-            if not flowPartData.flowActive or flow.Value >= 100 then break end
-
-            task.wait(1)
-
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if not ball then
-                ball = workspace.Terrain:WaitForChild("Ball", 10)
-            end
-
-            if ball then
-                while flowPartData.flowActive and ball.Parent == workspace.Terrain and flow.Value < 100 do
-                    root.CFrame = ball.CFrame + Vector3.new(0, 5, 0)
-                    task.wait(0.05)
-                end
-            end
-
-            if not flowPartData.flowActive or flow.Value >= 100 then break end
-
-            task.wait(0.2)
-            root.CFrame = flowPartData.flowPart.CFrame + Vector3.new(0, 5, 0)
-            task.wait(0.5)
-        end
-
-        task.wait(0.5)
-
-        if flow.Value >= 100 then
-            local ball = workspace.Terrain:FindFirstChild("Ball")
-            if ball and ball.Parent == workspace.Terrain then
-                while ball.Parent == workspace.Terrain and flowPartData.flowActive do
-                    root.CFrame = ball.CFrame + Vector3.new(0, 5, 0)
-                    task.wait(0.05)
-                end
-            end
-        end
-
-        task.wait(0.3)
-        if flowPartData.flowActive and root and root.Parent and flowPartData.originalCFrame then
-            root.CFrame = flowPartData.originalCFrame
-        end
-
-        flowPartData.flowActive = false
-        flowPartData.flowConnection = nil
-    end)
-end)
-
 -- ================================================================
 -- EXTRA > TEST FEATURES
 -- Celeron ball utilities kept separate from native EvoHub behavior.
@@ -6748,6 +6549,13 @@ local testFeatures = extraUI:FolderInGroup(
     "Extra"
 )
 testFeatures:Label("Ball Features (Test).")
+
+local testFeatureRuntime = {
+    Players = Players,
+    LocalPlayer = Players.LocalPlayer,
+    ByteNetReliable = ReplicatedStorage:WaitForChild("ByteNetReliable"),
+    basePacket = buffer.fromstring(buffers["base"]),
+}
 
 local testBringActive = false
 
@@ -6782,8 +6590,8 @@ local function testBallTarget()
         end
     end
 
-    for _, plr in ipairs(flowPartData.Players:GetPlayers()) do
-        if plr ~= flowPartData.LocalPlayer then
+    for _, plr in ipairs(testFeatureRuntime.Players:GetPlayers()) do
+        if plr ~= testFeatureRuntime.LocalPlayer then
             local char = testWorldCharacter(plr)
             local held = char and char:FindFirstChild("Ball")
             if held then
@@ -6805,7 +6613,7 @@ testFeatures:Button(
     "Bring Ball",
     "Celeron Test: Steals The Ball Then Teleports Back. Click Again To Cancel.",
     function()
-        local localPlayer = flowPartData.LocalPlayer
+        local localPlayer = testFeatureRuntime.LocalPlayer
         local hrp = testRoot(localPlayer)
         if not hrp then return end
 
@@ -6830,7 +6638,7 @@ testFeatures:Button(
 
                 -- Exact Celeron idea: when another player owns the ball,
                 -- teleport to it and issue the normal tackle packet.
-                for _, plr in ipairs(flowPartData.Players:GetPlayers()) do
+                for _, plr in ipairs(testFeatureRuntime.Players:GetPlayers()) do
                     if not testBringActive then break end
                     if plr ~= localPlayer and testHasBall(plr) then
                         local otherChar = testWorldCharacter(plr)
@@ -6847,8 +6655,8 @@ testFeatures:Button(
                         if heldPart and heldPart:IsA("BasePart") then
                             hrp.CFrame = heldPart.CFrame
                             pcall(function()
-                                flowPartData.ByteNetReliable:FireServer(
-                                    flowPartData.basePacket,
+                                testFeatureRuntime.ByteNetReliable:FireServer(
+                                    testFeatureRuntime.basePacket,
                                     {{"tackle"}}
                                 )
                             end)
@@ -6872,218 +6680,410 @@ testFeatures:Button(
     end
 )
 
-local breakball = maintab:Folder("Break Ball Features.", Color3.fromRGB(24, 255, 228), true)
-breakball:Label("Break Ball Features.")
+testFeatures:Button(
+    "Permanent Break Ball",
+    "Places the held ball/player below FallenPartsDestroyHeight.",
+    function()
+        workspace.FallenPartsDestroyHeight = -50000
 
-breakball:Button("Break Ball (Player Method, Req. Ball)", "Breaks The Ball By Going Extremely High Up.", function()
-    local baseplatePosition = Vector3.new(-190, 14864566, 492)
-    local partSize = Vector3.new(10, 1, 10)
-    local gap = 0
+        local character = Players.LocalPlayer.Character
+        if not character then return end
 
-    for x = 0, 2 do
-        for z = 0, 2 do
-            local part = Instance.new("Part")
-            part.Size = partSize
-            part.Anchored = true
-            part.Position = baseplatePosition + Vector3.new(x * (partSize.X + gap), 0, z * (partSize.Z + gap))
-            part.Parent = workspace
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = CFrame.new(1, -49999, 1)
+        elseif character.PrimaryPart then
+            character:SetPrimaryPartCFrame(CFrame.new(1, -49999, 1))
         end
     end
+)
 
-    local lplr = game.Players.LocalPlayer
-    local character = lplr.Character or lplr.CharacterAdded:Wait()
+--========================================================
+-- BALL MAGNET - V18 CAPTURE PARITY
+-- Native controls recovered:
+-- Ball Magnet
+-- GK + Goalbox Only
+-- Hold Key
+-- Keybind [M2] / Hold / ManualWatermark=false
+-- Show Range
+-- Magnet Range: 5..25, step 0.1 (captured value 12.5)
+--========================================================
+local ballmag = mainUI:FolderInGroup(
+    "Main",
+    "Ball Magnet",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Main"
+)
 
-    character:WaitForChild("HumanoidRootPart").CFrame =
-        CFrame.new(baseplatePosition + Vector3.new(0, 100000000000000, 0))
-end)
-
-breakball:Button("Break Ball (Ball Method, Req. Ball)", "Breaks The Ball By Kicking It Out Of Bounds.", function()
-    local lplr = game.Players.LocalPlayer
-    local character = lplr.Character or lplr.CharacterAdded:Wait()
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    local virtualInputManager = game:GetService("VirtualInputManager")
-
-    if humanoidRootPart then
-        local originalPosition = humanoidRootPart.Position
-        humanoidRootPart.CFrame = CFrame.new(Vector3.new(-390, 475, 354))
-        task.wait(0.3)
-        virtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.wait(0.1)
-        virtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-        task.wait(0.3)
-        humanoidRootPart.CFrame = CFrame.new(originalPosition)
-    end
-end)
-
-breakball:Button("Permanent Break Ball (Req. Ball)", "Breaks The Ball By Placing It In The Void.", function()
-    workspace.FallenPartsDestroyHeight = -50000
-    game.Players.LocalPlayer.Character:SetPrimaryPartCFrame(CFrame.new(1, -49999, 1))
-end)
-
-local ballmag = maintab2:Folder("Ball Magnet Features.", Color3.fromRGB(24, 255, 228), true)
-ballmag:Label("Ball Magnet: Grabs The Ball From The Set Radius.")
-
-local ballMagnetUIS = UserInputService
-local ballMagnetRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
-local ballMagnetPacket = buffer.fromstring(buffers["grabball"])
-local ballMagnetTerrain = Workspace.Terrain
+local ballMagnetRemote =
+    ReplicatedStorage:WaitForChild("ByteNetReliable")
+local ballMagnetPacket =
+    buffer.fromstring(buffers["grabball"])
+local ballMagnetTerrain =
+    Workspace:FindFirstChildOfClass("Terrain") or Workspace.Terrain
 
 local ballMagnetState = {
     active = false,
-    conn = nil,
+    holdKey = false,
+    keyHeld = false,
+    gkGoalboxOnly = false,
+    showRange = false,
+    radius = 12.5,
+    connection = nil,
+    visualConnection = nil,
+    visual = nil,
     lastFire = 0,
     fireInterval = 1 / 60,
-    radius = 7,
-    hrp = nil,
-    useM2Hold = false,
-    accumulator = 0,
-    vizEnabled = false,
-    hitbox = nil,
-    vizLoop = nil
+    volleyGuardUntil = 0,
 }
 
-local function setupBallMagnetCharacter(char)
-    ballMagnetState.hrp = char:WaitForChild("HumanoidRootPart", 10)
+local KNOWN_VOLLEY_ANIMATIONS = {
+    -- V18 native/runtime evidence around Chameleon / Two Gun volley paths.
+    ["138598504314653"] = true,
+    ["127577513196952"] = true,
+    ["88985413044521"] = true,
+    ["82417661349987"] = true,
+    ["116783590202845"] = true,
+}
+
+local VOLLEY_WORDS = {
+    "volley",
+    "two gun",
+    "chameleon",
+    "neo direct shot",
+    "kaiser impact",
+}
+
+local function hasVolleyWord(value)
+    local lower = tostring(value or ""):lower()
+    for _, word in ipairs(VOLLEY_WORDS) do
+        if lower:find(word, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function currentMagnetCharacter()
+    return Players.LocalPlayer.Character
+end
+
+local function currentMagnetRoot()
+    local char = currentMagnetCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function currentWorldCharacter()
+    local characters = Workspace:FindFirstChild("characters")
+    return characters and characters:FindFirstChild(Players.LocalPlayer.Name)
+end
+
+local function markVolleyWindow(seconds)
+    ballMagnetState.volleyGuardUntil =
+        math.max(
+            ballMagnetState.volleyGuardUntil,
+            os.clock() + (seconds or 1.15)
+        )
+end
+
+local function scanVolleyAnimations()
+    local char = currentMagnetCharacter()
+    local humanoid =
+        char and char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return false end
+
+    local animator =
+        humanoid:FindFirstChildOfClass("Animator")
+    if not animator then return false end
+
+    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+        local animation = track.Animation
+        local id =
+            animation
+            and tostring(animation.AnimationId):match("%d+")
+
+        if id and KNOWN_VOLLEY_ANIMATIONS[id] then
+            return true
+        end
+
+        if hasVolleyWord(track.Name)
+            or (animation and hasVolleyWord(animation.Name)) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function scanVolleyState()
+    local worldChar = currentWorldCharacter()
+    if not worldChar then return false end
+
+    for key, value in pairs(worldChar:GetAttributes()) do
+        if hasVolleyWord(key) or hasVolleyWord(value) then
+            return true
+        end
+    end
+
+    local stateFolder = worldChar:FindFirstChild("state")
+    if stateFolder then
+        for _, valueObject in ipairs(stateFolder:GetChildren()) do
+            if valueObject:IsA("ValueBase") then
+                if hasVolleyWord(valueObject.Name)
+                    or hasVolleyWord(valueObject.Value) then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function isVolleyActive()
+    if os.clock() < ballMagnetState.volleyGuardUntil then
+        return true
+    end
+
+    if scanVolleyAnimations() or scanVolleyState() then
+        markVolleyWindow(0.30)
+        return true
+    end
+
+    return false
+end
+
+local function installVolleyWatcher(char)
+    if not char then return end
+
+    task.spawn(function()
+        local humanoid =
+            char:WaitForChild("Humanoid", 8)
+        if not humanoid then return end
+
+        local animator =
+            humanoid:FindFirstChildOfClass("Animator")
+            or humanoid:WaitForChild("Animator", 5)
+
+        if not animator then return end
+
+        animator.AnimationPlayed:Connect(function(track)
+            local animation = track and track.Animation
+            local id =
+                animation
+                and tostring(animation.AnimationId):match("%d+")
+
+            if (id and KNOWN_VOLLEY_ANIMATIONS[id])
+                or hasVolleyWord(track and track.Name)
+                or (animation and hasVolleyWord(animation.Name)) then
+                markVolleyWindow(1.15)
+            end
+        end)
+    end)
 end
 
 if Players.LocalPlayer.Character then
-    task.defer(setupBallMagnetCharacter, Players.LocalPlayer.Character)
+    installVolleyWatcher(Players.LocalPlayer.Character)
+end
+Players.LocalPlayer.CharacterAdded:Connect(installVolleyWatcher)
+
+local function removeMagnetRangeVisual()
+    if ballMagnetState.visual then
+        pcall(function()
+            ballMagnetState.visual:Destroy()
+        end)
+        ballMagnetState.visual = nil
+    end
 end
 
-Players.LocalPlayer.CharacterAdded:Connect(setupBallMagnetCharacter)
-
-local function stopBallMagnetLoop()
-    if ballMagnetState.conn then
-        ballMagnetState.conn:Disconnect()
-        ballMagnetState.conn = nil
+local function stopMagnetVisual()
+    if ballMagnetState.visualConnection then
+        ballMagnetState.visualConnection:Disconnect()
+        ballMagnetState.visualConnection = nil
     end
-    ballMagnetState.accumulator = 0
+    removeMagnetRangeVisual()
 end
 
-local function startBallMagnetLoop()
-    stopBallMagnetLoop()
+local function startMagnetVisual()
+    stopMagnetVisual()
 
-    ballMagnetState.conn = RunService.Heartbeat:Connect(function(dt)
-        if not ballMagnetState.active then return end
+    ballMagnetState.visualConnection =
+        RunService.Heartbeat:Connect(function()
+            if not ballMagnetState.showRange then
+                removeMagnetRangeVisual()
+                return
+            end
 
-        ballMagnetState.accumulator += dt
-        if ballMagnetState.accumulator < (1 / 60) then return end
-        ballMagnetState.accumulator = 0
+            local root = currentMagnetRoot()
+            if not root then
+                removeMagnetRangeVisual()
+                return
+            end
 
-        local root = ballMagnetState.hrp
-        if not root or not root.Parent then return end
+            local visual = ballMagnetState.visual
 
-        local radius = ballMagnetState.radius
-        if radius < 2 then return end
+            if not visual then
+                visual = Instance.new("Part")
+                visual.Name = "EvoHubMagnetRange"
+                visual.Shape = Enum.PartType.Ball
+                visual.Material = Enum.Material.Neon
+                visual.Color = Color3.fromRGB(149, 138, 204)
+                visual.Transparency = 0.88
+                visual.CanCollide = false
+                visual.CanTouch = false
+                visual.CanQuery = false
+                visual.CastShadow = false
+                visual.Anchored = true
+                visual.Massless = true
+                visual.Parent = Workspace
+                ballMagnetState.visual = visual
+            end
 
-        if ballMagnetState.useM2Hold
-            and not ballMagnetUIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-            return
-        end
+            local radius =
+                math.clamp(
+                    tonumber(ballMagnetState.radius) or 12.5,
+                    5,
+                    25
+                )
 
-        local ball = ballMagnetTerrain:FindFirstChild("Ball")
-        if not ball then return end
-
-        local delta = root.Position - ball.Position
-        if delta:Dot(delta) > radius * radius then return end
-
-        local now = os.clock()
-        if now - ballMagnetState.lastFire < ballMagnetState.fireInterval then return end
-        ballMagnetState.lastFire = now
-
-        ballMagnetRemote:FireServer(ballMagnetPacket)
-    end)
+            local diameter = radius * 2
+            visual.Size =
+                Vector3.new(diameter, diameter, diameter)
+            visual.CFrame = root.CFrame
+        end)
 end
 
-ballmag:Toggle("Ball Magnet", "Ball Magnet, Uses Set Radius As Range.", function()
-    ballMagnetState.active = not ballMagnetState.active
-
-    EvoNotify("Ball Magnet", ballMagnetState.active and "Enabled." or "Disabled.", 1)
-
-    if ballMagnetState.active then
-        startBallMagnetLoop()
-    else
-        stopBallMagnetLoop()
+local function stopBallMagnet()
+    if ballMagnetState.connection then
+        ballMagnetState.connection:Disconnect()
+        ballMagnetState.connection = nil
     end
-end)
+end
 
-ballmag:Slider("Ball Magnet Radius", 7, 7, 25, 0.5, function(v)
-    ballMagnetState.radius = v
-end)
+local function startBallMagnet()
+    stopBallMagnet()
 
-ballmag:Toggle("Magnet Uses M2 Hold", "If Enabled, Ball Magnet Only Grabs While Right Click Is Held Down.", function()
-    ballMagnetState.useM2Hold = not ballMagnetState.useM2Hold
+    ballMagnetState.connection =
+        RunService.Heartbeat:Connect(function()
+            if not ballMagnetState.active then
+                return
+            end
 
-    EvoNotify("Magnet Uses M2 Hold", ballMagnetState.useM2Hold and "Enabled." or "Disabled.", 1)
-end)
+            if ballMagnetState.holdKey
+                and not ballMagnetState.keyHeld
+                and not UserInputService:IsMouseButtonPressed(
+                    Enum.UserInputType.MouseButton2
+                ) then
+                return
+            end
 
-ballmag:Toggle("Ball Magnet Radius Hitbox", "Shows The Magnet's Radius Hitbox.", function()
-    ballMagnetState.vizEnabled = not ballMagnetState.vizEnabled
+            -- Original callback owns a helper that scans current playing
+            -- animations before Process(). Preserve volley priority:
+            -- the magnet must yield while a volley/action is active.
+            if isVolleyActive() then
+                return
+            end
 
-    EvoNotify("Ball Magnet Radius Hitbox", ballMagnetState.vizEnabled and "Enabled." or "Disabled.", 1)
+            local root = currentMagnetRoot()
+            if not root then return end
 
-    local function removeHitbox()
-        if ballMagnetState.hitbox then
-            ballMagnetState.hitbox:Destroy()
-            ballMagnetState.hitbox = nil
+            local ball =
+                ballMagnetTerrain
+                and ballMagnetTerrain:FindFirstChild("Ball")
+            if not ball or not ball:IsA("BasePart") then
+                return
+            end
+
+            local radius =
+                math.clamp(
+                    tonumber(ballMagnetState.radius) or 12.5,
+                    5,
+                    25
+                )
+
+            local offset = root.Position - ball.Position
+            if offset:Dot(offset) > radius * radius then
+                return
+            end
+
+            local now = os.clock()
+            if now - ballMagnetState.lastFire
+                < ballMagnetState.fireInterval then
+                return
+            end
+
+            ballMagnetState.lastFire = now
+
+            pcall(function()
+                ballMagnetRemote:FireServer(ballMagnetPacket)
+            end)
+        end)
+end
+
+ballmag:Toggle(
+    "Ball Magnet",
+    nil,
+    false,
+    function(value)
+        ballMagnetState.active = value == true
+
+        if ballMagnetState.active then
+            startBallMagnet()
+        else
+            stopBallMagnet()
         end
     end
+)
 
-    if ballMagnetState.vizLoop then
-        ballMagnetState.vizLoop:Disconnect()
-        ballMagnetState.vizLoop = nil
+ballmag:Toggle(
+    "GK + Goalbox Only",
+    nil,
+    false,
+    function(value)
+        ballMagnetState.gkGoalboxOnly = value == true
     end
+)
 
-    if not ballMagnetState.vizEnabled then
-        removeHitbox()
-        return
+ballmag:Toggle(
+    "Hold Key",
+    nil,
+    false,
+    function(value)
+        ballMagnetState.holdKey = value == true
     end
+)
 
-    local elapsed = 0
-    ballMagnetState.vizLoop = RunService.Heartbeat:Connect(function(dt)
-        elapsed += dt
-        if elapsed < 0.1 then return end
-        elapsed = 0
+-- The captured original keybind is MouseButton2 / Hold / ManualWatermark=false.
+-- The RE UI wrapper does not safely serialize UserInputType keybinds yet, so
+-- the logical M2 hold is handled directly by UserInputService above.
 
-        if not ballMagnetState.vizEnabled or not ballMagnetState.active then
-            removeHitbox()
-            return
+ballmag:Toggle(
+    "Show Range",
+    nil,
+    false,
+    function(value)
+        ballMagnetState.showRange = value == true
+
+        if ballMagnetState.showRange then
+            startMagnetVisual()
+        else
+            stopMagnetVisual()
         end
+    end
+)
 
-        local ball = ballMagnetTerrain:FindFirstChild("Ball")
-        if not ball or not ball:IsA("BasePart") then
-            removeHitbox()
-            return
-        end
-
-        local radius = ballMagnetState.radius or 1
-        if radius < 2 then
-            removeHitbox()
-            return
-        end
-
-        local hitbox = ballMagnetState.hitbox
-        if not hitbox then
-            hitbox = Instance.new("Part")
-            hitbox.Name = "BallMagnetRange"
-            hitbox.Shape = Enum.PartType.Ball
-            hitbox.Material = Enum.Material.Neon
-            hitbox.Color = Color3.fromRGB(15, 155, 155)
-            hitbox.Transparency = 0.9
-            hitbox.CanCollide = false
-            hitbox.CanTouch = false
-            hitbox.CanQuery = false
-            hitbox.Anchored = true
-            hitbox.Massless = true
-            hitbox.Parent = workspace
-            ballMagnetState.hitbox = hitbox
-        end
-
-        local diameter = radius * 2
-        hitbox.Size = Vector3.new(diameter, diameter, diameter)
-        hitbox.CFrame = ball.CFrame
-    end)
-end)
+ballmag:Slider(
+    "Magnet Range",
+    12.5,
+    5,
+    25,
+    0.1,
+    function(value)
+        ballMagnetState.radius =
+            math.clamp(tonumber(value) or 12.5, 5, 25)
+    end
+)
 
 --========================================================
 -- AUTO COUNTER - attached core integration (V5)
@@ -7093,8 +7093,13 @@ end)
 --========================================================
 task.spawn(function()
     local bootOK, bootError = pcall(function()
-        local folder = maintab2:Folder("Auto Dribble / Counter Features.", Color3.fromRGB(24, 255, 228), true)
-        folder:Label("Auto Counter: attached core integrated into the hub.")
+        local folder = mainUI:FolderInGroup(
+            "Main",
+            "Auto Counter",
+            Color3.fromRGB(24, 255, 228),
+            true,
+            "Main"
+        )
 
         local PlayersService = game:GetService("Players")
         local ReplicatedStorageService = game:GetService("ReplicatedStorage")
@@ -7108,10 +7113,12 @@ task.spawn(function()
         end
 
         local state = {
-            enabled = true,
-            counterChance = 100,
+            enabled = false,
             useClosestTeammate = false,
-            range = 65,
+            range = 60,
+            showRange = false,
+            rangeVisual = nil,
+            rangeVisualConnection = nil,
             fireRate = 0.05,
             playerCooldown = 0.33,
             autoSkills = {
@@ -7283,8 +7290,6 @@ task.spawn(function()
             disconnect(record.loop)
             record.loop = nil
 
-            if math.random(1, 100) > state.counterChance then return end
-
             local lastPoll = 0
             local loop
             loop = RunServiceService.Heartbeat:Connect(function()
@@ -7350,15 +7355,102 @@ task.spawn(function()
         table.insert(state.globalConnections, PlayersService.PlayerAdded:Connect(watchPlayer))
         table.insert(state.globalConnections, PlayersService.PlayerRemoving:Connect(removePlayer))
 
-        folder:Toggle("Auto Counter", "Master switch for the attached counter core.", true, function(value)
+        local function removeCounterRangeVisual()
+            if state.rangeVisual then
+                pcall(function()
+                    state.rangeVisual:Destroy()
+                end)
+                state.rangeVisual = nil
+            end
+        end
+
+        local function stopCounterRangeVisual()
+            if state.rangeVisualConnection then
+                state.rangeVisualConnection:Disconnect()
+                state.rangeVisualConnection = nil
+            end
+            removeCounterRangeVisual()
+        end
+
+        local function startCounterRangeVisual()
+            stopCounterRangeVisual()
+
+            state.rangeVisualConnection =
+                RunServiceService.Heartbeat:Connect(function()
+                    if not state.showRange then
+                        removeCounterRangeVisual()
+                        return
+                    end
+
+                    local root = getRoot(localplayer.Character)
+                    if not root then
+                        removeCounterRangeVisual()
+                        return
+                    end
+
+                    local visual = state.rangeVisual
+
+                    if not visual then
+                        visual = Instance.new("Part")
+                        visual.Name = "EvoHubAutoCounterRange"
+                        visual.Shape = Enum.PartType.Ball
+                        visual.Material = Enum.Material.Neon
+                        visual.Color = Color3.fromRGB(149, 138, 204)
+                        visual.Transparency = 0.90
+                        visual.CanCollide = false
+                        visual.CanTouch = false
+                        visual.CanQuery = false
+                        visual.CastShadow = false
+                        visual.Anchored = true
+                        visual.Massless = true
+                        visual.Parent = workspace
+                        state.rangeVisual = visual
+                    end
+
+                    local radius =
+                        math.clamp(
+                            tonumber(state.range) or 60,
+                            35,
+                            90
+                        )
+
+                    local diameter = radius * 2
+                    visual.Size =
+                        Vector3.new(diameter, diameter, diameter)
+                    visual.CFrame = root.CFrame
+                end)
+        end
+
+        folder:Toggle("Auto Counter", nil, false, function(value)
             state.enabled = value == true
         end)
-        folder:Slider("Counter Chance", 100, 0, 100, 1, function(value)
-            state.counterChance = math.clamp(value, 0, 100)
+
+        folder:Toggle("Show Range", nil, false, function(value)
+            state.showRange = value == true
+
+            if state.showRange then
+                startCounterRangeVisual()
+            else
+                stopCounterRangeVisual()
+            end
         end)
-        folder:Slider("Auto Counter Range", 65, 4, 100, 1, function(value)
-            state.range = math.clamp(value, 4, 100)
-        end)
+
+        folder:Slider(
+            "Activation Range",
+            60,
+            35,
+            90,
+            0.1,
+            function(value)
+                state.range =
+                    math.clamp(
+                        tonumber(value) or 60,
+                        35,
+                        90
+                    )
+            end
+        )
+
         folder:Toggle("Use Closest Teammate", function(value)
             state.useClosestTeammate = value == true
         end)
@@ -7380,6 +7472,7 @@ task.spawn(function()
         function runtime.destroy()
             if state.destroyed then return end
             state.destroyed = true
+            stopCounterRangeVisual()
             for plr in pairs(state.players) do removePlayer(plr) end
             for _, conn in ipairs(state.globalConnections) do disconnect(conn) end
             table.clear(state.globalConnections)
