@@ -1,3 +1,4 @@
+-- [[ EVORE23 BIG UI PARITY / MAIN ORDER / HEADER MOTION ]]
 -- [[ EVORE22.4 ROOT SCOPE + STARTUP FIX ]]
 -- [[ EVORE22.3 FULL STABILITY REVIEW ]]
 -- [[ EVORE22.2 UI SCALE TONUMBER HOTFIX ]]
@@ -421,56 +422,171 @@ local Luna = (function()
         }, main)
         corner(topBar, 4)
 
-        -- RE branding requested by the user. Keep this as a single text run so
-        -- the visible spacing is exactly: "evo hub // re".
-        local brandLabel = create("TextLabel", {
+        -- V23 header parity:
+        -- original visible title is spaced "e v o h u b".
+        -- Keep every letter independent so the native sequential shimmer/fade
+        -- does not collapse into a single white flash.
+        local brandFrame = create("Frame", {
             Name = "Brand",
             Position = UDim2.fromOffset(12, 0),
-            Size = UDim2.fromOffset(170, 28),
+            Size = UDim2.fromOffset(150, 28),
             BackgroundTransparency = 1,
-            Text = "evo hub // re",
+            ZIndex = 3,
+        }, topBar)
+
+        local brandLetters = {}
+        local brandBase = Theme.Accent
+        local brandShimmer = Color3.fromRGB(229, 223, 255)
+
+        local letters = {"e", "v", "o", "h", "u", "b"}
+        -- Wider spacing intentionally matches the original "e v o h u b" read.
+        local letterStep = 13
+
+        for index, char in ipairs(letters) do
+            local label = create("TextLabel", {
+                Name = "BrandLetter_" .. tostring(index),
+                Position = UDim2.fromOffset((index - 1) * letterStep, 0),
+                Size = UDim2.fromOffset(11, 28),
+                BackgroundTransparency = 1,
+                Text = char,
+                TextColor3 = Theme.Accent,
+                TextTransparency = 1,
+                Font = Enum.Font.SourceSans,
+                TextSize = 15,
+                TextXAlignment = Enum.TextXAlignment.Center,
+                TextYAlignment = Enum.TextYAlignment.Center,
+                ZIndex = 3,
+            }, brandFrame)
+
+            setAccentText(label)
+            brandLetters[#brandLetters + 1] = label
+        end
+
+        local brandSuffix = create("TextLabel", {
+            Name = "BrandSuffix",
+            Position = UDim2.fromOffset(84, 0),
+            Size = UDim2.fromOffset(48, 28),
+            BackgroundTransparency = 1,
+            Text = "// re",
             TextColor3 = Theme.Accent,
+            TextTransparency = 1,
             Font = Enum.Font.SourceSans,
             TextSize = 15,
             TextXAlignment = Enum.TextXAlignment.Left,
             TextYAlignment = Enum.TextYAlignment.Center,
             ZIndex = 3,
-        }, topBar)
-        setAccentText(brandLabel)
+        }, brandFrame)
+        setAccentText(brandSuffix)
 
-        -- Keep the subtle original accent shimmer without splitting the slashes
-        -- into glyphs that can drift vertically on mobile fonts.
+        -- Native-style reveal: each letter fades in independently, then // re.
         task.spawn(function()
-            while gui.Parent do
-                task.wait(1.9)
-                if not brandLabel.Parent then break end
+            task.wait(0.05)
 
-                local base = Theme.Accent
+            for index, label in ipairs(brandLetters) do
+                if not label.Parent then return end
+
                 pcall(function()
                     TweenService:Create(
-                        brandLabel,
-                        TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                        { TextColor3 = Color3.fromRGB(229, 223, 255) }
+                        label,
+                        TweenInfo.new(
+                            0.16,
+                            Enum.EasingStyle.Quad,
+                            Enum.EasingDirection.Out
+                        ),
+                        { TextTransparency = 0 }
                     ):Play()
                 end)
 
-                task.wait(0.16)
+                task.wait(0.045)
+            end
 
-                if brandLabel.Parent then
+            if brandSuffix.Parent then
+                pcall(function()
+                    TweenService:Create(
+                        brandSuffix,
+                        TweenInfo.new(
+                            0.18,
+                            Enum.EasingStyle.Quad,
+                            Enum.EasingDirection.Out
+                        ),
+                        { TextTransparency = 0 }
+                    ):Play()
+                end)
+            end
+
+            -- Original-style sequential shimmer.
+            while gui.Parent do
+                task.wait(1.75)
+
+                for _, label in ipairs(brandLetters) do
+                    if not gui.Parent or not label.Parent then
+                        return
+                    end
+
                     pcall(function()
                         TweenService:Create(
-                            brandLabel,
-                            TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-                            { TextColor3 = Theme.Accent }
+                            label,
+                            TweenInfo.new(
+                                0.12,
+                                Enum.EasingStyle.Quad,
+                                Enum.EasingDirection.Out
+                            ),
+                            { TextColor3 = brandShimmer }
                         ):Play()
                     end)
+
+                    task.wait(0.07)
+
+                    if label.Parent then
+                        pcall(function()
+                            TweenService:Create(
+                                label,
+                                TweenInfo.new(
+                                    0.20,
+                                    Enum.EasingStyle.Quad,
+                                    Enum.EasingDirection.Out
+                                ),
+                                { TextColor3 = Theme.Accent }
+                            ):Play()
+                        end)
+                    end
+                end
+
+                if brandSuffix.Parent then
+                    pcall(function()
+                        TweenService:Create(
+                            brandSuffix,
+                            TweenInfo.new(
+                                0.12,
+                                Enum.EasingStyle.Quad,
+                                Enum.EasingDirection.Out
+                            ),
+                            { TextColor3 = brandShimmer }
+                        ):Play()
+                    end)
+
+                    task.wait(0.10)
+
+                    if brandSuffix.Parent then
+                        pcall(function()
+                            TweenService:Create(
+                                brandSuffix,
+                                TweenInfo.new(
+                                    0.20,
+                                    Enum.EasingStyle.Quad,
+                                    Enum.EasingDirection.Out
+                                ),
+                                { TextColor3 = Theme.Accent }
+                            ):Play()
+                        end)
+                    end
                 end
             end
         end)
 
         local topTabs = create("Frame", {
             Name = "TopTabs",
-            Position = UDim2.fromOffset(170, 0),
+            Position = UDim2.fromOffset(165, 0),
             Size = UDim2.fromOffset(500, 28),
             BackgroundTransparency = 1,
             ZIndex = 3,
@@ -2580,6 +2696,15 @@ local function sectionDisplayName(tabName, groupName, folderName)
         if n == "ball features" then return "Ball Features" end
         if n == "mobile silent features" then return "Mobile Silent" end
         if n == "other features" then return "Other Features" end
+        if n == "trap helper" then return "Trap Helper" end
+        if n == "auto trap" then return "Auto Trap" end
+        if n == "anti counter" then return "Anti Counter" end
+        if n == "anti price check" then return "Anti Price Check" end
+        if n == "hide black gui" then return "Hide Black GUI" end
+        if n == "auto variant steal" then return "Auto Variant Steal" end
+        if n == "off ball awk" then return "Off Ball Awk" end
+        if n == "legit no stun" then return "Legit No Stun" end
+        if n == "name protect" then return "Name Protect" end
     end
 
     return cleanSectionName(folderName)
@@ -2911,13 +3036,43 @@ local function wrapTab(realTab, tabName, defaultGroup)
         groupName = tostring(groupName or defaultGroup)
         realTab:EnsureGroup(groupName)
 
-        local effectiveTabName = legacyTabName or tabName
-        local displayName = sectionDisplayName(effectiveTabName, groupName, folderName)
-        local section = realTab:CreateSection(displayName, groupName)
+        -- IMPORTANT:
+        -- legacyTabName exists only to preserve old Celeron config keys such as
+        -- Blatant/... and Silent/....
+        --
+        -- The old implementation also fed that legacy name into UI placement,
+        -- so Main sections were seen as "Blatant"/"Silent" and completely
+        -- skipped the EvoHub Main ordering map.
+        local configTabName = legacyTabName or tabName
+        local visualTabName = tabName
 
-        placeSection(realTab, section, effectiveTabName, groupName, displayName)
+        local displayName =
+            sectionDisplayName(
+                visualTabName,
+                groupName,
+                folderName
+            )
 
-        return makeContainer(realTab, section, effectiveTabName, folderName)
+        local section =
+            realTab:CreateSection(
+                displayName,
+                groupName
+            )
+
+        placeSection(
+            realTab,
+            section,
+            visualTabName,
+            groupName,
+            displayName
+        )
+
+        return makeContainer(
+            realTab,
+            section,
+            configTabName,
+            folderName
+        )
     end
 
     function tab:Folder(name, _color, _expanded)
@@ -6087,7 +6242,7 @@ local function setWatermark(enabled)
     stroke.Thickness = 1
     stroke.Parent = holder
 
-    local text = "evo hub // re"
+    local text = "e v o h u b // re"
     local x = 7
 
     for index = 1, #text do
@@ -17205,16 +17360,118 @@ end)
 -- Luna provides its own navigation UI.
 
 
--- V22.1 final layout settle: feature creation spans both the synchronous
--- legacy body and deferred native passes. Refresh both columns after they
--- have had time to register rather than relying on creation timing.
+-- V23 FINAL MAIN PARITY NORMALIZER
+-- The original Main is a fixed two-column surface. Re-run placement after all
+-- native + legacy tasks have registered so task.spawn timing cannot change
+-- section order.
+local function normalizeMainParityLayout()
+    if not mainReal or not mainReal.Sections then
+        return
+    end
+
+    local nativeLeft = {
+        ["auto counter"] = 10,
+        ["anti counter"] = 20,
+        ["auto line ups"] = 30,
+        ["lineup creator"] = 40,
+        ["hide black gui"] = 50,
+        ["air dribble"] = 60,
+        ["shot predictor"] = 70,
+    }
+
+    local nativeRight = {
+        ["auto position"] = 10,
+        ["anti price check"] = 20,
+        ["ball magnet"] = 30,
+        ["auto qte"] = 40,
+
+        -- User-requested RE addition kept directly below Auto QTE.
+        ["infinite range passing"] = 45,
+
+        ["legit no stun"] = 50,
+        ["mobile keyboard"] = 60,
+        ["auto variant steal"] = 70,
+        ["off ball awk"] = 80,
+        ["misc features"] = 90,
+        ["name protect"] = 100,
+    }
+
+    local customLeft = {
+        ["auto trap"] = 210,
+        ["trap helper"] = 220,
+    }
+
+    local customRight = {
+        ["auto goalkeeper"] = 210,
+        ["auto activate"] = 220,
+        ["mobile silent"] = 230,
+        ["other features"] = 240,
+    }
+
+    local unknownLeftOrder = 400
+    local unknownRightOrder = 400
+
+    for _, section in ipairs(mainReal.Sections) do
+        if section.Group == "Main"
+            and section.Frame
+            and section.Frame.Parent then
+
+            local name =
+                tostring(section.Name or ""):lower()
+
+            if nativeLeft[name] then
+                section.Frame.Parent = mainReal.LeftColumn
+                section.Frame.LayoutOrder = nativeLeft[name]
+
+            elseif nativeRight[name] then
+                section.Frame.Parent = mainReal.RightColumn
+                section.Frame.LayoutOrder = nativeRight[name]
+
+            elseif customLeft[name] then
+                section.Frame.Parent = mainReal.LeftColumn
+                section.Frame.LayoutOrder = customLeft[name]
+
+            elseif customRight[name] then
+                section.Frame.Parent = mainReal.RightColumn
+                section.Frame.LayoutOrder = customRight[name]
+
+            else
+                -- Unknown/recovered extras are never allowed to jump above the
+                -- native EvoHub surface.
+                local currentParent = section.Frame.Parent
+
+                if currentParent == mainReal.LeftColumn then
+                    section.Frame.LayoutOrder = unknownLeftOrder
+                    unknownLeftOrder += 10
+                else
+                    section.Frame.Parent = mainReal.RightColumn
+                    section.Frame.LayoutOrder = unknownRightOrder
+                    unknownRightOrder += 10
+                end
+            end
+        end
+    end
+
+    if mainReal.RefreshLayout then
+        mainReal.RefreshLayout()
+    end
+end
+
+-- V23 layout settle: run more than once because native passes are deferred.
 task.defer(function()
     task.wait(0.75)
+
+    pcall(normalizeMainParityLayout)
 
     pcall(function()
         if mainReal and mainReal.RefreshLayout then
             mainReal.RefreshLayout()
         end
+    end)
+
+    -- One more late pass catches sections registered by slower native tasks.
+    task.delay(1.25, function()
+        pcall(normalizeMainParityLayout)
     end)
 
     pcall(function()
