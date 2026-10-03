@@ -1,3 +1,4 @@
+-- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
 -- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
 -- [[ V16 CAPTURE PARITY PATCH ]]
 -- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
@@ -163,7 +164,7 @@ local Luna = (function()
         for index = #notificationStack, 1, -1 do
             local entry = notificationStack[index]
             entry.Position = UDim2.new(0.5, 0, 0.6, baseY)
-            baseY -= 26
+            baseY -= 23
         end
     end
 
@@ -349,7 +350,9 @@ local Luna = (function()
         }, main)
         corner(topBar, 4)
 
-        -- Letter-by-letter branding is one of the visible traits of the captured UI.
+        -- V20.1 hidden-instance capture recovered the original title geometry:
+        -- e/v/o/h/u/b at X offsets 0,11,22,33,44,55; base #958ACC,
+        -- one-letter shimmer #E5DFFF, TextSize=15.
         local brandFrame = create("Frame", {
             Name = "Frame",
             Position = UDim2.fromOffset(12, 0),
@@ -358,17 +361,20 @@ local Luna = (function()
             ZIndex = 3,
         }, topBar)
 
-        local brand = tostring(settings.Name or "evo hub // re")
+        local brandBase = Color3.fromRGB(149, 138, 204)
+        local brandShimmer = Color3.fromRGB(229, 223, 255)
         local brandLetters = {}
-        for index = 1, #brand do
+
+        local evoText = "evohub"
+        for index = 1, #evoText do
             local letter = create("TextLabel", {
                 Name = "TextLabel",
-                Position = UDim2.fromOffset((index - 1) * 10, 0),
+                Position = UDim2.fromOffset((index - 1) * 11, 0),
                 Size = UDim2.fromOffset(14, 28),
                 BackgroundTransparency = 1,
-                Text = brand:sub(index, index),
-                TextColor3 = Theme.Accent,
-                Font = Enum.Font.SourceSansBold,
+                Text = evoText:sub(index, index),
+                TextColor3 = brandBase,
+                Font = Enum.Font.SourceSans,
                 TextSize = 15,
                 TextXAlignment = Enum.TextXAlignment.Left,
                 ZIndex = 3,
@@ -376,17 +382,60 @@ local Luna = (function()
             brandLetters[index] = letter
         end
 
+        local suffix = create("TextLabel", {
+            Name = "RE",
+            Position = UDim2.fromOffset(70, 0),
+            Size = UDim2.fromOffset(80, 28),
+            BackgroundTransparency = 1,
+            Text = " // re",
+            TextColor3 = brandBase,
+            Font = Enum.Font.SourceSans,
+            TextSize = 15,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 3,
+        }, brandFrame)
+
+        -- Native-looking single-letter shimmer instead of the old white sine wave.
         task.spawn(function()
-            local phase = 0
+            local TweenServiceBrand = game:GetService("TweenService")
+
             while gui.Parent do
-                phase += 0.11
-                for index, letter in ipairs(brandLetters) do
-                    if letter.Parent then
-                        local wave = (math.sin(phase - index * 0.72) + 1) * 0.5
-                        letter.TextColor3 = Theme.Accent:Lerp(Color3.new(1, 1, 1), 0.02 + wave * 0.48)
+                for _, letter in ipairs(brandLetters) do
+                    if not gui.Parent then break end
+
+                    if letter and letter.Parent then
+                        pcall(function()
+                            TweenServiceBrand:Create(
+                                letter,
+                                TweenInfo.new(
+                                    0.16,
+                                    Enum.EasingStyle.Quad,
+                                    Enum.EasingDirection.Out
+                                ),
+                                { TextColor3 = brandShimmer }
+                            ):Play()
+                        end)
+
+                        task.wait(0.18)
+
+                        pcall(function()
+                            TweenServiceBrand:Create(
+                                letter,
+                                TweenInfo.new(
+                                    0.24,
+                                    Enum.EasingStyle.Quad,
+                                    Enum.EasingDirection.Out
+                                ),
+                                { TextColor3 = brandBase }
+                            ):Play()
+                        end)
                     end
+
+                    task.wait(0.18)
                 end
-                task.wait(0.05)
+
+                -- The original reads as a shimmer, not a constantly-white wave.
+                task.wait(1.8)
             end
         end)
 
@@ -565,6 +614,48 @@ local Luna = (function()
         }, content)
         setAccent(contentScroll, "ScrollBarImageColor3")
 
+        -- EvoHub-style content fade. V19/video evidence shows the UI content
+        -- eases in instead of hard-cutting between pages.
+        local contentFade = create("Frame", {
+            Name = "ContentFade",
+            Position = UDim2.fromOffset(0, 8),
+            Size = UDim2.new(1, 0, 1, -8),
+            BackgroundColor3 = Theme.Main,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Visible = false,
+            ZIndex = 40,
+        }, content)
+
+        local contentFadeToken = 0
+        local function playContentFade()
+            contentFadeToken += 1
+            local token = contentFadeToken
+
+            contentFade.Visible = true
+            contentFade.BackgroundTransparency = 0.14
+
+            pcall(function()
+                TweenService:Create(
+                    contentFade,
+                    TweenInfo.new(
+                        0.16,
+                        Enum.EasingStyle.Quad,
+                        Enum.EasingDirection.Out
+                    ),
+                    { BackgroundTransparency = 1 }
+                ):Play()
+            end)
+
+            task.delay(0.17, function()
+                if token == contentFadeToken
+                    and contentFade
+                    and contentFade.Parent then
+                    contentFade.Visible = false
+                end
+            end)
+        end
+
         local sharedLeftColumn = create("Frame", {
             Name = "LeftColumn",
             Position = UDim2.fromOffset(0, 0),
@@ -642,6 +733,7 @@ local Luna = (function()
 
             contentScroll.CanvasPosition = Vector2.new(0, 0)
             setSidebarSelected(groupName)
+            playContentFade()
         end
 
         local function addSidebarEntry(tab, groupName)
@@ -749,6 +841,7 @@ local Luna = (function()
             searchBox.Text = ""
             searchResults.Visible = false
             searchResults.Size = UDim2.new(1, 0, 0, 0)
+            playContentFade()
         end
 
         function window:SetVisible(value)
@@ -1176,13 +1269,6 @@ local Luna = (function()
                     corner(box, 2)
                     if value then setAccent(box) end
 
-                    -- V18 native SetValue evidence shows the original control
-                    -- path performs a short animated state transition (~0.2s)
-                    -- and then updates the keybind watermark/display.
-                    local toggleScale = create("UIScale", {
-                        Scale = 1,
-                    }, box)
-
                     makeControlText(row, nameText, UDim2.new(1, -22, 1, 0), UDim2.fromOffset(22, 0), Enum.Font.SourceSans, 14)
 
                     local button = create("TextButton", {
@@ -1212,35 +1298,18 @@ local Luna = (function()
 
                         if changed then
                             pcall(function()
-                                toggleScale.Scale = 0.72
-
                                 TweenService:Create(
                                     box,
                                     TweenInfo.new(
-                                        0.20,
+                                        0.15,
                                         Enum.EasingStyle.Quad,
                                         Enum.EasingDirection.Out
                                     ),
                                     { BackgroundColor3 = targetColor }
                                 ):Play()
-
-                                TweenService:Create(
-                                    toggleScale,
-                                    TweenInfo.new(
-                                        0.22,
-                                        Enum.EasingStyle.Back,
-                                        Enum.EasingDirection.Out
-                                    ),
-                                    { Scale = 1 }
-                                ):Play()
                             end)
                         else
                             box.BackgroundColor3 = targetColor
-                        end
-
-                        if newValue then
-                            -- Keep the active color synced with the user's UI accent.
-                            box.BackgroundColor3 = Theme.Accent
                         end
 
                         if type(Library.OnControlVisualChanged) == "function" then
@@ -1249,6 +1318,24 @@ local Luna = (function()
 
                         if not silent then
                             pcall(callback, newValue)
+
+                            -- V19.1 captured the ORIGINAL global EvoHub notification
+                            -- using Ball Metavision as the reference. Apply the same
+                            -- center toast to every feature toggle.
+                            if changed and Library.NotificationsEnabled ~= false then
+                                local displayName = nameText
+                                if displayName == "Enable"
+                                    and type(section.Name) == "string"
+                                    and section.Name ~= "" then
+                                    displayName = section.Name
+                                end
+
+                                Library:CreateNotification({
+                                    Content = displayName
+                                        .. (newValue and " Enabled" or " Disabled"),
+                                    Duration = 3,
+                                })
+                            end
                         end
                     end
 
@@ -1644,7 +1731,7 @@ local Luna = (function()
                         Editing = false,
                         Mode = controlSettings.Mode or "Toggle",
                         Name = nameText,
-                        ManualWatermark = controlSettings.ManualWatermark ~= false,
+                        ManualWatermark = controlSettings.ManualWatermark == true,
                         ConfigPath = key and tostring(key) or nameText,
                     }
 
@@ -5723,146 +5810,130 @@ local settingsState = {
 }
 
 local watermarkGui
+local watermarkLetters = {}
+
 local function setWatermark(enabled)
     settingsState.Watermark = enabled == true
+
     if watermarkGui and watermarkGui.Parent then
         watermarkGui.Enabled = settingsState.Watermark
         return
     end
+
     watermarkGui = Instance.new("ScreenGui")
     watermarkGui.Name = "EvoHubWatermark"
     watermarkGui.ResetOnSpawn = false
+    watermarkGui.IgnoreGuiInset = true
     watermarkGui.Enabled = settingsState.Watermark
-    watermarkGui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui")
-    local label = Instance.new("TextLabel")
-    label.Name = "Watermark"
-    label.Position = UDim2.fromOffset(10, 10)
-    label.Size = UDim2.fromOffset(105, 20)
-    label.BackgroundColor3 = Color3.fromRGB(18,18,20)
-    label.BackgroundTransparency = 0.2
-    label.BorderSizePixel = 0
-    label.RichText = false
-    label.Text = "evohub // re"
-    label.TextColor3 = Color3.fromRGB(210,210,220)
-    label.Font = Enum.Font.SourceSans
-    label.TextSize = 13
-    label.Parent = watermarkGui
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0,3)
-    c.Parent = label
+    watermarkGui.Parent =
+        (type(gethui) == "function" and gethui())
+        or game:GetService("CoreGui")
+
+    local holder = Instance.new("Frame")
+    holder.Name = "Watermark"
+    holder.Position = UDim2.fromOffset(10, 10)
+    holder.Size = UDim2.fromOffset(132, 22)
+    holder.BackgroundColor3 = Color3.fromRGB(18, 18, 20)
+    holder.BackgroundTransparency = 0.18
+    holder.BorderSizePixel = 0
+    holder.Parent = watermarkGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 3)
+    corner.Parent = holder
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(149, 138, 204)
+    stroke.Transparency = 0.55
+    stroke.Thickness = 1
+    stroke.Parent = holder
+
+    local text = "evohub // re"
+    local x = 7
+
+    for index = 1, #text do
+        local char = text:sub(index, index)
+        local label = Instance.new("TextLabel")
+        label.Name = "Letter_" .. tostring(index)
+        label.Position = UDim2.fromOffset(x, 0)
+        label.Size = UDim2.fromOffset(9, 22)
+        label.BackgroundTransparency = 1
+        label.Text = char
+        label.TextColor3 = Color3.fromRGB(149, 138, 204)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = holder
+
+        watermarkLetters[index] = label
+        x += (char == " " and 5 or 9)
+    end
+
+    task.spawn(function()
+        local TweenServiceWM = game:GetService("TweenService")
+        local base = Color3.fromRGB(149, 138, 204)
+        local shimmer = Color3.fromRGB(229, 223, 255)
+
+        while watermarkGui and watermarkGui.Parent do
+            if watermarkGui.Enabled then
+                for _, label in ipairs(watermarkLetters) do
+                    if watermarkGui == nil or not watermarkGui.Parent then
+                        return
+                    end
+
+                    if label
+                        and label.Parent
+                        and label.Text ~= " " then
+
+                        pcall(function()
+                            TweenServiceWM:Create(
+                                label,
+                                TweenInfo.new(0.14),
+                                { TextColor3 = shimmer }
+                            ):Play()
+                        end)
+
+                        task.wait(0.12)
+
+                        pcall(function()
+                            TweenServiceWM:Create(
+                                label,
+                                TweenInfo.new(0.20),
+                                { TextColor3 = base }
+                            ):Play()
+                        end)
+                    end
+                end
+            end
+
+            task.wait(1.5)
+        end
+    end)
 end
 
 local keybindsGui
 local keybindsHolder
 local keybindsContent
-local keybindsHeaderLetters = {}
+local keybindsHeader
+local keybindsDivider
 local keybindRows = {}
+local keybindViewportConnection
+local keybindVisibilityToken = 0
 
 local function keybindDisplayParent()
     return (type(gethui) == "function" and gethui())
         or game:GetService("CoreGui")
 end
 
-local function ensureKeybindDisplay()
-    if keybindsGui and keybindsGui.Parent
-        and keybindsHolder and keybindsHolder.Parent then
-        return
-    end
-
-    keybindsGui = Instance.new("ScreenGui")
-    keybindsGui.Name = "EvoHubKeybinds"
-    keybindsGui.ResetOnSpawn = false
-    keybindsGui.IgnoreGuiInset = true
-    keybindsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    keybindsGui.Enabled = false
-    keybindsGui.Parent = keybindDisplayParent()
-
-    keybindsHolder = Instance.new("Frame")
-    keybindsHolder.Name = "Keybinds"
-    keybindsHolder.AnchorPoint = Vector2.new(1, 0.5)
-    keybindsHolder.Position = UDim2.new(1, -14, 0.5, 0)
-    keybindsHolder.Size = UDim2.fromOffset(190, 32)
-    keybindsHolder.BackgroundColor3 = Color3.fromRGB(16, 16, 19)
-    keybindsHolder.BackgroundTransparency = 0.08
-    keybindsHolder.BorderSizePixel = 0
-    keybindsHolder.Parent = keybindsGui
-
-    local holderCorner = Instance.new("UICorner")
-    holderCorner.CornerRadius = UDim.new(0, 3)
-    holderCorner.Parent = keybindsHolder
-
-    local holderStroke = Instance.new("UIStroke")
-    holderStroke.Color = Color3.fromRGB(49, 49, 58)
-    holderStroke.Transparency = 0.42
-    holderStroke.Thickness = 1
-    holderStroke.Parent = keybindsHolder
-
-    local header = Instance.new("Frame")
-    header.Name = "Header"
-    header.Size = UDim2.new(1, 0, 0, 26)
-    header.BackgroundTransparency = 1
-    header.Parent = keybindsHolder
-
-    local headerAccent = Instance.new("Frame")
-    headerAccent.Name = "Accent"
-    headerAccent.AnchorPoint = Vector2.new(0, 1)
-    headerAccent.Position = UDim2.new(0, 0, 1, 0)
-    headerAccent.Size = UDim2.new(1, 0, 0, 1)
-    headerAccent.BackgroundColor3 = Color3.fromRGB(149, 138, 204)
-    headerAccent.BorderSizePixel = 0
-    headerAccent.Parent = header
-
-    -- The captured native object exposes HeaderLetters. Keep the header
-    -- split into letters instead of one giant reconstructed label.
-    local title = "keybinds"
-    local x = 9
-    for index = 1, #title do
-        local letter = Instance.new("TextLabel")
-        letter.Name = "Letter_" .. tostring(index)
-        letter.Position = UDim2.fromOffset(x, 0)
-        letter.Size = UDim2.fromOffset(10, 25)
-        letter.BackgroundTransparency = 1
-        letter.Text = title:sub(index, index)
-        letter.TextColor3 = Color3.fromRGB(210, 210, 220)
-        letter.TextTransparency = 0
-        letter.Font = Enum.Font.SourceSans
-        letter.TextSize = 13
-        letter.TextXAlignment = Enum.TextXAlignment.Left
-        letter.Parent = header
-        keybindsHeaderLetters[index] = letter
-        x += 8
-    end
-
-    keybindsContent = Instance.new("Frame")
-    keybindsContent.Name = "Items"
-    keybindsContent.Position = UDim2.fromOffset(0, 27)
-    keybindsContent.Size = UDim2.new(1, 0, 1, -27)
-    keybindsContent.BackgroundTransparency = 1
-    keybindsContent.Parent = keybindsHolder
-
-    local padding = Instance.new("UIPadding")
-    padding.PaddingTop = UDim.new(0, 4)
-    padding.PaddingBottom = UDim.new(0, 5)
-    padding.PaddingLeft = UDim.new(0, 8)
-    padding.PaddingRight = UDim.new(0, 8)
-    padding.Parent = keybindsContent
-
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 2)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = keybindsContent
-end
-
 local function prettyKeybindName(path, control)
-    local name = control and control.Name
-    if type(name) == "string" and name ~= "" then
-        return name
+    if control
+        and type(control.Name) == "string"
+        and control.Name ~= "" then
+        return control.Name
     end
 
     local raw = tostring(path or "Keybind")
-    local tail = raw:match("([^_]+)$") or raw
-    tail = tail:gsub(" Keybind$", "")
-    return tail
+    return raw:match("([^_]+)$") or raw
 end
 
 local function collectNativeKeybinds()
@@ -5872,12 +5943,13 @@ local function collectNativeKeybinds()
         if type(control) == "table"
             and type(control.GetValue) == "function"
             and control.Mode ~= nil
-            and control.ManualWatermark ~= false then
+            and control.ManualWatermark == true then
 
             local key = control:GetValue()
 
             if typeof(key) == "EnumItem"
                 and key ~= Enum.KeyCode.Unknown then
+
                 entries[#entries + 1] = {
                     Path = tostring(path),
                     Name = prettyKeybindName(path, control),
@@ -5892,46 +5964,277 @@ local function collectNativeKeybinds()
     table.sort(entries, function(a, b)
         local an = tostring(a.Name):lower()
         local bn = tostring(b.Name):lower()
+
         if an == bn then
             return a.Path < b.Path
         end
+
         return an < bn
     end)
 
     return entries
 end
 
-local function animateKeybindWindow(showing)
-    if not keybindsHolder then return end
+local function computeKeybindGeometry(rowCount)
+    local camera = workspace.CurrentCamera
+    local viewport =
+        camera and camera.ViewportSize
+        or Vector2.new(2340, 1080)
 
-    local TweenServiceSettings = game:GetService("TweenService")
+    -- Measured from the user's original 2340x1080 EvoHub video.
+    local width = math.clamp(
+        math.floor(viewport.X * 0.222),
+        360,
+        520
+    )
+
+    local rightMargin = math.floor(viewport.X * 0.055)
+    local top = math.floor(viewport.Y * 0.18)
+    local headerHeight = math.floor(width * 0.13)
+    local rowHeight = math.floor(width * 0.098)
+
+    headerHeight = math.clamp(headerHeight, 46, 68)
+    rowHeight = math.clamp(rowHeight, 36, 51)
+
+    local wantedHeight =
+        headerHeight
+        + math.max(rowCount, 1) * rowHeight
+        + 8
+
+    local maxHeight = math.floor(viewport.Y * 0.64)
+    local height = math.min(wantedHeight, maxHeight)
+
+    return {
+        Width = width,
+        Height = height,
+        HeaderHeight = headerHeight,
+        RowHeight = rowHeight,
+        RightMargin = rightMargin,
+        Top = top,
+        Viewport = viewport,
+    }
+end
+
+local function ensureKeybindDisplay()
+    if keybindsGui
+        and keybindsGui.Parent
+        and keybindsHolder
+        and keybindsHolder.Parent then
+        return
+    end
+
+    keybindsGui = Instance.new("ScreenGui")
+    keybindsGui.Name = "EvoHubKeybinds"
+    keybindsGui.ResetOnSpawn = false
+    keybindsGui.IgnoreGuiInset = true
+    keybindsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    keybindsGui.Enabled = false
+    keybindsGui.Parent = keybindDisplayParent()
+
+    keybindsHolder = Instance.new("Frame")
+    keybindsHolder.Name = "Keybinds"
+    keybindsHolder.AnchorPoint = Vector2.new(1, 0)
+    keybindsHolder.BackgroundColor3 = Color3.fromRGB(10, 10, 13)
+    keybindsHolder.BackgroundTransparency = 0.14
+    keybindsHolder.BorderSizePixel = 0
+    keybindsHolder.ClipsDescendants = true
+    keybindsHolder.Parent = keybindsGui
+
+    local holderCorner = Instance.new("UICorner")
+    holderCorner.CornerRadius = UDim.new(0, 6)
+    holderCorner.Parent = keybindsHolder
+
+    local holderStroke = Instance.new("UIStroke")
+    holderStroke.Color = Color3.fromRGB(55, 53, 65)
+    holderStroke.Transparency = 0.28
+    holderStroke.Thickness = 1
+    holderStroke.Parent = keybindsHolder
+
+    keybindsHeader = Instance.new("TextLabel")
+    keybindsHeader.Name = "Header"
+    keybindsHeader.BackgroundTransparency = 1
+    keybindsHeader.Text = "k e y b i n d s"
+    keybindsHeader.TextColor3 = Color3.fromRGB(204, 201, 211)
+    keybindsHeader.TextTransparency = 0
+    keybindsHeader.Font = Enum.Font.SourceSans
+    keybindsHeader.TextXAlignment = Enum.TextXAlignment.Left
+    keybindsHeader.TextYAlignment = Enum.TextYAlignment.Center
+    keybindsHeader.Parent = keybindsHolder
+
+    keybindsDivider = Instance.new("Frame")
+    keybindsDivider.Name = "Accent"
+    keybindsDivider.BackgroundColor3 = Color3.fromRGB(149, 138, 204)
+    keybindsDivider.BackgroundTransparency = 0
+    keybindsDivider.BorderSizePixel = 0
+    keybindsDivider.Parent = keybindsHolder
+
+    keybindsContent = Instance.new("ScrollingFrame")
+    keybindsContent.Name = "Items"
+    keybindsContent.BackgroundTransparency = 1
+    keybindsContent.BorderSizePixel = 0
+    keybindsContent.CanvasSize = UDim2.new()
+    keybindsContent.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    keybindsContent.ScrollingDirection = Enum.ScrollingDirection.Y
+    keybindsContent.ScrollBarThickness = 0
+    keybindsContent.Parent = keybindsHolder
+
+    local contentLayout = Instance.new("UIListLayout")
+    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    contentLayout.Padding = UDim.new(0, 0)
+    contentLayout.Parent = keybindsContent
+
+    local camera = workspace.CurrentCamera
+    if camera and not keybindViewportConnection then
+        keybindViewportConnection =
+            camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                if settingsState.KeybindsDisplay then
+                    task.defer(function()
+                        if settingsState.KeybindsDisplay then
+                            refreshKeybindDisplay()
+                        end
+                    end)
+                end
+            end)
+    end
+end
+
+local function applyKeybindGeometry(count)
+    local g = computeKeybindGeometry(count)
+
+    keybindsHolder.Position = UDim2.new(
+        1,
+        -g.RightMargin,
+        0,
+        g.Top
+    )
+    keybindsHolder.Size = UDim2.fromOffset(
+        g.Width,
+        g.Height
+    )
+
+    keybindsHeader.Position = UDim2.fromOffset(
+        math.floor(g.Width * 0.055),
+        0
+    )
+    keybindsHeader.Size = UDim2.new(
+        1,
+        -math.floor(g.Width * 0.11),
+        0,
+        g.HeaderHeight
+    )
+    keybindsHeader.TextSize = math.clamp(
+        math.floor(g.RowHeight * 0.46),
+        16,
+        23
+    )
+
+    keybindsDivider.Position = UDim2.fromOffset(
+        0,
+        g.HeaderHeight - 1
+    )
+    keybindsDivider.Size = UDim2.new(
+        1,
+        0,
+        0,
+        1
+    )
+
+    keybindsContent.Position = UDim2.fromOffset(
+        0,
+        g.HeaderHeight
+    )
+    keybindsContent.Size = UDim2.new(
+        1,
+        0,
+        1,
+        -g.HeaderHeight
+    )
+
+    return g
+end
+
+local function destroyKeybindRows()
+    for _, row in pairs(keybindRows) do
+        if row and row.Parent then
+            row:Destroy()
+        end
+    end
+
+    table.clear(keybindRows)
+end
+
+local function animateKeybindVisibility(showing)
+    ensureKeybindDisplay()
+
+    keybindVisibilityToken += 1
+    local token = keybindVisibilityToken
+    local TweenServiceKeybinds = game:GetService("TweenService")
 
     if showing then
-        keybindsHolder.Position = UDim2.new(1, -6, 0.5, 0)
+        keybindsGui.Enabled = true
+
+        local target = keybindsHolder.Position
+        keybindsHolder.Position = UDim2.new(
+            target.X.Scale,
+            target.X.Offset + 12,
+            target.Y.Scale,
+            target.Y.Offset
+        )
         keybindsHolder.BackgroundTransparency = 1
+        keybindsHeader.TextTransparency = 1
+        keybindsDivider.BackgroundTransparency = 1
 
         pcall(function()
-            TweenServiceSettings:Create(
+            TweenServiceKeybinds:Create(
                 keybindsHolder,
                 TweenInfo.new(
-                    0.20,
+                    0.15,
                     Enum.EasingStyle.Quad,
                     Enum.EasingDirection.Out
                 ),
                 {
-                    Position = UDim2.new(1, -14, 0.5, 0),
-                    BackgroundTransparency = 0.08,
+                    Position = target,
+                    BackgroundTransparency = 0.14,
                 }
+            ):Play()
+
+            TweenServiceKeybinds:Create(
+                keybindsHeader,
+                TweenInfo.new(0.15),
+                { TextTransparency = 0 }
+            ):Play()
+
+            TweenServiceKeybinds:Create(
+                keybindsDivider,
+                TweenInfo.new(0.15),
+                { BackgroundTransparency = 0 }
             ):Play()
         end)
 
-        for index, letter in ipairs(keybindsHeaderLetters) do
-            letter.TextTransparency = 1
-            task.delay((index - 1) * 0.018, function()
-                if letter and letter.Parent then
+        for index, row in ipairs(keybindRows) do
+            local nameLabel = row:FindFirstChild("Name")
+            local keyLabel = row:FindFirstChild("Key")
+
+            if nameLabel then nameLabel.TextTransparency = 1 end
+            if keyLabel then keyLabel.TextTransparency = 1 end
+
+            task.delay(math.min((index - 1) * 0.012, 0.12), function()
+                if token ~= keybindVisibilityToken then return end
+
+                if nameLabel and nameLabel.Parent then
                     pcall(function()
-                        TweenServiceSettings:Create(
-                            letter,
+                        TweenServiceKeybinds:Create(
+                            nameLabel,
+                            TweenInfo.new(0.12),
+                            { TextTransparency = 0 }
+                        ):Play()
+                    end)
+                end
+
+                if keyLabel and keyLabel.Parent then
+                    pcall(function()
+                        TweenServiceKeybinds:Create(
+                            keyLabel,
                             TweenInfo.new(0.12),
                             { TextTransparency = 0 }
                         ):Play()
@@ -5939,78 +6242,173 @@ local function animateKeybindWindow(showing)
                 end
             end)
         end
+
+    else
+        if not keybindsGui.Enabled then return end
+
+        local target = keybindsHolder.Position
+
+        pcall(function()
+            TweenServiceKeybinds:Create(
+                keybindsHolder,
+                TweenInfo.new(
+                    0.15,
+                    Enum.EasingStyle.Quad,
+                    Enum.EasingDirection.In
+                ),
+                {
+                    Position = UDim2.new(
+                        target.X.Scale,
+                        target.X.Offset + 12,
+                        target.Y.Scale,
+                        target.Y.Offset
+                    ),
+                    BackgroundTransparency = 1,
+                }
+            ):Play()
+
+            TweenServiceKeybinds:Create(
+                keybindsHeader,
+                TweenInfo.new(0.13),
+                { TextTransparency = 1 }
+            ):Play()
+
+            TweenServiceKeybinds:Create(
+                keybindsDivider,
+                TweenInfo.new(0.13),
+                { BackgroundTransparency = 1 }
+            ):Play()
+        end)
+
+        for _, row in ipairs(keybindRows) do
+            local nameLabel = row:FindFirstChild("Name")
+            local keyLabel = row:FindFirstChild("Key")
+
+            if nameLabel then
+                pcall(function()
+                    TweenServiceKeybinds:Create(
+                        nameLabel,
+                        TweenInfo.new(0.10),
+                        { TextTransparency = 1 }
+                    ):Play()
+                end)
+            end
+
+            if keyLabel then
+                pcall(function()
+                    TweenServiceKeybinds:Create(
+                        keyLabel,
+                        TweenInfo.new(0.10),
+                        { TextTransparency = 1 }
+                    ):Play()
+                end)
+            end
+        end
+
+        task.delay(0.16, function()
+            if token == keybindVisibilityToken
+                and not settingsState.KeybindsDisplay
+                and keybindsGui then
+                keybindsGui.Enabled = false
+            end
+        end)
     end
 end
 
-local function refreshKeybindDisplay()
+function refreshKeybindDisplay()
     ensureKeybindDisplay()
-
-    for _, row in pairs(keybindRows) do
-        if row and row.Parent then
-            row:Destroy()
-        end
-    end
-    table.clear(keybindRows)
+    destroyKeybindRows()
 
     local entries = collectNativeKeybinds()
+    local geometry = applyKeybindGeometry(#entries)
+
+    local horizontalPadding =
+        math.floor(geometry.Width * 0.055)
 
     for index, entry in ipairs(entries) do
         local row = Instance.new("Frame")
         row.Name = "Item"
         row.LayoutOrder = index
-        row.Size = UDim2.new(1, 0, 0, 18)
+        row.Size = UDim2.new(
+            1,
+            0,
+            0,
+            geometry.RowHeight
+        )
         row.BackgroundTransparency = 1
         row.Parent = keybindsContent
 
         local nameLabel = Instance.new("TextLabel")
         nameLabel.Name = "Name"
-        nameLabel.Size = UDim2.new(1, -48, 1, 0)
+        nameLabel.Position = UDim2.fromOffset(
+            horizontalPadding,
+            0
+        )
+        nameLabel.Size = UDim2.new(
+            1,
+            -(horizontalPadding * 2 + 90),
+            1,
+            0
+        )
         nameLabel.BackgroundTransparency = 1
         nameLabel.Text = entry.Name
-        nameLabel.TextColor3 = entry.Active
-            and Color3.fromRGB(196, 187, 242)
-            or Color3.fromRGB(205, 205, 215)
+        nameLabel.TextColor3 =
+            entry.Active
+            and Color3.fromRGB(226, 223, 235)
+            or Color3.fromRGB(198, 198, 207)
         nameLabel.Font = Enum.Font.SourceSans
-        nameLabel.TextSize = 12
+        nameLabel.TextSize = math.clamp(
+            math.floor(geometry.RowHeight * 0.43),
+            15,
+            22
+        )
         nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+        nameLabel.TextYAlignment = Enum.TextYAlignment.Center
         nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
         nameLabel.Parent = row
 
         local keyLabel = Instance.new("TextLabel")
         keyLabel.Name = "Key"
         keyLabel.AnchorPoint = Vector2.new(1, 0)
-        keyLabel.Position = UDim2.new(1, 0, 0, 0)
-        keyLabel.Size = UDim2.fromOffset(46, 18)
+        keyLabel.Position = UDim2.new(
+            1,
+            -horizontalPadding,
+            0,
+            0
+        )
+        keyLabel.Size = UDim2.fromOffset(
+            80,
+            geometry.RowHeight
+        )
         keyLabel.BackgroundTransparency = 1
         keyLabel.Text = "[" .. entry.Key.Name .. "]"
-        keyLabel.TextColor3 = Color3.fromRGB(149, 138, 204)
+        keyLabel.TextColor3 = Color3.fromRGB(
+            149,
+            138,
+            204
+        )
         keyLabel.Font = Enum.Font.SourceSans
-        keyLabel.TextSize = 12
+        keyLabel.TextSize = math.clamp(
+            math.floor(geometry.RowHeight * 0.43),
+            15,
+            22
+        )
         keyLabel.TextXAlignment = Enum.TextXAlignment.Right
+        keyLabel.TextYAlignment = Enum.TextYAlignment.Center
         keyLabel.Parent = row
 
-        keybindRows[entry.Path] = row
+        keybindRows[#keybindRows + 1] = row
     end
 
-    local visibleRows = math.min(#entries, 11)
-    local bodyHeight = visibleRows > 0
-        and (visibleRows * 20 + 7)
-        or 6
-
-    keybindsHolder.Size = UDim2.fromOffset(
-        190,
-        27 + bodyHeight
-    )
-
-    keybindsGui.Enabled = settingsState.KeybindsDisplay
-
     if settingsState.KeybindsDisplay then
-        animateKeybindWindow(true)
+        -- Do not hard-cut the panel while its contents update.
+        keybindsGui.Enabled = true
+        keybindsHolder.BackgroundTransparency = 0.14
+        keybindsHeader.TextTransparency = 0
+        keybindsDivider.BackgroundTransparency = 0
     end
 end
 
--- Native SetValue paths call UpdateKeybind. Route every relevant control
--- change through the same display refresh hook.
 Luna.OnControlVisualChanged = function()
     if settingsState.KeybindsDisplay then
         task.defer(refreshKeybindDisplay)
@@ -6057,7 +6455,13 @@ uiSettings:CreateToggle({
     CurrentValue = false,
     Callback = function(value)
         settingsState.KeybindsDisplay = value == true
-        refreshKeybindDisplay()
+
+        if settingsState.KeybindsDisplay then
+            refreshKeybindDisplay()
+            animateKeybindVisibility(true)
+        else
+            animateKeybindVisibility(false)
+        end
     end,
 }, "Misc_Settings_UI Settings_Keybinds Display")
 
@@ -14137,7 +14541,7 @@ do
             manualSetEnabled(value == true)
         end)
 
-        autoline:Keybind(
+        local nativeLineupKeybind = autoline:Keybind(
             "Toggle Line Ups",
             Enum.KeyCode.C,
             "Toggle",
@@ -14145,6 +14549,10 @@ do
                 manualSetEnabled(active == true)
             end
         )
+
+        if nativeLineupKeybind then
+            nativeLineupKeybind.ManualWatermark = false
+        end
 
         -- User-requested lifecycle parity:
         -- each newly equipped supported style auto-starts its lineups;
