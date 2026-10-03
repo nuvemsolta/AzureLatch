@@ -1,3 +1,4 @@
+-- [[ EVORE18.6.1 COMPILE HOTFIX ]]
 -- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
 -- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
 -- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
@@ -2860,7 +2861,7 @@ task.spawn(function()
         -- ------------------------------------------------------------
         local function notifyN(text)
             pcall(function()
-                EvoNotify("evo hub // re", tostring(text or ""), 2,)
+                EvoNotify("evo hub // re", tostring(text or ""), 2)
             end)
         end
 
