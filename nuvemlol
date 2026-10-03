@@ -2851,11 +2851,11 @@ task.spawn(function()
                 IsPlayingAnimation = false,
                 AnimationDuration = 0.5,
                 AutoJumpEnabled = false,
-                JumpAfterKick = false,
+                JumpAfterKick = true,
                 IsKeyHeld = false,
                 Height = 50,
-                Forward = 1.15,
-                Power = 28,
+                Forward = 1,
+                Power = 29,
                 VectorScale = 50,
                 MobileGui = nil,
                 MobileConnections = {},
@@ -2897,24 +2897,12 @@ task.spawn(function()
             end
 
             local function kickVector(root)
+                -- Exact recovered EvoHub direction logic.
+                -- Power is packet strength; it does not alter this direction.
                 local look = root.CFrame.LookVector
-
-                -- V16 capture confirms the native fixed vector state:
-                -- Height=50, Forward=1.15, VectorScale=50, Power=28.
-                -- Azure Latch currently reacts badly when only the packet power
-                -- scalar changes, so preserve the native vector at Power=28 and
-                -- let the user's Power setting also scale UPWARD lift.
-                local nativePower = 28
-                local powerRatio = math.clamp(
-                    (tonumber(state.Power) or nativePower) / nativePower,
-                    0.05,
-                    4
-                )
-                local upward = math.max(1, state.Height * powerRatio)
-
                 local v = Vector3.new(
                     look.X * state.Forward,
-                    upward,
+                    state.Height,
                     look.Z * state.Forward
                 )
 
@@ -2922,17 +2910,7 @@ task.spawn(function()
                     return Vector3.new(0, state.VectorScale, 0)
                 end
 
-                local result = v.Unit * state.VectorScale
-
-                -- Never allow the Air Dribble direction to become downward.
-                if result.Y <= 0 then
-                    result = Vector3.new(result.X, math.max(1, math.abs(result.Y)), result.Z)
-                    if result.Magnitude > 0 then
-                        result = result.Unit * state.VectorScale
-                    end
-                end
-
-                return result
+                return v.Unit * state.VectorScale
             end
 
             local function autoJump()
@@ -3005,11 +2983,13 @@ task.spawn(function()
             local function setEnabled(v)
                 state.Enabled = v == true
                 state.IsPlayingAnimation = false
-                state.JumpAfterKick = false
                 state.IsKeyHeld = false
                 state.IsActive = false
 
-                if not state.Enabled then
+                if state.Enabled then
+                    state.JumpAfterKick = true
+                else
+                    state.JumpAfterKick = false
                     stopAnim()
                 end
 
@@ -3190,7 +3170,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Forward",
                 "Forward",
-                0, 20, 1.15, 0.05,
+                0, 20, 1, 0.05,
                 function(v) state.Forward = v end
             )
             state.Forward = initialForward
@@ -3199,7 +3179,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Power",
                 "Power",
-                1, 100, 28, 0.5,
+                1, 100, 29, 0.5,
                 function(v) state.Power = v end
             )
             state.Power = initialPower
@@ -3236,7 +3216,7 @@ task.spawn(function()
                 section,
                 "Main_Main_Air Dribble_Mobile Button",
                 "Mobile Button",
-                false,
+                UserInputServiceN.TouchEnabled and not UserInputServiceN.KeyboardEnabled,
                 setMobileButton
             )
 
@@ -5371,211 +5351,265 @@ task.spawn(function()
         end)
 
         -- ---------------- Ball Metavision ----------------
-        -- V16 capture recovered the original lifecycle as:
-        -- Callback -> StartOld -> Stop -> Start -> StopOld,
-        -- with Workspace + RunService and several locally-created Instances.
-        -- The previous RE only created one Highlight and missed that lifecycle.
-        local ballMetaEnabled = false
-        local metaConnection = nil
-        local metaVisuals = {}
-        local currentBallPart = nil
-        local currentBallObject = nil
+        -- Native Start() forces Mode="Old": blue history + gray trajectory.
+        local metaState = {
+            Enabled = false,
+            Mode = "Old",
+            OldConnection = nil,
+            OldData = nil,
+        }
 
-        local function resolveBallObject()
-            local terrain = WorkspaceV:FindFirstChildOfClass("Terrain")
-            local terrainBall = terrain and terrain:FindFirstChild("Ball")
-            if terrainBall then
-                if terrainBall:IsA("BasePart") then
-                    return terrainBall, terrainBall
-                elseif terrainBall:IsA("Model") then
-                    local part = terrainBall.PrimaryPart
-                        or terrainBall:FindFirstChildWhichIsA("BasePart", true)
-                    if part then return terrainBall, part end
+        local function stopOld()
+            if metaState.OldConnection then
+                metaState.OldConnection:Disconnect()
+                metaState.OldConnection = nil
+            end
+
+            local data = metaState.OldData
+            if not data then return end
+
+            local function destroyList(list)
+                for i = #list, 1, -1 do
+                    local part = list[i]
+                    if part then pcall(function() part:Destroy() end) end
+                    list[i] = nil
                 end
             end
 
-            local direct = WorkspaceV:FindFirstChild("Ball")
-                or WorkspaceV:FindFirstChild("Football")
-            if direct then
-                if direct:IsA("BasePart") then
-                    return direct, direct
-                elseif direct:IsA("Model") then
-                    local part = direct.PrimaryPart
-                        or direct:FindFirstChildWhichIsA("BasePart", true)
-                    if part then return direct, part end
+            destroyList(data.BlueArcParts)
+            destroyList(data.GrayArcParts)
+            destroyList(data.PartPool)
+            if data.BlueContainer then pcall(function() data.BlueContainer:Destroy() end) end
+            if data.GrayContainer then pcall(function() data.GrayContainer:Destroy() end) end
+            metaState.OldData = nil
+        end
+
+        local function startOld()
+            stopOld()
+
+            local data = {
+                BlueArcParts = {},
+                GrayArcParts = {},
+                PartPool = {},
+                PositionHistory = {},
+                VelocityHistory = {},
+                LastBallPosition = nil,
+                SmoothedVelocity = Vector3.zero,
+                BallInstance = nil,
+                LastUpdateTime = nil,
+                FrameSkipCounter = 0,
+                BLUE_ARC_COLOR = Color3.fromRGB(9, 137, 207),
+                GRAY_ARC_COLOR = Color3.fromRGB(150, 150, 150),
+                ARC_WIDTH = 0.2,
+                ARC_TRANSPARENCY = 0.4,
+                MAX_HISTORY = 50,
+                PREDICTION_STEPS = 18,
+                PREDICTION_TIME = 2,
+                MIN_MOVE = 0.5,
+                SMOOTHING = 0.15,
+                VEL_HISTORY_SIZE = 10,
+                DRAG = 0.9737,
+                GROUND = 1.5,
+            }
+            metaState.OldData = data
+
+            data.BlueContainer = Instance.new("Folder")
+            data.BlueContainer.Name = "BlueArc"
+            data.BlueContainer.Parent = WorkspaceV
+            data.GrayContainer = Instance.new("Folder")
+            data.GrayContainer.Name = "GrayArc"
+            data.GrayContainer.Parent = WorkspaceV
+
+            local function acquirePart()
+                local part = table.remove(data.PartPool)
+                if part then
+                    part.Transparency = 0
+                    return part
+                end
+                part = Instance.new("Part")
+                part.Anchored = true
+                part.CanCollide = false
+                part.CanTouch = false
+                part.CanQuery = false
+                part.CastShadow = false
+                part.Material = Enum.Material.Neon
+                return part
+            end
+
+            local function releasePart(part)
+                if not part then return end
+                part.Transparency = 1
+                part.Parent = nil
+                data.PartPool[#data.PartPool + 1] = part
+            end
+
+            local function clearArc(list)
+                for i = #list, 1, -1 do
+                    releasePart(list[i])
+                    list[i] = nil
                 end
             end
 
-            local characters = WorkspaceV:FindFirstChild("characters")
-            for _, plr in ipairs(PlayersV:GetPlayers()) do
-                local char = (characters and characters:FindFirstChild(plr.Name))
-                    or plr.Character
-                local held = char and char:FindFirstChild("Ball")
-                if held then
-                    if held:IsA("BasePart") then
-                        return held, held
-                    elseif held:IsA("Model") then
-                        local part = held.PrimaryPart
-                            or held:FindFirstChildWhichIsA("BasePart", true)
-                        if part then return held, part end
-                    else
-                        local part = held:FindFirstChildWhichIsA("BasePart", true)
-                        if part then return held, part end
+            local function resetBallState()
+                clearArc(data.BlueArcParts)
+                clearArc(data.GrayArcParts)
+                table.clear(data.PositionHistory)
+                table.clear(data.VelocityHistory)
+                data.BallInstance = nil
+                data.LastBallPosition = nil
+                data.LastUpdateTime = nil
+                data.SmoothedVelocity = Vector3.zero
+            end
+
+            local function ensureBall()
+                if data.BallInstance and data.BallInstance.Parent then return true end
+                if data.BallInstance and not data.BallInstance.Parent then resetBallState() end
+                local terrain = WorkspaceV:FindFirstChildOfClass("Terrain")
+                local ball = (terrain and terrain:FindFirstChild("Ball")) or WorkspaceV:FindFirstChild("Ball")
+                if ball and ball:IsA("BasePart") then
+                    data.BallInstance = ball
+                    table.clear(data.PositionHistory)
+                    table.clear(data.VelocityHistory)
+                    data.LastBallPosition = nil
+                    data.LastUpdateTime = nil
+                    data.SmoothedVelocity = Vector3.zero
+                    return true
+                end
+                return false
+            end
+
+            local function setSegment(part, a, b, width, color, transparency, parent)
+                local length = (b - a).Magnitude
+                if length <= 0.01 then
+                    part.Transparency = 1
+                    return
+                end
+                part.Size = Vector3.new(width, width, length)
+                part.CFrame = CFrame.new(a, b) * CFrame.new(0, 0, -length / 2)
+                part.Color = color
+                part.Transparency = transparency
+                part.Parent = parent
+            end
+
+            local function renderBlue()
+                local needed = math.max(#data.PositionHistory - 1, 0)
+                for i = 1, needed do
+                    local part = data.BlueArcParts[i] or acquirePart()
+                    data.BlueArcParts[i] = part
+                    setSegment(part, data.PositionHistory[i], data.PositionHistory[i + 1], data.ARC_WIDTH, data.BLUE_ARC_COLOR, data.ARC_TRANSPARENCY, data.BlueContainer)
+                end
+                for i = #data.BlueArcParts, needed + 1, -1 do
+                    releasePart(data.BlueArcParts[i])
+                    data.BlueArcParts[i] = nil
+                end
+            end
+
+            local function renderGray(position, velocity)
+                local points = table.create(data.PREDICTION_STEPS + 1)
+                points[1] = position
+                local gravity = WorkspaceV.Gravity
+                local currentPos = position
+                local currentVel = velocity
+                local dt = data.PREDICTION_TIME / data.PREDICTION_STEPS
+                for i = 1, data.PREDICTION_STEPS do
+                    currentVel = Vector3.new(currentVel.X * data.DRAG, currentVel.Y - gravity * dt, currentVel.Z * data.DRAG)
+                    currentPos += currentVel * dt
+                    if currentPos.Y <= data.GROUND then
+                        currentPos = Vector3.new(currentPos.X, data.GROUND, currentPos.Z)
+                        currentVel = Vector3.new(currentVel.X * 0.85, 0, currentVel.Z * 0.85)
+                    end
+                    points[i + 1] = currentPos
+                end
+                local needed = #points - 1
+                for i = 1, needed do
+                    local part = data.GrayArcParts[i] or acquirePart()
+                    data.GrayArcParts[i] = part
+                    setSegment(part, points[i], points[i + 1], data.ARC_WIDTH * 0.75, data.GRAY_ARC_COLOR, data.ARC_TRANSPARENCY, data.GrayContainer)
+                end
+                for i = #data.GrayArcParts, needed + 1, -1 do
+                    releasePart(data.GrayArcParts[i])
+                    data.GrayArcParts[i] = nil
+                end
+            end
+
+            metaState.OldConnection = RunServiceV.Heartbeat:Connect(function()
+                if not metaState.Enabled or metaState.Mode ~= "Old" then return end
+                data.FrameSkipCounter += 1
+                if data.FrameSkipCounter < 2 then return end
+                data.FrameSkipCounter = 0
+
+                if not ensureBall() then
+                    clearArc(data.BlueArcParts)
+                    clearArc(data.GrayArcParts)
+                    return
+                end
+
+                local position = data.BallInstance.Position
+                if #data.PositionHistory == 0 then
+                    data.PositionHistory[1] = position
+                    renderBlue()
+                    data.LastBallPosition = position
+                    data.LastUpdateTime = tick()
+                    return
+                end
+
+                if (position - data.PositionHistory[#data.PositionHistory]).Magnitude > data.MIN_MOVE then
+                    data.PositionHistory[#data.PositionHistory + 1] = position
+                    while #data.PositionHistory > data.MAX_HISTORY do table.remove(data.PositionHistory, 1) end
+                    renderBlue()
+                end
+
+                local now = tick()
+                if data.LastBallPosition then
+                    local deltaTime = now - (data.LastUpdateTime or now)
+                    if deltaTime > 0 and deltaTime < 0.1 then
+                        local rawVelocity = (position - data.LastBallPosition) / deltaTime
+                        data.VelocityHistory[#data.VelocityHistory + 1] = rawVelocity
+                        while #data.VelocityHistory > data.VEL_HISTORY_SIZE do table.remove(data.VelocityHistory, 1) end
+                        if #data.VelocityHistory >= 5 then
+                            local weighted, weightSum = Vector3.zero, 0
+                            local count = #data.VelocityHistory
+                            for i, sample in ipairs(data.VelocityHistory) do
+                                local weight = i / count
+                                weighted += sample * weight
+                                weightSum += weight
+                            end
+                            if weightSum > 0 then
+                                data.SmoothedVelocity = data.SmoothedVelocity:Lerp(weighted / weightSum, data.SMOOTHING)
+                            end
+                        else
+                            data.SmoothedVelocity = data.SmoothedVelocity:Lerp(rawVelocity, data.SMOOTHING * 0.5)
+                        end
+
+                        if data.SmoothedVelocity.Magnitude < 1 then
+                            clearArc(data.GrayArcParts)
+                        else
+                            renderGray(position, data.SmoothedVelocity)
+                        end
                     end
                 end
-            end
-
-            return nil, nil
+                data.LastBallPosition = position
+                data.LastUpdateTime = now
+            end)
         end
 
-        local function rememberMetaVisual(instance)
-            metaVisuals[#metaVisuals + 1] = instance
-            return instance
+        local function stopMeta()
+            metaState.Enabled = false
+            stopOld()
         end
 
-        local function StopOld()
-            currentBallPart = nil
-            currentBallObject = nil
-
-            for i = #metaVisuals, 1, -1 do
-                local visual = metaVisuals[i]
-                if visual then
-                    pcall(function() visual:Destroy() end)
-                end
-                metaVisuals[i] = nil
-            end
+        local function startMeta()
+            stopMeta()
+            metaState.Enabled = true
+            metaState.Mode = "Old"
+            startOld()
         end
 
-        local function buildMetaVisuals(ballObject, ballPart)
-            StopOld()
-
-            if not ballObject or not ballPart or not ballPart.Parent then
-                return
-            end
-
-            currentBallObject = ballObject
-            currentBallPart = ballPart
-
-            -- World highlight.
-            local highlight = rememberMetaVisual(Instance.new("Highlight"))
-            highlight.Name = "EvoHubBallMetavision"
-            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            highlight.FillColor = Color3.fromRGB(149, 138, 204)
-            highlight.OutlineColor = Color3.fromRGB(235, 232, 255)
-            highlight.FillTransparency = 0.62
-            highlight.OutlineTransparency = 0
-            highlight.Adornee = ballObject
-            highlight.Parent = WorkspaceV
-
-            -- Strong local outline. This remains visible on executors/devices
-            -- where Highlight rendering on fast-moving balls is inconsistent.
-            local sphere = rememberMetaVisual(Instance.new("SphereHandleAdornment"))
-            sphere.Name = "EvoHubBallMetavisionSphere"
-            sphere.Adornee = ballPart
-            sphere.AlwaysOnTop = true
-            sphere.ZIndex = 10
-            sphere.Color3 = Color3.fromRGB(149, 138, 204)
-            sphere.Transparency = 0.36
-            sphere.Radius = math.max(
-                ballPart.Size.X,
-                ballPart.Size.Y,
-                ballPart.Size.Z
-            ) * 0.72 + 0.35
-            sphere.Parent = WorkspaceV
-
-            -- Billboard marker mirrors the original's multi-instance lifecycle
-            -- and gives mobile testers an unmistakable Ball Metavision marker.
-            local billboard = rememberMetaVisual(Instance.new("BillboardGui"))
-            billboard.Name = "EvoHubBallMetavisionBillboard"
-            billboard.Adornee = ballPart
-            billboard.AlwaysOnTop = true
-            billboard.LightInfluence = 0
-            billboard.Size = UDim2.fromOffset(42, 42)
-            billboard.StudsOffsetWorldSpace = Vector3.new(0, 1.35, 0)
-            billboard.Parent = WorkspaceV
-
-            local ring = Instance.new("Frame")
-            ring.Name = "Ring"
-            ring.AnchorPoint = Vector2.new(0.5, 0.5)
-            ring.Position = UDim2.fromScale(0.5, 0.5)
-            ring.Size = UDim2.fromOffset(28, 28)
-            ring.BackgroundTransparency = 1
-            ring.Parent = billboard
-
-            local corner = Instance.new("UICorner")
-            corner.CornerRadius = UDim.new(1, 0)
-            corner.Parent = ring
-
-            local ringStroke = Instance.new("UIStroke")
-            ringStroke.Thickness = 2
-            ringStroke.Transparency = 0.05
-            ringStroke.Color = Color3.fromRGB(181, 171, 235)
-            ringStroke.Parent = ring
-        end
-
-        local function updateBallMeta()
-            if not ballMetaEnabled then return end
-
-            local ballObject, ballPart = resolveBallObject()
-            if not ballPart then
-                if currentBallPart then
-                    StopOld()
-                end
-                return
-            end
-
-            if ballPart ~= currentBallPart
-                or ballObject ~= currentBallObject
-                or not currentBallPart
-                or not currentBallPart.Parent then
-                buildMetaVisuals(ballObject, ballPart)
-            end
-        end
-
-        local function Stop()
-            ballMetaEnabled = false
-
-            if metaConnection then
-                metaConnection:Disconnect()
-                metaConnection = nil
-            end
-
-            StopOld()
-        end
-
-        local function StartOld()
-            StopOld()
-            updateBallMeta()
-
-            if metaConnection then
-                metaConnection:Disconnect()
-            end
-
-            -- Original V16 closure owns a RunService connection.
-            metaConnection = RunServiceV.RenderStepped:Connect(updateBallMeta)
-        end
-
-        local function Start()
-            Stop()
-            ballMetaEnabled = true
-            StartOld()
-        end
-
-        local metaFolder = visualsUI:FolderInGroup(
-            "Ball Metavision",
-            "Ball Metavision.",
-            Color3.fromRGB(24,255,228),
-            true,
-            "Visuals"
-        )
-
-        metaFolder:Toggle("Ball Metavision", nil, false, function(v)
-            if v == true then
-                Start()
-            else
-                Stop()
-            end
+        local metaFolder = visualsUI:FolderInGroup("Ball Metavision", "Ball Metavision.", Color3.fromRGB(24,255,228), true, "Visuals")
+        metaFolder:Toggle("Ball Metavision", nil, false, function(value)
+            if value == true then startMeta() else stopMeta() end
         end)
+
     end)
 
     if not ok then
@@ -8722,8 +8756,13 @@ end
 --========================================================
 task.spawn(function()
     local moveBuffOK, moveBuffError = pcall(function()
-        local d = playerUI:FolderInGroup("Gagamaru", "Movement Buffs.", Color3.fromRGB(24, 255, 228), true, "Blatant")
-        d:Label("Gagamaru Movement Buffs.")
+        local d = playerUI:FolderInGroup(
+            "Gagamaru",
+            "Distance Increase.",
+            Color3.fromRGB(24, 255, 228),
+            true,
+            "Player"
+        )
 
         local player = Players.LocalPlayer
         local rs = RunService
@@ -8776,7 +8815,10 @@ task.spawn(function()
                 sliderVar = "divingDist",
                 duration = 0.35,
                 cooldown = 0.15,
-                wait = 0.05
+                wait = 0.05,
+                maxDistance = 10,
+                defaultDistance = 4,
+                gagamaruExposed = true
             },
             WildInstincts = {
                 animIds = {
@@ -8789,7 +8831,10 @@ task.spawn(function()
                 wait = 0,
                 moveName = "WildInstincts",
                 remoteDriven = true,
-                maxExtraSpeed = 95
+                maxExtraSpeed = 95,
+                maxDistance = 10,
+                defaultDistance = 5,
+                gagamaruExposed = true
             },
             Scorpion = {
                 animId = "rbxassetid://126121761510176",
@@ -8799,7 +8844,10 @@ task.spawn(function()
                 wait = 0,
                 moveName = "Scorpion",
                 remoteDriven = true,
-                maxExtraSpeed = 95
+                maxExtraSpeed = 95,
+                maxDistance = 10,
+                defaultDistance = 4,
+                gagamaruExposed = true
             },
             ReflexTackle = {
                 animId = "rbxassetid://113088324958896",
@@ -8999,10 +9047,47 @@ task.spawn(function()
 
         local Distances = {}
         for _, cfg in pairs(DashConfigs) do
-            Distances[cfg.sliderVar] = 0
+            if cfg.gagamaruExposed then
+                Distances[cfg.sliderVar] = cfg.defaultDistance or 4
+            else
+                Distances[cfg.sliderVar] = 0
+            end
         end
 
         Distances.__cooldowns = {}
+
+        local GAGAMARU_MIN_DISTANCE = 0.1
+        local GAGAMARU_MAX_DISTANCE = 10
+
+        local function clampGagamaruDistance(cfg, value)
+            local maximum =
+                (cfg and cfg.maxDistance)
+                or GAGAMARU_MAX_DISTANCE
+
+            return math.clamp(
+                tonumber(value)
+                    or (cfg and cfg.defaultDistance)
+                    or 4,
+                GAGAMARU_MIN_DISTANCE,
+                maximum
+            )
+        end
+
+        -- Match the normal per-character Distance Increase renderer:
+        -- each visible move has an explicit toggle + distance slider.
+        local GagamaruEnabled = {
+            divingDist = false,
+            wildInstinctsDist = false,
+            scorpionDist = false,
+        }
+
+        local function gagamaruMoveEnabled(sliderVar)
+            local value = GagamaruEnabled[sliderVar]
+            if value == nil then
+                return true
+            end
+            return value == true
+        end
 
         for _, cfg in pairs(DashConfigs) do
             if cfg.animId then
@@ -9203,8 +9288,17 @@ task.spawn(function()
         end
 
         local function startDash(hrp, cfg, track, directionName)
+            if not gagamaruMoveEnabled(cfg.sliderVar) then
+                return
+            end
+
             local dist = Distances[cfg.sliderVar]
             if not dist or dist <= 0 then return end
+
+            if cfg.gagamaruExposed then
+                dist = clampGagamaruDistance(cfg, dist)
+                Distances[cfg.sliderVar] = dist
+            end
 
             local now = os.clock()
             local last = Distances.__cooldowns[cfg.sliderVar] or 0
@@ -9495,6 +9589,9 @@ task.spawn(function()
                     return
                 end
 
+                distance = clampGagamaruDistance(cfg, distance)
+                Distances[cfg.sliderVar] = distance
+
                 local moveDir = flatUnit(direction)
                 if not moveDir then
                     return
@@ -9589,7 +9686,8 @@ task.spawn(function()
             end
 
             local function onWildAnimation(side)
-                if (Distances.wildInstinctsDist or 0) <= 0 then
+                if not GagamaruEnabled.wildInstinctsDist
+                    or (Distances.wildInstinctsDist or 0) <= 0 then
                     return
                 end
 
@@ -9622,7 +9720,8 @@ task.spawn(function()
                     return
                 end
 
-                if (Distances.scorpionDist or 0) <= 0 then
+                if not GagamaruEnabled.scorpionDist
+                    or (Distances.scorpionDist or 0) <= 0 then
                     return
                 end
 
@@ -9745,17 +9844,102 @@ task.spawn(function()
         end
 
 
-        d:Slider("Diving Header Distance", 0, 0, 125, 1, function(v)
-            Distances.divingDist = v
+        local divingToggle = d:Toggle("Diving Header", function(value)
+            GagamaruEnabled.divingDist = value == true
         end)
+        local divingSlider = d:Slider(
+            "Diving Header Distance",
+            DashConfigs.DivingHeader.defaultDistance,
+            GAGAMARU_MIN_DISTANCE,
+            DashConfigs.DivingHeader.maxDistance,
+            0.1,
+            function(v)
+                Distances.divingDist =
+                    clampGagamaruDistance(
+                        DashConfigs.DivingHeader,
+                        v
+                    )
+            end
+        )
 
-        d:Slider("Wild Instincts Distance", 0, 0, 75, 1, function(v)
-            Distances.wildInstinctsDist = v
+        local wildToggle = d:Toggle("Wild Instincts", function(value)
+            GagamaruEnabled.wildInstinctsDist = value == true
         end)
+        local wildSlider = d:Slider(
+            "Wild Instincts Distance",
+            DashConfigs.WildInstincts.defaultDistance,
+            GAGAMARU_MIN_DISTANCE,
+            DashConfigs.WildInstincts.maxDistance,
+            0.1,
+            function(v)
+                Distances.wildInstinctsDist =
+                    clampGagamaruDistance(
+                        DashConfigs.WildInstincts,
+                        v
+                    )
+            end
+        )
 
-        d:Slider("Scorpion Distance", 0, 0, 75, 1, function(v)
-            Distances.scorpionDist = v
+        local scorpionToggle = d:Toggle("Scorpion", function(value)
+            GagamaruEnabled.scorpionDist = value == true
         end)
+        local scorpionSlider = d:Slider(
+            "Scorpion Distance",
+            DashConfigs.Scorpion.defaultDistance,
+            GAGAMARU_MIN_DISTANCE,
+            DashConfigs.Scorpion.maxDistance,
+            0.1,
+            function(v)
+                Distances.scorpionDist =
+                    clampGagamaruDistance(
+                        DashConfigs.Scorpion,
+                        v
+                    )
+            end
+        )
+
+        -- Folder wrappers restore saved values silently. Mirror those restored
+        -- values into the runtime so visual state and feature state never differ.
+        if divingToggle then
+            GagamaruEnabled.divingDist = divingToggle.Value == true
+        end
+        if wildToggle then
+            GagamaruEnabled.wildInstinctsDist = wildToggle.Value == true
+        end
+        if scorpionToggle then
+            GagamaruEnabled.scorpionDist = scorpionToggle.Value == true
+        end
+
+        local function syncDistanceControl(slider, cfg)
+            local value = clampGagamaruDistance(
+                cfg,
+                slider and slider.Value
+                    or cfg.defaultDistance
+            )
+
+            Distances[cfg.sliderVar] = value
+
+            if slider
+                and tonumber(slider.Value) ~= value
+                and type(slider.SetValue) == "function" then
+                pcall(function()
+                    slider:SetValue(value)
+                end)
+            end
+        end
+
+        syncDistanceControl(
+            divingSlider,
+            DashConfigs.DivingHeader
+        )
+        syncDistanceControl(
+            wildSlider,
+            DashConfigs.WildInstincts
+        )
+        syncDistanceControl(
+            scorpionSlider,
+            DashConfigs.Scorpion
+        )
 
     end)
 
@@ -12583,12 +12767,12 @@ do
             enabled = false,
             selectedStyle = "Auto",
             markerMode = "All (EvoHub)",
-            useFreeze = false,
+            useFreeze = true,
             smoothAiming = false,
-            smoothness = 0.08,
+            smoothness = 0.15,
             useAccuracy = false,
             accuracy = 100,
-            disableBasicLineups = true,
+            disableBasicLineups = false,
             positionTolerance = 3.5,
             autoSnap = false,
             autoExecute = false,
@@ -12609,12 +12793,14 @@ do
             aimToken = 0,
             lastExecuted = nil,
             lastExecuteAt = 0,
+            executing = false,
             frozen = false,
             freezeHumanoid = nil,
             freezeRoot = nil,
-            oldWalkSpeed = nil,
-            oldJumpPower = nil,
-            oldPlatformStand = nil,
+            oldWalkSpeed = 16,
+            oldJumpPower = 50,
+            mouseLocked = false,
+            originalMouseDelta = nil,
             basePacket = nil,
             lastPoolStyle = nil,
             lastPoolTeam = nil,
@@ -13011,105 +13197,54 @@ do
 
         local function lineupCharacter()
             local characters = Workspace:FindFirstChild("characters")
-            return (characters and characters:FindFirstChild(player.Name))
-                or player.Character
+            return characters and characters:FindFirstChild(player.Name)
         end
 
         local function hasLineupBall()
             local char = lineupCharacter()
-            if not char then return false end
-
-            local held = char:FindFirstChild("Ball")
-            if held then return true end
-
-            -- A few character containers nest state/tools one level deeper.
-            for _, child in ipairs(char:GetChildren()) do
-                if child.Name == "Ball" then
-                    return true
-                end
-            end
-
-            return false
+            return char and char:FindFirstChild("Ball") ~= nil
         end
 
         local function freeFreeze()
             if not state.frozen then return end
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if hum then
+                hum.WalkSpeed = state.oldWalkSpeed or 16
+                hum.JumpPower = state.oldJumpPower or 50
+                hum.PlatformStand = false
+            end
+            if root then root.Anchored = false end
             state.frozen = false
-
-            local hum = state.freezeHumanoid
-            local root = state.freezeRoot
-
-            if hum and hum.Parent then
-                pcall(function()
-                    if state.oldWalkSpeed ~= nil then hum.WalkSpeed = state.oldWalkSpeed end
-                    if state.oldJumpPower ~= nil then hum.JumpPower = state.oldJumpPower end
-                    if state.oldJumpHeight ~= nil then hum.JumpHeight = state.oldJumpHeight end
-                    if state.oldAutoRotate ~= nil then hum.AutoRotate = state.oldAutoRotate end
-                    if state.oldPlatformStand ~= nil then hum.PlatformStand = state.oldPlatformStand end
-                end)
-            end
-
-            if root and root.Parent and state.oldRootAnchored ~= nil then
-                pcall(function()
-                    root.Anchored = state.oldRootAnchored
-                end)
-            end
-
             state.freezeHumanoid = nil
             state.freezeRoot = nil
-            state.oldWalkSpeed = nil
-            state.oldJumpPower = nil
-            state.oldJumpHeight = nil
-            state.oldAutoRotate = nil
-            state.oldPlatformStand = nil
-            state.oldRootAnchored = nil
         end
 
         local function freezeCharacter()
-            if not state.useFreeze or state.frozen then return end
-
-            local char = lineupCharacter()
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-
-            -- Fall back to the Roblox character if Azure's world character
-            -- stores movement state separately.
-            if not hum or not root then
-                char = player.Character
-                hum = char and char:FindFirstChildOfClass("Humanoid")
-                root = char and char:FindFirstChild("HumanoidRootPart")
-            end
-
-            if not hum or not root then return end
-
-            state.frozen = true
-            state.freezeHumanoid = hum
-            state.freezeRoot = root
+            local char = player.Character
+            if not char then return false end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not hum or not root then return false end
             state.oldWalkSpeed = hum.WalkSpeed
             state.oldJumpPower = hum.JumpPower
-            state.oldJumpHeight = hum.JumpHeight
-            state.oldAutoRotate = hum.AutoRotate
-            state.oldPlatformStand = hum.PlatformStand
-            state.oldRootAnchored = root.Anchored
-
-            -- Recovered original state exposes LockCharacter / SafeRestore,
-            -- OriginalWalkSpeed=16 and OriginalJumpPower=50. Lock immediately
-            -- when the lineup becomes active, then SafeRestore after execution.
-            hum.WalkSpeed = 0
-            hum.JumpPower = 0
-            hum.JumpHeight = 0
-            hum.AutoRotate = false
-
-            -- Anchoring guarantees mobile thumbstick movement cannot slide the
-            -- player out of the lineup while the skill is being sent.
-            root.Anchored = true
-
-            pcall(function()
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                root.Velocity = Vector3.zero
-                root.RotVelocity = Vector3.zero
-            end)
+            state.freezeHumanoid = hum
+            state.freezeRoot = root
+            if state.useFreeze then
+                hum.WalkSpeed = 0
+                hum.JumpPower = 0
+                hum.PlatformStand = true
+                root.Anchored = true
+                pcall(function()
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    root.Velocity = Vector3.zero
+                    root.RotVelocity = Vector3.zero
+                end)
+                state.frozen = true
+            end
+            return true
         end
 
         local function entryAimDirection(entry, root)
@@ -13142,7 +13277,7 @@ do
             return delta.Unit
         end
 
-        local function stopAim()
+        local function cancelAimConnection()
             state.aimToken += 1
             if state.aimConnection then
                 state.aimConnection:Disconnect()
@@ -13150,13 +13285,30 @@ do
             end
         end
 
-        local function aimAt(entry)
-            stopAim()
+        local function unlockMouse()
+            if not state.mouseLocked then return end
+            UserInputService.MouseDeltaSensitivity = state.originalMouseDelta or 1
+            state.mouseLocked = false
+            state.originalMouseDelta = nil
+        end
 
+        local function stopAim()
+            cancelAimConnection()
+            unlockMouse()
+        end
+
+        local function aimAt(entry)
+            cancelAimConnection()
             local char = player.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             local camera = Workspace.CurrentCamera
-            if not root or not camera then return end
+            if not root or not camera then return false end
+
+            if not state.mouseLocked then
+                state.originalMouseDelta = UserInputService.MouseDeltaSensitivity
+                UserInputService.MouseDeltaSensitivity = 0
+                state.mouseLocked = true
+            end
 
             local direction = entryAimDirection(entry, root)
             local flat = Vector3.new(direction.X, 0, direction.Z)
@@ -13166,31 +13318,37 @@ do
 
             local duration = state.smoothAiming and state.smoothness or 0.01
             local targetCF = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + direction)
-
             if duration <= 0.02 then
                 camera.CFrame = targetCF
-                return
+                return true
             end
 
+            local TweenService = game:GetService("TweenService")
+            local startAt = tick()
+            local startLook = camera.CFrame.LookVector
+            local targetLook = targetCF.LookVector
             local token = state.aimToken
-            local startCF = camera.CFrame
-            local startAt = os.clock()
+            local done = false
 
             state.aimConnection = RunService.RenderStepped:Connect(function()
-                if token ~= state.aimToken then return end
-
-                local alpha = math.clamp((os.clock() - startAt) / duration, 0, 1)
-                local eased = math.sin(alpha * math.pi * 0.5)
-                local newLook = startCF.LookVector:Lerp(targetCF.LookVector, eased)
-
-                if newLook.Magnitude > 0.001 then
-                    camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + newLook.Unit)
+                if token ~= state.aimToken then done = true return end
+                local alpha = math.clamp((tick() - startAt) / duration, 0, 1)
+                local eased = TweenService:GetValue(alpha, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+                local look = startLook:Lerp(targetLook, eased)
+                if look.Magnitude > 0.001 then
+                    camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + look.Unit)
                 end
-
-                if alpha >= 1 then
-                    stopAim()
-                end
+                if alpha >= 1 then done = true end
             end)
+
+            while not done do
+                if token ~= state.aimToken or not state.enabled or state.active ~= entry or not hasLineupBall() then break end
+                task.wait()
+            end
+            if state.aimConnection then state.aimConnection:Disconnect() state.aimConnection = nil end
+            if token ~= state.aimToken or not state.enabled or state.active ~= entry or not hasLineupBall() then return false end
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, camera.CFrame.Position + targetLook)
+            return true
         end
 
         local function isActionReady(action)
@@ -13210,72 +13368,133 @@ do
             return true
         end
 
-        local function fireAction(action)
-            if not action or not isActionReady(action) then return false end
-
-            if not state.basePacket and buffers and buffers["base"] then
-                pcall(function()
-                    state.basePacket = buffer.fromstring(buffers["base"])
-                end)
+        local function getUsePacket()
+            if buffers and buffers["base"] then
+                local ok, packet = pcall(buffer.fromstring, buffers["base"])
+                if ok and packet then state.basePacket = packet end
             end
+            return state.basePacket
+        end
 
-            if not state.basePacket then return false end
+        local function sendByteNet(action, flag)
+            local packet = getUsePacket()
+            local remote = ReplicatedStorage:FindFirstChild("ByteNetReliable")
+            if not packet or not remote or not action then return false end
+            local payload = flag == nil and {{action}} or {{action, flag}}
+            return pcall(function() remote:FireServer(packet, payload) end)
+        end
 
+        local function findBaseClient()
+            local ok, result = pcall(function()
+                if shared and type(shared.metatable) == "table" and type(shared.metatable.baseClient) == "table" and type(shared.metatable.baseClient.use) == "function" then
+                    return shared.metatable.baseClient
+                end
+                if type(getgenv) == "function" then
+                    for _, value in pairs(getgenv()) do
+                        if type(value) == "table" then
+                            local candidate = rawget(value, "baseClient")
+                            if type(candidate) == "table" and type(candidate.use) == "function" then return candidate end
+                        end
+                    end
+                end
+            end)
+            return ok and result or nil
+        end
+
+        local function sendFollowViaPackets(skill, follow, delayAmount)
+            local module = ReplicatedStorage:FindFirstChild("packets")
+            if not module or not module:IsA("ModuleScript") then return false end
+            local ok, packets = pcall(require, module)
+            if not ok or type(packets) ~= "table" or type(packets.bytenet_use) ~= "table" or type(packets.bytenet_use.send) ~= "function" then return false end
             return pcall(function()
-                ReplicatedStorage:WaitForChild("ByteNetReliable"):FireServer(
-                    state.basePacket,
-                    {{ action }}
-                )
+                packets.bytenet_use.send({skill})
+                task.wait(delayAmount)
+                if follow == "Tspecialer" then packets.bytenet_use.send({"Tspecialer", true}) else packets.bytenet_use.send({follow}) end
             end)
         end
 
-        local function executeEntry(entry)
-            if not entry or not hasLineupBall() then
-                return false
-            end
+        local function performAction(cfg)
+            if not cfg or not cfg.skill or not hasLineupBall() then return false end
+            if not isActionReady(cfg.skill) then return false end
+            if cfg.follow and not isActionReady(cfg.follow) then return false end
 
-            local now = os.clock()
-            if state.lastExecuted == entry and now - state.lastExecuteAt < 0.75 then
-                return false
-            end
-
-            state.lastExecuted = entry
-            state.lastExecuteAt = now
-
-            local char = lineupCharacter() or player.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if not root and player.Character then
-                root = player.Character:FindFirstChild("HumanoidRootPart")
-            end
-            if not root then return false end
-
-            -- Native order: lock -> aim -> perform mapped lineup action.
-            freezeCharacter()
-            aimAt(entry)
-
-            local cfg = STYLE_CONFIG[entry.style]
-            local fired = false
-
-            if cfg and cfg.skill and hasLineupBall() then
-                fired = fireAction(cfg.skill)
-
-                if fired and cfg.follow then
-                    task.delay(cfg.followDelay or 0.1, function()
-                        if state.enabled
-                            and state.active == entry
-                            and hasLineupBall() then
-                            fireAction(cfg.follow)
-                        end
+            if cfg.follow then
+                local delayAmount = cfg.followDelay or 0.1
+                local baseClient = findBaseClient()
+                if baseClient then
+                    local ok = pcall(function()
+                        baseClient:use(cfg.skill)
+                        task.wait(delayAmount)
+                        if cfg.follow == "Tspecialer" then baseClient:use("Tspecialer", true) else baseClient:use(cfg.follow) end
                     end)
+                    if ok then return true end
                 end
+                if sendFollowViaPackets(cfg.skill, cfg.follow, delayAmount) then return true end
+                if not sendByteNet(cfg.skill) then return false end
+                task.wait(delayAmount)
+                if cfg.follow == "Tspecialer" then
+                    pcall(function()
+                        local vim = game:GetService("VirtualInputManager")
+                        vim:SendKeyEvent(true, Enum.KeyCode.T, false, game)
+                        task.wait(0.02)
+                        vim:SendKeyEvent(false, Enum.KeyCode.T, false, game)
+                    end)
+                else
+                    sendByteNet(cfg.follow)
+                end
+                return true
             end
 
-            -- V16 original state exposes postSuccessFreeze=0.5.
-            task.delay(0.5, function()
-                freeFreeze()
-            end)
+            local deadline = tick() + 1
+            local cooldownObserved = false
+            while tick() < deadline do
+                if not state.enabled or state.active == nil or not hasLineupBall() then return false end
+                sendByteNet(cfg.skill)
+                if not isActionReady(cfg.skill) then cooldownObserved = true break end
+                task.wait(0.03)
+            end
+            return cooldownObserved
+        end
 
-            return fired
+        local function executeEntry(entry)
+            if state.executing or not entry or not hasLineupBall() then return false end
+            local now = tick()
+            if now - state.lastExecuteAt < 0.3 then return false end
+            local cfg = STYLE_CONFIG[entry.style]
+            if not cfg or not cfg.skill then return false end
+            if not isActionReady(cfg.skill) or (cfg.follow and not isActionReady(cfg.follow)) then return false end
+
+            state.executing = true
+            state.lastExecuted = entry
+            task.spawn(function()
+                local success = false
+                local ok, err = pcall(function()
+                    if not hasLineupBall() or state.active ~= entry then return end
+                    freezeCharacter()
+                    local char = player.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if not root then return end
+                    root.CFrame = CFrame.new(entry.target)
+                    pcall(function()
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        root.Velocity = Vector3.zero
+                        root.RotVelocity = Vector3.zero
+                    end)
+                    if state.smoothAiming then task.wait(0.01) end
+                    if not aimAt(entry) then return end
+                    if state.smoothAiming then task.wait(0.01) end
+                    if not hasLineupBall() or state.active ~= entry then return end
+                    success = performAction(cfg)
+                    if success then task.wait(0.5) end
+                    state.lastExecuteAt = tick()
+                end)
+                stopAim()
+                freeFreeze()
+                state.executing = false
+                if not ok then warn("[EvoHub RE Lineups] execute failed:", err) end
+            end)
+            return true
         end
 
         local function setActive(entry)
@@ -13365,8 +13584,8 @@ do
                 if state.scanAccumulator < 0.04 then return end
                 state.scanAccumulator = 0
 
-                -- Native default is "Disable Basic Lineups" = true.
-                -- Only yield to the legacy/basic Celeron pads when the user explicitly allows them.
+                -- Native source default is Disable Basic Lineups = false.
+                -- Yield to legacy/basic pads unless the user disables them.
                 if not state.disableBasicLineups and padCount and padCount > 0 then
                     setActive(nil)
                     return
@@ -13377,11 +13596,8 @@ do
                     return
                 end
 
-                local char = lineupCharacter() or player.Character
+                local char = player.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
-                if not root and player.Character then
-                    root = player.Character:FindFirstChild("HumanoidRootPart")
-                end
                 if not root then
                     setActive(nil)
                     return
@@ -13418,7 +13634,7 @@ do
             end
         end
 
-        autoline:Toggle("Use Freeze", nil, false, function(value)
+        autoline:Toggle("Use Freeze", nil, true, function(value)
             state.useFreeze = value == true
             if not state.useFreeze then freeFreeze() end
         end)
@@ -13427,8 +13643,8 @@ do
             state.smoothAiming = value == true
         end)
 
-        autoline:Slider("Smoothness", 0.08, 0.01, 0.50, 0.01, function(value)
-            state.smoothness = tonumber(value) or 0.08
+        autoline:Slider("Smoothness", 0.15, 0.01, 0.50, 0.01, function(value)
+            state.smoothness = tonumber(value) or 0.15
         end)
 
         autoline:Toggle("Use Accuracy", nil, false, function(value)
@@ -13439,7 +13655,7 @@ do
             state.accuracy = tonumber(value) or 100
         end)
 
-        autoline:Toggle("Disable Basic Lineups", nil, true, function(value)
+        autoline:Toggle("Disable Basic Lineups", nil, false, function(value)
             state.disableBasicLineups = value == true
         end)
 
@@ -13633,7 +13849,6 @@ do
             lineThickness = 0.2,
             lineTransparency = 0.2,
             maxPoints = 50,
-            updateRate = 30,
             onlyNearEnemyGoal = false,
             onlyInOurGoal = false,
             onlyWhenGK = false,
@@ -13641,7 +13856,6 @@ do
             traces = {},
             landing = nil,
             connection = nil,
-            accumulator = 0,
             colorsForStyle = nil,
             currentStyle = nil,
             points = table.create(50)
@@ -14092,15 +14306,7 @@ do
             stop()
             state.enabled = true
             ensureVisual()
-            state.accumulator = 0
-
-            state.connection = RunService.RenderStepped:Connect(function(dt)
-                state.accumulator += dt
-                local interval = 1 / math.max(10, state.updateRate)
-                if state.accumulator < interval then return end
-                state.accumulator = 0
-                update()
-            end)
+            state.connection = RunService.RenderStepped:Connect(update)
         end
 
         -- V16 native section has exactly four visible controls.
@@ -14116,25 +14322,14 @@ do
             state.onlyWhenGK = value == true
         end)
 
-        local predictorToggle = folder:Toggle(
+        folder:Toggle(
             "Shot Predictor",
             nil,
-            true,
+            false,
             function(value)
-                if value then
-                    start()
-                else
-                    stop()
-                end
+                if value then start() else stop() end
             end
         )
-
-        -- Captured native default is ON.
-        if predictorToggle and type(predictorToggle.SetValue) == "function" then
-            predictorToggle:SetValue(true)
-        else
-            start()
-        end
 
         player.CharacterAdded:Connect(function()
             task.wait(0.25)
