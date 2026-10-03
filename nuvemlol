@@ -1,3 +1,23 @@
+-- [[ EVORE22 BIG MAJOR NATIVE LAYOUT PARITY ]]
+-- [[ EVORE18.7 BALL MAGNET/COUNTER PARITY CLEANUP ]]
+-- [[ EVORE18.6.1 COMPILE HOTFIX ]]
+-- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
+-- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
+-- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
+-- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
+-- [[ V16 CAPTURE PARITY PATCH ]]
+-- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
+-- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
+-- Native UI settings are evidence-driven; custom extras remain separate.
+
+-- evo hub // re — STABLE ROLLBACK BASE
+-- V15_CONTINUED local build restored after V19 bootstrap regression.
+-- No PlaceId redirect / no optional remote feature-pack loaders.
+-- Gameplay parity work must be ported into this executable base feature-by-feature.
+
+
+-- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
+-- Built from the exact 3,552-instance runtime tree and callback captures.
 local Luna = (function()
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
@@ -115,7 +135,9 @@ local Luna = (function()
             end
         end
     end
-    Library.SetAccent = setThemeAccent
+    function Library:SetAccent(color)
+        setThemeAccent(color)
+    end
 
     local function parentGui()
         if type(gethui) == "function" then
@@ -335,117 +357,50 @@ local Luna = (function()
         }, main)
         corner(topBar, 4)
 
-        -- Original accent/shimmer behavior from V20.1, with the requested
-        -- RE title composition: "evo hub //re".
-        local brandFrame = create("Frame", {
-            Name = "Frame",
+        -- RE branding requested by the user. Keep this as a single text run so
+        -- the visible spacing is exactly: "evo hub // re".
+        local brandLabel = create("TextLabel", {
+            Name = "Brand",
             Position = UDim2.fromOffset(12, 0),
-            Size = UDim2.fromOffset(150, 28),
+            Size = UDim2.fromOffset(170, 28),
             BackgroundTransparency = 1,
-            ZIndex = 3,
-        }, topBar)
-
-        local brandBase = Color3.fromRGB(149, 138, 204)
-        local brandShimmer = Color3.fromRGB(229, 223, 255)
-        local brandLetters = {}
-
-        -- Keep the six original evohub letters individually animated, but add
-        -- the visible word gap requested for evo hub.
-        local brandChars = {
-            {"e", 0},
-            {"v", 11},
-            {"o", 22},
-            {"h", 39},
-            {"u", 50},
-            {"b", 61},
-        }
-
-        for index, entry in ipairs(brandChars) do
-            local letter = create("TextLabel", {
-                Name = "TextLabel",
-                Position = UDim2.fromOffset(entry[2], 0),
-                Size = UDim2.fromOffset(14, 28),
-                BackgroundTransparency = 1,
-                Text = entry[1],
-                TextColor3 = brandBase,
-                Font = Enum.Font.SourceSans,
-                TextSize = 15,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                TextYAlignment = Enum.TextYAlignment.Center,
-                ZIndex = 3,
-            }, brandFrame)
-            brandLetters[index] = letter
-        end
-
-        -- Keep the separators independent so the // sits visually centered
-        -- between "hub" and "re" instead of reading as a raised "//re" glyph.
-        local slash = create("TextLabel", {
-            Name = "Slash",
-            Position = UDim2.fromOffset(82, 0),
-            Size = UDim2.fromOffset(22, 28),
-            BackgroundTransparency = 1,
-            Text = "//",
-            TextColor3 = brandBase,
-            Font = Enum.Font.SourceSans,
-            TextSize = 14,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            TextYAlignment = Enum.TextYAlignment.Center,
-            ZIndex = 3,
-        }, brandFrame)
-
-        local suffix = create("TextLabel", {
-            Name = "RE",
-            Position = UDim2.fromOffset(108, 0),
-            Size = UDim2.fromOffset(24, 28),
-            BackgroundTransparency = 1,
-            Text = "re",
-            TextColor3 = brandBase,
+            Text = "evo hub // re",
+            TextColor3 = Theme.Accent,
             Font = Enum.Font.SourceSans,
             TextSize = 15,
             TextXAlignment = Enum.TextXAlignment.Left,
             TextYAlignment = Enum.TextYAlignment.Center,
             ZIndex = 3,
-        }, brandFrame)
+        }, topBar)
+        setAccentText(brandLabel)
 
+        -- Keep the subtle original accent shimmer without splitting the slashes
+        -- into glyphs that can drift vertically on mobile fonts.
         task.spawn(function()
-            local TweenServiceBrand = game:GetService("TweenService")
-
             while gui.Parent do
-                for _, letter in ipairs(brandLetters) do
-                    if not gui.Parent then break end
+                task.wait(1.9)
+                if not brandLabel.Parent then break end
 
-                    if letter and letter.Parent then
-                        pcall(function()
-                            TweenServiceBrand:Create(
-                                letter,
-                                TweenInfo.new(
-                                    0.16,
-                                    Enum.EasingStyle.Quad,
-                                    Enum.EasingDirection.Out
-                                ),
-                                { TextColor3 = brandShimmer }
-                            ):Play()
-                        end)
+                local base = Theme.Accent
+                pcall(function()
+                    TweenService:Create(
+                        brandLabel,
+                        TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                        { TextColor3 = Color3.fromRGB(229, 223, 255) }
+                    ):Play()
+                end)
 
-                        task.wait(0.18)
+                task.wait(0.16)
 
-                        pcall(function()
-                            TweenServiceBrand:Create(
-                                letter,
-                                TweenInfo.new(
-                                    0.24,
-                                    Enum.EasingStyle.Quad,
-                                    Enum.EasingDirection.Out
-                                ),
-                                { TextColor3 = brandBase }
-                            ):Play()
-                        end)
-                    end
-
-                    task.wait(0.18)
+                if brandLabel.Parent then
+                    pcall(function()
+                        TweenService:Create(
+                            brandLabel,
+                            TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+                            { TextColor3 = Theme.Accent }
+                        ):Play()
+                    end)
                 end
-
-                task.wait(1.8)
             end
         end)
 
@@ -701,12 +656,49 @@ local Luna = (function()
             SharedRightColumn = sharedRightColumn,
             SearchBox = searchBox,
             UIScale = scale,
+            BaseSize = Vector2.new(800, 450),
+            CurrentScale = scale.Scale,
             Tabs = {},
             Bind = Enum.KeyCode.K,
             Visible = true,
         }
 
         Library.Windows[#Library.Windows + 1] = window
+
+        -- Original mobile workflow has a small close button in the top bar.
+        -- The existing draggable mobile toggle remains available to reopen it.
+        if Library.IsMobile then
+            searchContainer.Position = UDim2.new(1, -188, 0, 4)
+
+            local closeButton = create("TextButton", {
+                Name = "CloseButton",
+                AnchorPoint = Vector2.new(1, 0),
+                Position = UDim2.new(1, -6, 0, 3),
+                Size = UDim2.fromOffset(22, 22),
+                BackgroundTransparency = 1,
+                Text = "×",
+                TextColor3 = Theme.Muted,
+                Font = Enum.Font.SourceSans,
+                TextSize = 19,
+                AutoButtonColor = false,
+                ZIndex = 12,
+            }, topBar)
+
+            closeButton.MouseEnter:Connect(function()
+                closeButton.TextColor3 = Theme.Accent
+            end)
+            closeButton.MouseLeave:Connect(function()
+                closeButton.TextColor3 = Theme.Muted
+            end)
+            closeButton.Activated:Connect(function()
+                if window.SetVisible then
+                    window:SetVisible(false)
+                else
+                    gui.Enabled = false
+                    window.Visible = false
+                end
+            end)
+        end
 
         local selectedTab = nil
         local sidebarEntries = {}
@@ -866,9 +858,29 @@ local Luna = (function()
 
         function window:SetScale(value)
             value = tonumber(value)
-            if value then
-                scale.Scale = math.clamp(value, 0.35, 1.5)
+            if not value then return false end
+
+            value = math.clamp(value, 0.5, 1.5)
+            self.CurrentScale = value
+
+            local scaleObject = self.UIScale
+            if not scaleObject or not scaleObject.Parent then
+                scaleObject = self.Main:FindFirstChildOfClass("UIScale")
+                self.UIScale = scaleObject
             end
+
+            if scaleObject then
+                scaleObject.Scale = value
+            end
+
+            -- The original hub keeps an 800x450 base canvas and scales that
+            -- subtree. Recenter after every scale change so mobile doesn't drift.
+            self.Main.Size = UDim2.fromOffset(800, 450)
+            if self.Main.AnchorPoint == Vector2.new(0.5, 0.5) then
+                self.Main.Position = UDim2.fromScale(0.5, 0.5)
+            end
+
+            return true
         end
 
         local dragging = false
@@ -1720,21 +1732,57 @@ local Luna = (function()
                 function section:CreateKeybind(controlSettings, key)
                     controlSettings = type(controlSettings) == "table" and controlSettings or {}
                     local nameText = tostring(controlSettings.Name or "Keybind")
-                    local callback = type(controlSettings.Callback) == "function" and controlSettings.Callback or function() end
-                    local current = controlSettings.CurrentKeybind or controlSettings.Key or Enum.KeyCode.Unknown
+                    local callback = type(controlSettings.Callback) == "function"
+                        and controlSettings.Callback
+                        or function() end
+
+                    local current =
+                        controlSettings.CurrentKeybind
+                        or controlSettings.Key
+                        or Enum.KeyCode.Unknown
+
+                    local function enumFromName(name)
+                        if type(name) ~= "string" then return nil end
+                        return Enum.KeyCode[name] or Enum.UserInputType[name]
+                    end
+
                     if type(current) == "string" then
-                        current = Enum.KeyCode[current] or Enum.KeyCode.Unknown
+                        current = enumFromName(current) or Enum.KeyCode.Unknown
+                    end
+
+                    local function keyDisplay(enumItem)
+                        if enumItem == Enum.UserInputType.MouseButton1 then return "M1" end
+                        if enumItem == Enum.UserInputType.MouseButton2 then return "M2" end
+                        if enumItem == Enum.UserInputType.MouseButton3 then return "M3" end
+                        return enumItem and enumItem.Name or "Unknown"
+                    end
+
+                    local function matchesInput(input, enumItem)
+                        if typeof(enumItem) ~= "EnumItem" then return false end
+
+                        if enumItem.EnumType == Enum.UserInputType then
+                            return input.UserInputType == enumItem
+                        end
+
+                        return input.KeyCode == enumItem
                     end
 
                     local row = rowBase(self, 22)
-                    makeControlText(row, nameText, UDim2.new(0.5, 0, 1, 0), nil, Enum.Font.SourceSans, 14)
+                    makeControlText(
+                        row,
+                        nameText,
+                        UDim2.new(0.5, 0, 1, 0),
+                        nil,
+                        Enum.Font.SourceSans,
+                        14
+                    )
 
                     local keyButton = create("TextButton", {
                         Name = "TextButton",
                         Position = UDim2.fromScale(0.5, 0),
                         Size = UDim2.new(0.5, 0, 1, 0),
                         BackgroundTransparency = 1,
-                        Text = "[" .. tostring(current.Name) .. "]",
+                        Text = "[" .. keyDisplay(current) .. "]",
                         TextColor3 = Theme.Text,
                         Font = Enum.Font.SourceSans,
                         TextSize = 14,
@@ -1755,18 +1803,18 @@ local Luna = (function()
                     }
 
                     function object:SetKey(newKey)
-                        if typeof(newKey) == "EnumItem" then
-                            self.Value = newKey
-                            self.Key = newKey
-                            keyButton.Text = "[" .. newKey.Name .. "]"
+                        if typeof(newKey) ~= "EnumItem" then return end
 
-                            if type(Library.OnControlVisualChanged) == "function" then
-                                pcall(Library.OnControlVisualChanged, self, "key")
-                            end
+                        self.Value = newKey
+                        self.Key = newKey
+                        keyButton.Text = "[" .. keyDisplay(newKey) .. "]"
 
-                            if type(controlSettings.ChangedCallback) == "function" then
-                                pcall(controlSettings.ChangedCallback, newKey)
-                            end
+                        if type(Library.OnControlVisualChanged) == "function" then
+                            pcall(Library.OnControlVisualChanged, self, "key")
+                        end
+
+                        if type(controlSettings.ChangedCallback) == "function" then
+                            pcall(controlSettings.ChangedCallback, newKey)
                         end
                     end
 
@@ -1797,40 +1845,56 @@ local Luna = (function()
 
                     UIS.InputBegan:Connect(function(input, processed)
                         if object.Editing then
+                            local captured = nil
+
                             if input.KeyCode ~= Enum.KeyCode.Unknown then
+                                captured = input.KeyCode
+                            elseif input.UserInputType == Enum.UserInputType.MouseButton1
+                                or input.UserInputType == Enum.UserInputType.MouseButton2
+                                or input.UserInputType == Enum.UserInputType.MouseButton3 then
+                                captured = input.UserInputType
+                            end
+
+                            if captured then
                                 object.Editing = false
-                                object:SetKey(input.KeyCode)
+                                object:SetKey(captured)
                             end
                             return
                         end
 
-                        if not processed and input.KeyCode == object.Value then
-                            if object.Mode == "Hold" then
-                                object.Active = true
-                                if type(Library.OnControlVisualChanged) == "function" then
-                                    pcall(Library.OnControlVisualChanged, object, "active")
-                                end
-                                pcall(callback, true)
+                        if processed or not matchesInput(input, object.Value) then
+                            return
+                        end
 
-                            elseif object.Mode == "Toggle" then
-                                object.Active = not object.Active
-                                if type(Library.OnControlVisualChanged) == "function" then
-                                    pcall(Library.OnControlVisualChanged, object, "active")
-                                end
-                                pcall(callback, object.Active)
-
-                            else
-                                pcall(callback, true)
+                        if object.Mode == "Hold" then
+                            object.Active = true
+                            if type(Library.OnControlVisualChanged) == "function" then
+                                pcall(Library.OnControlVisualChanged, object, "active")
                             end
+                            pcall(callback, true)
+
+                        elseif object.Mode == "Toggle" then
+                            object.Active = not object.Active
+                            if type(Library.OnControlVisualChanged) == "function" then
+                                pcall(Library.OnControlVisualChanged, object, "active")
+                            end
+                            pcall(callback, object.Active)
+
+                        else
+                            pcall(callback, true)
                         end
                     end)
 
                     UIS.InputEnded:Connect(function(input)
-                        if input.KeyCode == object.Value and object.Mode == "Hold" then
+                        if object.Mode == "Hold"
+                            and matchesInput(input, object.Value) then
+
                             object.Active = false
+
                             if type(Library.OnControlVisualChanged) == "function" then
                                 pcall(Library.OnControlVisualChanged, object, "active")
                             end
+
                             pcall(callback, false)
                         end
                     end)
@@ -2496,25 +2560,43 @@ local function sectionPlacement(tabName, groupName, sectionName)
         if n == "utility features" or n == "misc features" then return "right", 20 end
 
     elseif tabName == "Main" then
+        -- Native stage1 creation/column order.
+        -- Custom RE/Celeron extras are intentionally pushed after the native surface.
         local left = {
             ["auto counter"] = 10,
-            ["auto trap"] = 20,
+            ["anti counter"] = 20,
             ["auto line ups"] = 30,
             ["lineup creator"] = 40,
-            ["air dribble"] = 50,
-            ["shot predictor"] = 60,
+            ["hide black gui"] = 50,
+            ["air dribble"] = 60,
+            ["shot predictor"] = 70,
+
+            -- custom extras
+            ["auto trap"] = 210,
+            ["trap helper"] = 220,
         }
+
         local right = {
             ["auto position"] = 10,
-            ["ball magnet"] = 20,
-            ["auto qte"] = 30,
-            ["infinite range passing"] = 35,
-            ["auto goalkeeper"] = 40,
-            ["auto activate"] = 50,
-            ["mobile silent"] = 90,
-            ["mobile keyboard"] = 100,
-            ["other features"] = 110,
-            ["misc features"] = 120,
+            ["anti price check"] = 20,
+            ["ball magnet"] = 30,
+            ["auto qte"] = 40,
+
+            -- explicit user-requested custom placement directly below Auto QTE
+            ["infinite range passing"] = 45,
+
+            ["legit no stun"] = 50,
+            ["mobile keyboard"] = 60,
+            ["auto variant steal"] = 70,
+            ["off ball awk"] = 80,
+            ["misc features"] = 90,
+            ["name protect"] = 100,
+
+            -- custom extras
+            ["auto goalkeeper"] = 210,
+            ["auto activate"] = 220,
+            ["mobile silent"] = 230,
+            ["other features"] = 240,
         }
         if left[n] then return "left", left[n] end
         if right[n] then return "right", right[n] end
@@ -2599,17 +2681,22 @@ local function makeContainer(realTab, section, tabName, folderName)
         }, key)
     end
 
-    function container:Keybind(name, defaultKey, mode, callback)
+    function container:Keybind(name, defaultKey, mode, callback, manualWatermark)
         callback = type(callback) == "function" and callback or function() end
-        defaultKey = typeof(defaultKey) == "EnumItem" and defaultKey or Enum.KeyCode.Unknown
+        defaultKey = typeof(defaultKey) == "EnumItem"
+            and defaultKey
+            or Enum.KeyCode.Unknown
         mode = tostring(mode or "Toggle")
 
         local key = controlKey(tabName, folderName, name)
         local saved = configGet(key, defaultKey.Name)
         local current = defaultKey
 
-        if type(saved) == "string" and Enum.KeyCode[saved] then
-            current = Enum.KeyCode[saved]
+        if type(saved) == "string" then
+            current =
+                Enum.KeyCode[saved]
+                or Enum.UserInputType[saved]
+                or defaultKey
         elseif typeof(saved) == "EnumItem" then
             current = saved
         end
@@ -2618,6 +2705,7 @@ local function makeContainer(realTab, section, tabName, folderName)
             Name = tostring(name or "Keybind"),
             CurrentKeybind = current,
             Mode = mode,
+            ManualWatermark = manualWatermark == true,
             Callback = callback,
             ChangedCallback = function(newKey)
                 if typeof(newKey) == "EnumItem" then
@@ -5916,7 +6004,7 @@ local function setWatermark(enabled)
     stroke.Thickness = 1
     stroke.Parent = holder
 
-    local text = "evohub // re"
+    local text = "evo hub // re"
     local x = 7
 
     for index = 1, #text do
@@ -6397,7 +6485,7 @@ Luna.OnControlVisualChanged = function()
     end
 end
 
-uiSettings:CreateDropdown({
+local uiScaleControl = uiSettings:CreateDropdown({
     Name = "UI Scale",
     Options = {"50%", "60%", "75%", "100%", "125%", "150%"},
     CurrentOption = {Luna.IsMobile and "50%" or "100%"},
@@ -6405,17 +6493,29 @@ uiSettings:CreateDropdown({
     Callback = function(value)
         local selected = type(value) == "table" and value[1] or value
         local numeric = tonumber(tostring(selected):gsub("%%", ""))
-        if numeric then Window:SetScale(numeric / 100) end
+        if numeric then
+            Window:SetScale(numeric / 100)
+        end
     end,
 }, "Misc_Settings_UI Settings_UI Scale")
 
-uiSettings:CreateColorPicker({
+do
+    local selected = uiScaleControl and uiScaleControl:GetValue()
+    local numeric = tonumber(tostring(selected or (Luna.IsMobile and "50%" or "100%")):gsub("%%", ""))
+    Window:SetScale((numeric or (Luna.IsMobile and 50 or 100)) / 100)
+end
+
+local uiColorControl = uiSettings:CreateColorPicker({
     Name = "UI Color",
     CurrentColor = Color3.fromRGB(149,138,204),
     Callback = function(color)
         Luna:SetAccent(color)
     end,
 }, "Misc_Settings_UI Settings_UI Color")
+
+if uiColorControl and typeof(uiColorControl:GetValue()) == "Color3" then
+    Luna:SetAccent(uiColorControl:GetValue())
+end
 
 uiSettings:CreateToggle({
     Name = "Watermark",
@@ -6699,14 +6799,8 @@ testFeatures:Button(
 )
 
 --========================================================
--- BALL MAGNET - V18 CAPTURE PARITY
--- Native controls recovered:
--- Ball Magnet
--- GK + Goalbox Only
--- Hold Key
--- Keybind [M2] / Hold / ManualWatermark=false
--- Show Range
--- Magnet Range: 5..25, step 0.1 (captured value 12.5)
+--========================================================
+-- BALL MAGNET - ORIGINAL STAGE1 PARITY
 --========================================================
 local ballmag = mainUI:FolderInGroup(
     "Main",
@@ -6716,99 +6810,135 @@ local ballmag = mainUI:FolderInGroup(
     "Main"
 )
 
-local ballMagnetRemote =
-    ReplicatedStorage:WaitForChild("ByteNetReliable")
-local ballMagnetPacket =
-    buffer.fromstring(buffers["grabball"])
+local ballMagnetRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
 local ballMagnetTerrain =
     Workspace:FindFirstChildOfClass("Terrain") or Workspace.Terrain
 
-local ballMagnetState = {
-    active = false,
-    holdKey = false,
-    keyHeld = false,
-    gkGoalboxOnly = false,
-    showRange = false,
-    radius = 12.5,
-    connection = nil,
-    visualConnection = nil,
-    visual = nil,
-    lastFire = 0,
-    fireInterval = 1 / 60,
-    volleyGuardUntil = 0,
-}
-
-local KNOWN_VOLLEY_ANIMATIONS = {
-    -- V18 native/runtime evidence around Chameleon / Two Gun volley paths.
-    ["138598504314653"] = true,
-    ["127577513196952"] = true,
-    ["88985413044521"] = true,
-    ["82417661349987"] = true,
-    ["116783590202845"] = true,
-}
-
-local VOLLEY_WORDS = {
-    "volley",
-    "two gun",
-    "chameleon",
-    "neo direct shot",
-    "kaiser impact",
-}
-
-local function hasVolleyWord(value)
-    local lower = tostring(value or ""):lower()
-    for _, word in ipairs(VOLLEY_WORDS) do
-        if lower:find(word, 1, true) then
-            return true
+local function packetIdByName(name, fallback)
+    local result = fallback
+    pcall(function()
+        local storage = ReplicatedStorage:FindFirstChild("BytenetStorage")
+        local networking = storage and storage:FindFirstChild("Networking")
+        if networking and networking:IsA("StringValue") then
+            local found = networking.Value:match(
+                '"' .. tostring(name) .. '"%s*:%s*(%d+)'
+            )
+            if found then
+                result = tonumber(found) or result
+            end
         end
+    end)
+    return result
+end
+
+local function packetBufferOneByte(name, fallback, trailingOne)
+    local id = packetIdByName(name, fallback)
+    local suffix = trailingOne and "\1" or ""
+    return buffer.fromstring(string.char(id) .. suffix)
+end
+
+local function createFlatRangeRing(folderName, fillColor, strokeColor)
+    local folder = Workspace:FindFirstChild(folderName)
+    if folder then
+        pcall(function() folder:Destroy() end)
     end
-    return false
+
+    folder = Instance.new("Folder")
+    folder.Name = folderName
+    folder.Parent = Workspace
+
+    local base = Instance.new("Part")
+    base.Name = "RangeBase"
+    base.Anchored = true
+    base.CanCollide = false
+    base.CanTouch = false
+    base.CanQuery = false
+    base.Transparency = 1
+    base.Size = Vector3.new(1, 0.05, 1)
+    base.Parent = folder
+
+    local surface = Instance.new("SurfaceGui")
+    surface.Name = "RangeSurface"
+    surface.Face = Enum.NormalId.Top
+    surface.LightInfluence = 0
+    surface.AlwaysOnTop = true
+    surface.PixelsPerStud = 100
+    surface.SizingMode = Enum.SurfaceGuiSizingMode.FixedSize
+    surface.CanvasSize = Vector2.new(200, 200)
+    surface.Parent = base
+
+    local circle = Instance.new("Frame")
+    circle.Name = "Circle"
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.fromScale(0.5, 0.5)
+    circle.Size = UDim2.fromScale(0.92, 0.92)
+    circle.BackgroundColor3 = fillColor
+    circle.BackgroundTransparency = 0.82
+    circle.BorderSizePixel = 0
+    circle.Parent = surface
+
+    local circleCorner = Instance.new("UICorner")
+    circleCorner.CornerRadius = UDim.new(1, 0)
+    circleCorner.Parent = circle
+
+    local circleStroke = Instance.new("UIStroke")
+    circleStroke.Color = strokeColor
+    circleStroke.Thickness = 3
+    circleStroke.Transparency = 0
+    circleStroke.Parent = circle
+
+    return folder, base
 end
 
-local function currentMagnetCharacter()
-    return Players.LocalPlayer.Character
-end
+local ballMagnetState = {
+    Enabled = false,
+    GKAndGoalboxOnly = false,
+    RequireHoldKey = false,
+    HoldKeyDown = false,
+    MagnetRange = 25,
+    ShowRange = false,
+    Connection = nil,
+    RangeConnection = nil,
+    RangeFolder = nil,
+    RangeBase = nil,
+}
 
-local function currentMagnetRoot()
-    local char = currentMagnetCharacter()
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
+local BALL_MAGNET_VOLLEY_IDS = {
+    ["81249694116204"] = true,
+    ["115839777221212"] = true,
+    ["127428631641330"] = true,
+    ["97586424269981"] = true,
+    ["133565559497234"] = true,
+    ["79074253499106"] = true,
+}
 
-local function currentWorldCharacter()
+local function magnetWorldCharacter(name)
     local characters = Workspace:FindFirstChild("characters")
-    return characters and characters:FindFirstChild(Players.LocalPlayer.Name)
+    return characters and characters:FindFirstChild(name)
 end
 
-local function markVolleyWindow(seconds)
-    ballMagnetState.volleyGuardUntil =
-        math.max(
-            ballMagnetState.volleyGuardUntil,
-            os.clock() + (seconds or 1.15)
-        )
+local function magnetTeam(name)
+    local char = magnetWorldCharacter(name)
+    local state = char and char:FindFirstChild("state")
+    local team = state and state:FindFirstChild("team")
+    return team and team.Value or nil
 end
 
-local function scanVolleyAnimations()
-    local char = currentMagnetCharacter()
-    local humanoid =
-        char and char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return false end
+local function magnetBall()
+    local terrain = Workspace:FindFirstChildOfClass("Terrain")
+    local ball = terrain and terrain:FindFirstChild("Ball")
+    if ball then return ball end
+    return Workspace:FindFirstChild("Ball")
+end
 
-    local animator =
-        humanoid:FindFirstChildOfClass("Animator")
+local function volleyAnimationPlaying(humanoid)
+    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
     if not animator then return false end
 
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
         local animation = track.Animation
-        local id =
-            animation
-            and tostring(animation.AnimationId):match("%d+")
-
-        if id and KNOWN_VOLLEY_ANIMATIONS[id] then
-            return true
-        end
-
-        if hasVolleyWord(track.Name)
-            or (animation and hasVolleyWord(animation.Name)) then
+        local id = animation and tostring(animation.AnimationId):match("%d+")
+        if id and BALL_MAGNET_VOLLEY_IDS[id] then
             return true
         end
     end
@@ -6816,276 +6946,178 @@ local function scanVolleyAnimations()
     return false
 end
 
-local function scanVolleyState()
-    local worldChar = currentWorldCharacter()
-    if not worldChar then return false end
-
-    for key, value in pairs(worldChar:GetAttributes()) do
-        if hasVolleyWord(key) or hasVolleyWord(value) then
-            return true
-        end
-    end
-
-    local stateFolder = worldChar:FindFirstChild("state")
-    if stateFolder then
-        for _, valueObject in ipairs(stateFolder:GetChildren()) do
-            if valueObject:IsA("ValueBase") then
-                if hasVolleyWord(valueObject.Name)
-                    or hasVolleyWord(valueObject.Value) then
-                    return true
-                end
-            end
-        end
+local function inGoalbox(position, team)
+    if team == "A" then
+        return position.X >= -668.15
+            and position.X <= -407.51
+            and position.Z >= 1611.19
+            and position.Z <= 1706.13
+    elseif team == "B" then
+        return position.X >= -668.01
+            and position.X <= -407.68
+            and position.Z >= 841.7
+            and position.Z <= 935.59
     end
 
     return false
 end
 
-local function isVolleyActive()
-    if os.clock() < ballMagnetState.volleyGuardUntil then
+local function magnetGKEligible(root)
+    if not ballMagnetState.GKAndGoalboxOnly then
         return true
     end
 
-    if scanVolleyAnimations() or scanVolleyState() then
-        markVolleyWindow(0.30)
-        return true
+    local worldChar = magnetWorldCharacter(Players.LocalPlayer.Name)
+    local state = worldChar and worldChar:FindFirstChild("state")
+    local roleValue = state and state:FindFirstChild("role")
+
+    if not roleValue or tostring(roleValue.Value) ~= "GK" then
+        return false
     end
 
-    return false
+    return inGoalbox(root.Position, magnetTeam(Players.LocalPlayer.Name))
 end
 
-local function installVolleyWatcher(char)
-    if not char then return end
+local function destroyMagnetRange()
+    if ballMagnetState.RangeConnection then
+        ballMagnetState.RangeConnection:Disconnect()
+        ballMagnetState.RangeConnection = nil
+    end
 
-    task.spawn(function()
-        local humanoid =
-            char:WaitForChild("Humanoid", 8)
-        if not humanoid then return end
+    if ballMagnetState.RangeFolder then
+        pcall(function() ballMagnetState.RangeFolder:Destroy() end)
+    end
 
-        local animator =
-            humanoid:FindFirstChildOfClass("Animator")
-            or humanoid:WaitForChild("Animator", 5)
+    ballMagnetState.RangeFolder = nil
+    ballMagnetState.RangeBase = nil
+end
 
-        if not animator then return end
+local function startMagnetRange()
+    destroyMagnetRange()
 
-        animator.AnimationPlayed:Connect(function(track)
-            local animation = track and track.Animation
-            local id =
-                animation
-                and tostring(animation.AnimationId):match("%d+")
+    local folder, base = createFlatRangeRing(
+        "BallMagnet_Range",
+        Color3.fromRGB(70, 190, 255),
+        Color3.fromRGB(150, 235, 255)
+    )
 
-            if (id and KNOWN_VOLLEY_ANIMATIONS[id])
-                or hasVolleyWord(track and track.Name)
-                or (animation and hasVolleyWord(animation.Name)) then
-                markVolleyWindow(1.15)
-            end
-        end)
+    ballMagnetState.RangeFolder = folder
+    ballMagnetState.RangeBase = base
+
+    ballMagnetState.RangeConnection = RunService.RenderStepped:Connect(function()
+        if not ballMagnetState.ShowRange then return end
+
+        local char = Players.LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local team = magnetTeam(Players.LocalPlayer.Name)
+
+        if not root or not team or team == "lobby" then
+            base.Parent = nil
+            return
+        end
+
+        if base.Parent ~= folder then
+            base.Parent = folder
+        end
+
+        local diameter = ballMagnetState.MagnetRange * 2
+        base.Size = Vector3.new(diameter, 0.05, diameter)
+        base.CFrame = CFrame.new(
+            root.Position - Vector3.new(0, 3.2, 0)
+        )
     end)
 end
 
-if Players.LocalPlayer.Character then
-    installVolleyWatcher(Players.LocalPlayer.Character)
-end
-Players.LocalPlayer.CharacterAdded:Connect(installVolleyWatcher)
-
-local function removeMagnetRangeVisual()
-    if ballMagnetState.visual then
-        pcall(function()
-            ballMagnetState.visual:Destroy()
-        end)
-        ballMagnetState.visual = nil
-    end
-end
-
-local function stopMagnetVisual()
-    if ballMagnetState.visualConnection then
-        ballMagnetState.visualConnection:Disconnect()
-        ballMagnetState.visualConnection = nil
-    end
-    removeMagnetRangeVisual()
-end
-
-local function startMagnetVisual()
-    stopMagnetVisual()
-
-    ballMagnetState.visualConnection =
-        RunService.Heartbeat:Connect(function()
-            if not ballMagnetState.showRange then
-                removeMagnetRangeVisual()
-                return
-            end
-
-            local root = currentMagnetRoot()
-            if not root then
-                removeMagnetRangeVisual()
-                return
-            end
-
-            local visual = ballMagnetState.visual
-
-            if not visual then
-                visual = Instance.new("Part")
-                visual.Name = "EvoHubMagnetRange"
-                visual.Shape = Enum.PartType.Ball
-                visual.Material = Enum.Material.Neon
-                visual.Color = Color3.fromRGB(149, 138, 204)
-                visual.Transparency = 0.88
-                visual.CanCollide = false
-                visual.CanTouch = false
-                visual.CanQuery = false
-                visual.CastShadow = false
-                visual.Anchored = true
-                visual.Massless = true
-                visual.Parent = Workspace
-                ballMagnetState.visual = visual
-            end
-
-            local radius =
-                math.clamp(
-                    tonumber(ballMagnetState.radius) or 12.5,
-                    5,
-                    25
-                )
-
-            local diameter = radius * 2
-            visual.Size =
-                Vector3.new(diameter, diameter, diameter)
-            visual.CFrame = root.CFrame
-        end)
-end
-
 local function stopBallMagnet()
-    if ballMagnetState.connection then
-        ballMagnetState.connection:Disconnect()
-        ballMagnetState.connection = nil
+    ballMagnetState.Enabled = false
+
+    if ballMagnetState.Connection then
+        ballMagnetState.Connection:Disconnect()
+        ballMagnetState.Connection = nil
     end
 end
 
 local function startBallMagnet()
     stopBallMagnet()
+    ballMagnetState.Enabled = true
 
-    ballMagnetState.connection =
-        RunService.Heartbeat:Connect(function()
-            if not ballMagnetState.active then
-                return
-            end
+    ballMagnetState.Connection = RunService.Heartbeat:Connect(function()
+        if not ballMagnetState.Enabled then return end
 
-            if ballMagnetState.holdKey
-                and not ballMagnetState.keyHeld
-                and not UserInputService:IsMouseButtonPressed(
-                    Enum.UserInputType.MouseButton2
-                ) then
-                return
-            end
+        if ballMagnetState.RequireHoldKey
+            and not ballMagnetState.HoldKeyDown then
+            return
+        end
 
-            -- Original callback owns a helper that scans current playing
-            -- animations before Process(). Preserve volley priority:
-            -- the magnet must yield while a volley/action is active.
-            if isVolleyActive() then
-                return
-            end
+        local char = Players.LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
 
-            local root = currentMagnetRoot()
-            if not root then return end
+        if not root or not humanoid then return end
+        if volleyAnimationPlaying(humanoid) then return end
+        if not magnetGKEligible(root) then return end
 
-            local ball =
-                ballMagnetTerrain
-                and ballMagnetTerrain:FindFirstChild("Ball")
-            if not ball or not ball:IsA("BasePart") then
-                return
-            end
+        local ball = magnetBall()
+        if not ball or not ball:IsA("BasePart") then return end
 
-            local radius =
-                math.clamp(
-                    tonumber(ballMagnetState.radius) or 12.5,
-                    5,
-                    25
-                )
+        if (root.Position - ball.Position).Magnitude
+            > ballMagnetState.MagnetRange then
+            return
+        end
 
-            local offset = root.Position - ball.Position
-            if offset:Dot(offset) > radius * radius then
-                return
-            end
-
-            local now = os.clock()
-            if now - ballMagnetState.lastFire
-                < ballMagnetState.fireInterval then
-                return
-            end
-
-            ballMagnetState.lastFire = now
-
-            pcall(function()
-                ballMagnetRemote:FireServer(ballMagnetPacket)
-            end)
+        pcall(function()
+            ballMagnetRemote:FireServer(
+                packetBufferOneByte("bytenet_findBall", 29, false)
+            )
         end)
+    end)
 end
 
-ballmag:Toggle(
-    "Ball Magnet",
-    nil,
-    false,
-    function(value)
-        ballMagnetState.active = value == true
-
-        if ballMagnetState.active then
-            startBallMagnet()
-        else
-            stopBallMagnet()
-        end
+ballmag:Toggle("Ball Magnet", nil, false, function(value)
+    if value then
+        startBallMagnet()
+    else
+        stopBallMagnet()
     end
+end)
+
+ballmag:Toggle("GK + Goalbox Only", nil, false, function(value)
+    ballMagnetState.GKAndGoalboxOnly = value == true
+end)
+
+ballmag:Toggle("Hold Key", nil, false, function(value)
+    ballMagnetState.RequireHoldKey = value == true
+
+    if not ballMagnetState.RequireHoldKey then
+        ballMagnetState.HoldKeyDown = false
+    end
+end)
+
+ballmag:Keybind(
+    "Keybind",
+    Enum.UserInputType.MouseButton2,
+    "Hold",
+    function(active)
+        ballMagnetState.HoldKeyDown = active == true
+    end,
+    false
 )
 
-ballmag:Toggle(
-    "GK + Goalbox Only",
-    nil,
-    false,
-    function(value)
-        ballMagnetState.gkGoalboxOnly = value == true
+ballmag:Toggle("Show Range", nil, false, function(value)
+    ballMagnetState.ShowRange = value == true
+
+    if value then
+        startMagnetRange()
+    else
+        destroyMagnetRange()
     end
-)
+end)
 
-ballmag:Toggle(
-    "Hold Key",
-    nil,
-    false,
-    function(value)
-        ballMagnetState.holdKey = value == true
-    end
-)
+ballmag:Slider("Magnet Range", 25, 5, 25, 0.1, function(value)
+    ballMagnetState.MagnetRange =
+        math.clamp(tonumber(value) or 25, 5, 25)
+end)
 
--- The captured original keybind is MouseButton2 / Hold / ManualWatermark=false.
--- The RE UI wrapper does not safely serialize UserInputType keybinds yet, so
--- the logical M2 hold is handled directly by UserInputService above.
-
-ballmag:Toggle(
-    "Show Range",
-    nil,
-    false,
-    function(value)
-        ballMagnetState.showRange = value == true
-
-        if ballMagnetState.showRange then
-            startMagnetVisual()
-        else
-            stopMagnetVisual()
-        end
-    end
-)
-
-ballmag:Slider(
-    "Magnet Range",
-    12.5,
-    5,
-    25,
-    0.1,
-    function(value)
-        ballMagnetState.radius =
-            math.clamp(tonumber(value) or 12.5, 5, 25)
-    end
-)
-
---========================================================
 -- AUTO COUNTER - attached core integration (V5)
 -- Adapted from azure_latch_auto_counter.txt into Luna UI.
 -- Keeps the proven AnimationPlayed -> Heartbeat -> FireServer design.
@@ -7114,11 +7146,16 @@ task.spawn(function()
 
         local state = {
             enabled = false,
-            useClosestTeammate = false,
             range = 60,
             showRange = false,
             rangeVisual = nil,
             rangeVisualConnection = nil,
+            rangeFolder = nil,
+            preferDribble = false,
+            useDash = false,
+            fixMisses = true,
+            useDelay = false,
+            delayAmount = 0.30,
             fireRate = 0.05,
             playerCooldown = 0.33,
             autoSkills = {
@@ -7256,12 +7293,64 @@ task.spawn(function()
             "toggleCounter4", "toggleCounter5", "toggleTSpecial", "toggleDribble",
         }
 
+        local function resolveCounterAction()
+            if state.preferDribble then
+                return "dribble"
+            end
+
+            local style =
+                tostring(
+                    localplayer:GetAttribute("style")
+                    or localplayer:GetAttribute("Style")
+                    or ""
+                ):lower():gsub("[%s_%-]", "")
+
+            local known = {
+                sae = "skill2",
+                kaiser = "skill4",
+                masterykaiser = "skill4",
+                hiori = "Tspecialer",
+                nagi = "skill2",
+                shidou = "skill1",
+                bachira = "skill1",
+                isagi = "skill1",
+                nelisagi = "skill1",
+                rin = "skill2",
+                barou = "skill2",
+            }
+
+            return known[style] or "dribble"
+        end
+
         local function fireCounters()
-            local teammate = state.useClosestTeammate and getClosestTeammate() or nil
-            for _, key in ipairs(counterKeys) do
-                if state[key] then
-                    fireSkill(state.autoSkills[key], teammate)
+            local action = resolveCounterAction()
+
+            local function execute()
+                fireSkill(action, nil)
+
+                if state.useDash then
+                    task.defer(function()
+                        fireSkill("sidedash", nil)
+                    end)
                 end
+
+                if state.fixMisses then
+                    task.delay(0.06, function()
+                        if state.enabled and hasBall() then
+                            fireSkill(action, nil)
+                        end
+                    end)
+                end
+            end
+
+            if state.useDelay then
+                task.delay(state.delayAmount, function()
+                    if state.enabled and hasBall() then
+                        execute()
+                    end
+                end)
+            else
+                execute()
             end
         end
 
@@ -7356,83 +7445,112 @@ task.spawn(function()
         table.insert(state.globalConnections, PlayersService.PlayerRemoving:Connect(removePlayer))
 
         local function removeCounterRangeVisual()
-            if state.rangeVisual then
-                pcall(function()
-                    state.rangeVisual:Destroy()
-                end)
-                state.rangeVisual = nil
-            end
-        end
-
-        local function stopCounterRangeVisual()
             if state.rangeVisualConnection then
                 state.rangeVisualConnection:Disconnect()
                 state.rangeVisualConnection = nil
             end
-            removeCounterRangeVisual()
+
+            if state.rangeFolder then
+                pcall(function() state.rangeFolder:Destroy() end)
+            end
+
+            state.rangeFolder = nil
+            state.rangeVisual = nil
         end
 
         local function startCounterRangeVisual()
-            stopCounterRangeVisual()
+            removeCounterRangeVisual()
+
+            local folder, base = createFlatRangeRing(
+                "AutoCounter_Range",
+                Color3.fromRGB(149, 138, 204),
+                Color3.fromRGB(170, 160, 225)
+            )
+
+            state.rangeFolder = folder
+            state.rangeVisual = base
 
             state.rangeVisualConnection =
-                RunServiceService.Heartbeat:Connect(function()
-                    if not state.showRange then
-                        removeCounterRangeVisual()
-                        return
-                    end
+                RunServiceService.RenderStepped:Connect(function()
+                    if not state.showRange then return end
 
                     local root = getRoot(localplayer.Character)
                     if not root then
-                        removeCounterRangeVisual()
+                        base.Parent = nil
                         return
                     end
 
-                    local visual = state.rangeVisual
+                    local characters = workspace:FindFirstChild("characters")
+                    local worldChar =
+                        characters
+                        and characters:FindFirstChild(localplayer.Name)
+                    local worldState =
+                        worldChar
+                        and worldChar:FindFirstChild("state")
+                    local teamValue =
+                        worldState
+                        and worldState:FindFirstChild("team")
+                    local team =
+                        teamValue
+                        and tostring(teamValue.Value)
+                        or nil
 
-                    if not visual then
-                        visual = Instance.new("Part")
-                        visual.Name = "EvoHubAutoCounterRange"
-                        visual.Shape = Enum.PartType.Ball
-                        visual.Material = Enum.Material.Neon
-                        visual.Color = Color3.fromRGB(149, 138, 204)
-                        visual.Transparency = 0.90
-                        visual.CanCollide = false
-                        visual.CanTouch = false
-                        visual.CanQuery = false
-                        visual.CastShadow = false
-                        visual.Anchored = true
-                        visual.Massless = true
-                        visual.Parent = workspace
-                        state.rangeVisual = visual
+                    -- Native stage1 only shows the ring for an active A/B team
+                    -- and while the local player has the ball.
+                    if not team
+                        or team == "lobby"
+                        or not hasBall() then
+                        base.Parent = nil
+                        return
                     end
 
-                    local radius =
-                        math.clamp(
-                            tonumber(state.range) or 60,
-                            35,
-                            90
-                        )
+                    if base.Parent ~= folder then
+                        base.Parent = folder
+                    end
 
-                    local diameter = radius * 2
-                    visual.Size =
-                        Vector3.new(diameter, diameter, diameter)
-                    visual.CFrame = root.CFrame
+                    local diameter =
+                        math.clamp(state.range, 35, 90) * 2
+
+                    base.Size =
+                        Vector3.new(diameter, 0.05, diameter)
+
+                    base.CFrame =
+                        CFrame.new(
+                            root.Position
+                            - Vector3.new(0, 3.2, 0)
+                        )
                 end)
         end
 
-        folder:Toggle("Auto Counter", nil, false, function(value)
+        local counterToggle
+        counterToggle = folder:Toggle("Auto Counter", nil, false, function(value)
             state.enabled = value == true
         end)
 
-        folder:Toggle("Show Range", nil, false, function(value)
-            state.showRange = value == true
+        local counterKey = folder:Keybind(
+            "Auto Counter",
+            Enum.KeyCode.X,
+            "Toggle",
+            function(active)
+                if counterToggle
+                    and counterToggle.SetValue
+                    and counterToggle.Value ~= (active == true) then
+                    counterToggle:SetValue(active == true)
+                end
+            end,
+            false
+        )
 
-            if state.showRange then
-                startCounterRangeVisual()
-            else
-                stopCounterRangeVisual()
-            end
+        folder:Toggle("Prefer Dribble", nil, false, function(value)
+            state.preferDribble = value == true
+        end)
+
+        folder:Toggle("Use Dash", nil, false, function(value)
+            state.useDash = value == true
+        end)
+
+        folder:Toggle("Fix Misses", nil, true, function(value)
+            state.fixMisses = value == true
         end)
 
         folder:Slider(
@@ -7443,36 +7561,61 @@ task.spawn(function()
             0.1,
             function(value)
                 state.range =
-                    math.clamp(
-                        tonumber(value) or 60,
-                        35,
-                        90
-                    )
+                    math.clamp(tonumber(value) or 60, 35, 90)
             end
         )
 
-        folder:Toggle("Use Closest Teammate", function(value)
-            state.useClosestTeammate = value == true
+        folder:Toggle("Show Range", nil, false, function(value)
+            state.showRange = value == true
+
+            if value then
+                startCounterRangeVisual()
+            else
+                removeCounterRangeVisual()
+            end
         end)
 
-        local function addCounterToggle(label, key)
-            folder:Toggle(label, function(value)
-                state[key] = value == true
-            end)
-        end
+        folder:Toggle("Delay", nil, false, function(value)
+            state.useDelay = value == true
+        end)
 
-        addCounterToggle("Auto Dribble", "toggleDribble")
-        addCounterToggle("Auto Counter (Move One)", "toggleCounter1")
-        addCounterToggle("Auto Counter (Move Two)", "toggleCounter2")
-        addCounterToggle("Auto Counter (Move Three)", "toggleCounter3")
-        addCounterToggle("Auto Counter (Move Four)", "toggleCounter4")
-        addCounterToggle("Auto Counter (Move Five)", "toggleCounter5")
-        addCounterToggle("T Special", "toggleTSpecial")
+        folder:Slider(
+            "Delay Amount",
+            0.30,
+            0.01,
+            3,
+            0.01,
+            function(value)
+                state.delayAmount =
+                    math.clamp(tonumber(value) or 0.30, 0.01, 3)
+            end
+        )
+
+        -- Native Hold controls. They are kept out of the keybind watermark.
+        folder:Keybind(
+            "Skill Swap",
+            Enum.KeyCode.C,
+            "Hold",
+            function(active)
+                state.skillSwapHeld = active == true
+            end,
+            false
+        )
+
+        folder:Keybind(
+            "Mode Swap",
+            Enum.KeyCode.Z,
+            "Hold",
+            function(active)
+                state.modeSwapHeld = active == true
+            end,
+            false
+        )
 
         function runtime.destroy()
             if state.destroyed then return end
             state.destroyed = true
-            stopCounterRangeVisual()
+            removeCounterRangeVisual()
             for plr in pairs(state.players) do removePlayer(plr) end
             for _, conn in ipairs(state.globalConnections) do disconnect(conn) end
             table.clear(state.globalConnections)
@@ -7488,6 +7631,425 @@ task.spawn(function()
         warn("[AutoCounter AttachedCore V5][BOOT] " .. tostring(bootError))
     end
 end)
+
+
+--========================================================
+-- NATIVE MAIN RECOVERIES - stage1
+--========================================================
+
+-- Hide Black GUI
+local hideBlackSection = mainUI:FolderInGroup(
+    "Main",
+    "Hide Black GUI",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Main"
+)
+
+do
+    local hideState = {
+        Enabled = false,
+        Connections = {},
+    }
+
+    local function disconnectHide()
+        for _, connection in ipairs(hideState.Connections) do
+            pcall(function() connection:Disconnect() end)
+        end
+        table.clear(hideState.Connections)
+    end
+
+    local function destroyBlack()
+        local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+        local black = pg and pg:FindFirstChild("Black")
+
+        if black and black:IsA("ScreenGui") then
+            black:Destroy()
+        end
+    end
+
+    local function stopHideBlack()
+        hideState.Enabled = false
+        disconnectHide()
+    end
+
+    local function startHideBlack()
+        if hideState.Enabled then return end
+        hideState.Enabled = true
+        destroyBlack()
+
+        local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+
+        if pg then
+            hideState.Connections[#hideState.Connections + 1] =
+                pg.ChildAdded:Connect(function(child)
+                    if hideState.Enabled
+                        and child.Name == "Black"
+                        and child:IsA("ScreenGui") then
+                        child:Destroy()
+                    end
+                end)
+        end
+
+        hideState.Connections[#hideState.Connections + 1] =
+            RunService.Heartbeat:Connect(function()
+                if hideState.Enabled then
+                    destroyBlack()
+                end
+            end)
+    end
+
+    hideBlackSection:Toggle(
+        "Hide Black GUI",
+        nil,
+        false,
+        function(value)
+            if value then
+                startHideBlack()
+            else
+                stopHideBlack()
+            end
+        end
+    )
+end
+
+-- Auto Variant Steal
+local variantStealSection = mainUI:FolderInGroup(
+    "Main",
+    "Auto Variant Steal",
+    Color3.fromRGB(24, 255, 228),
+    true,
+    "Main"
+)
+
+do
+    local variantState = {
+        Enabled = false,
+        Connection = nil,
+        CurrentCharacter = nil,
+        MyTeam = nil,
+        IsPressing = false,
+        HasReached100 = false,
+        WaitingForCooldown = false,
+        LastPressTime = 0,
+        LastFlowValue = 0,
+
+        StyleMapping = {
+            donlorenzo = "DonLorenzo",
+            sae = "Sae",
+            kunigami = "Kunigami",
+            barou = "Barou",
+            kurona = "Kurona",
+            reo = "Reo",
+            masterylorenzo = "Lorenzo",
+            aiku2 = "MasteryAiku",
+        },
+
+        CharacterConfig = {
+            DonLorenzo = { radius = 49, skillName = "skill2" },
+            Sae = { radius = 38, skillName = "skill2" },
+            Kunigami = { radius = 29, skillName = "skill3" },
+            Barou = { radius = 49, skillName = "skill5" },
+            Kurona = { radius = 27, skillName = "skill1" },
+            Lorenzo = { radius = 49, skillName = "skill2" },
+            Reo = {
+                radius = 15,
+                skillName = "skill3",
+                requiresFlow = true,
+                requiredSkillText = "Dobermann Press",
+            },
+            MasteryAiku = { radius = 38, skillName = "skill2" },
+        },
+    }
+
+    local variantRemote =
+        ReplicatedStorage:WaitForChild("ByteNetReliable")
+
+    local function worldCharacterFor(name)
+        local chars = Workspace:FindFirstChild("characters")
+        return chars and chars:FindFirstChild(name)
+    end
+
+    local function getPlayerTeam(name)
+        local char = worldCharacterFor(name)
+        local state = char and char:FindFirstChild("state")
+        local team = state and state:FindFirstChild("team")
+        return team and team.Value or nil
+    end
+
+    local function findMyFlow()
+        local char = worldCharacterFor(Players.LocalPlayer.Name)
+        local state = char and char:FindFirstChild("state")
+        return state and state:FindFirstChild("flow") or nil
+    end
+
+    local function getFreeBall()
+        local terrain = Workspace:FindFirstChildOfClass("Terrain")
+        return (terrain and terrain:FindFirstChild("Ball"))
+            or Workspace:FindFirstChild("Ball")
+    end
+
+    local function getHotbar()
+        local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        return pg
+            and pg:FindFirstChild("Hotbar")
+            and pg.Hotbar:FindFirstChild("Backpack")
+            and pg.Hotbar.Backpack:FindFirstChild("Hotbar")
+    end
+
+    local function getSkill3Name()
+        local hotbar = getHotbar()
+        local slot = hotbar and hotbar:FindFirstChild("skill3")
+        local base = slot and slot:FindFirstChild("Base")
+        local toolName = base and base:FindFirstChild("ToolName")
+        return toolName and tostring(toolName.Text) or nil
+    end
+
+    local function findSkillWidget(skillName)
+        local hotbar = getHotbar()
+        if not hotbar then return nil end
+
+        local direct = hotbar:FindFirstChild(skillName)
+        if direct then return direct end
+
+        for _, descendant in ipairs(hotbar:GetDescendants()) do
+            if descendant.Name == skillName then
+                return descendant
+            end
+        end
+
+        return nil
+    end
+
+    local function isCooldown(skillName)
+        local slot = findSkillWidget(skillName)
+
+        -- This mirrors the original: a missing widget is treated as unavailable.
+        if not slot then return true end
+
+        local cooldown = slot:FindFirstChild("Cooldown")
+        if not cooldown then return false end
+
+        return cooldown.AbsoluteSize.Y > 1
+            or (
+                cooldown.Visible
+                and cooldown.BackgroundTransparency < 0.9
+            )
+    end
+
+    local function checkBallProximity(radius)
+        local myTeam = getPlayerTeam(Players.LocalPlayer.Name)
+        if not myTeam then return false end
+
+        local char = Players.LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+
+        local freeBall = getFreeBall()
+
+        if freeBall
+            and freeBall:IsA("BasePart")
+            and (freeBall.Position - root.Position).Magnitude <= radius then
+            return true
+        end
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= Players.LocalPlayer then
+                local enemyTeam = getPlayerTeam(player.Name)
+
+                if enemyTeam
+                    and enemyTeam ~= myTeam then
+
+                    local enemyWorld = worldCharacterFor(player.Name)
+                    local heldBall =
+                        enemyWorld
+                        and enemyWorld:FindFirstChild("Ball")
+
+                    if heldBall then
+                        local part =
+                            heldBall:IsA("BasePart")
+                            and heldBall
+                            or heldBall:FindFirstChildWhichIsA(
+                                "BasePart",
+                                true
+                            )
+
+                        if part
+                            and (part.Position - root.Position).Magnitude
+                                <= radius then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+
+        return false
+    end
+
+    local function variantUseBuffer()
+        return packetBufferOneByte("bytenet_use", 30, true)
+    end
+
+    local function pressSkill(skillName)
+        pcall(function()
+            variantRemote:FireServer(
+                variantUseBuffer(),
+                {{ tostring(skillName) }}
+            )
+        end)
+    end
+
+    local function resetVariantCycle()
+        variantState.IsPressing = false
+        variantState.HasReached100 = false
+        variantState.WaitingForCooldown = false
+    end
+
+    local function stopVariant()
+        variantState.Enabled = false
+
+        if variantState.Connection then
+            variantState.Connection:Disconnect()
+            variantState.Connection = nil
+        end
+
+        variantState.CurrentCharacter = nil
+        variantState.MyTeam = nil
+        resetVariantCycle()
+    end
+
+    local function processVariant()
+        if not variantState.Enabled then return end
+
+        local now = tick()
+        local style =
+            tostring(
+                Players.LocalPlayer:GetAttribute("style")
+                or Players.LocalPlayer:GetAttribute("Style")
+                or ""
+            ):lower()
+
+        local mapped =
+            variantState.StyleMapping[
+                style:gsub("[%s_%-]", "")
+            ]
+
+        local flowObject = findMyFlow()
+        local team =
+            flowObject
+            and flowObject.Parent
+            and flowObject.Parent:FindFirstChild("team")
+            and flowObject.Parent.team.Value
+            or nil
+
+        if team ~= "A" and team ~= "B" then
+            resetVariantCycle()
+            variantState.CurrentCharacter = nil
+            return
+        end
+
+        if mapped ~= variantState.CurrentCharacter then
+            variantState.CurrentCharacter = mapped
+            resetVariantCycle()
+
+            if mapped then
+                variantState.MyTeam = team
+            end
+        end
+
+        if not variantState.CurrentCharacter then return end
+
+        local cfg =
+            variantState.CharacterConfig[
+                variantState.CurrentCharacter
+            ]
+
+        if not cfg then return end
+
+        if cfg.requiredSkillText
+            and getSkill3Name() ~= cfg.requiredSkillText then
+            variantState.IsPressing = false
+            return
+        end
+
+        flowObject = findMyFlow()
+        if not flowObject then return end
+
+        local flowValue = tonumber(flowObject.Value) or 0
+
+        if flowValue <= 0 then
+            variantState.IsPressing = false
+            variantState.HasReached100 = false
+            return
+        end
+
+        if flowValue >= 100
+            and not variantState.HasReached100 then
+            variantState.HasReached100 = true
+        end
+
+        local flowSpent =
+            variantState.HasReached100
+            and flowValue < 100
+
+        if cfg.requiresFlow and not flowSpent then
+            variantState.IsPressing = false
+            return
+        end
+
+        if flowSpent then
+            if isCooldown(cfg.skillName) then
+                variantState.IsPressing = false
+                return
+            end
+
+            if checkBallProximity(cfg.radius) then
+                if not variantState.IsPressing then
+                    variantState.IsPressing = true
+                    variantState.LastPressTime = now
+                end
+            elseif variantState.IsPressing then
+                variantState.IsPressing = false
+            end
+        elseif variantState.IsPressing then
+            variantState.IsPressing = false
+        end
+
+        if variantState.IsPressing
+            and now - variantState.LastPressTime >= 0.1 then
+
+            pressSkill(cfg.skillName)
+            variantState.LastPressTime = now
+        end
+
+        variantState.LastFlowValue = flowValue
+    end
+
+    local function startVariant()
+        stopVariant()
+
+        variantState.Enabled = true
+        variantState.LastPressTime = 0
+        variantState.LastFlowValue = 0
+
+        variantState.Connection =
+            RunService.Heartbeat:Connect(processVariant)
+    end
+
+    variantStealSection:Toggle(
+        "Auto Variant Steal",
+        nil,
+        false,
+        function(value)
+            if value then
+                startVariant()
+            else
+                stopVariant()
+            end
+        end
+    )
+end
 
 -- Auto Trap v13: strict team-safe trap core.
 do
@@ -14873,10 +15435,10 @@ local function fireGKPackets()
     game:GetService("ReplicatedStorage"):WaitForChild("ByteNetReliable"):FireServer(buffer.fromstring(pick .. "\005\001\000A"))
 end
 
-autopos:Toggle("Auto Pick CF", "Automatically Picks Center Field Position On Respawn Or Enable.", function()
-    autoPositionState.CF = not autoPositionState.CF
+autopos:Toggle("Auto CF", "Automatically Picks Center Field Position On Respawn Or Enable.", function(value)
+    autoPositionState.CF = value == true
 
-    EvoNotify("Auto Pick CF", autoPositionState.CF and "Enabled." or "Disabled.", 1)
+    EvoNotify("Auto CF", autoPositionState.CF and "Enabled." or "Disabled.", 1)
 
     if autoPositionState.CF then
         autoPositionState.CFConn = game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
@@ -14896,10 +15458,10 @@ autopos:Toggle("Auto Pick CF", "Automatically Picks Center Field Position On Res
     end
 end)
 
-autopos:Toggle("Auto Pick GK", "Automatically Picks Goalkeeper Position On Respawn Or Enable.", function()
-    autoPositionState.GK = not autoPositionState.GK
+autopos:Toggle("Auto GK", "Automatically Picks Goalkeeper Position On Respawn Or Enable.", function(value)
+    autoPositionState.GK = value == true
 
-    EvoNotify("Auto Pick GK", autoPositionState.GK and "Enabled." or "Disabled.", 1)
+    EvoNotify("Auto GK", autoPositionState.GK and "Enabled." or "Disabled.", 1)
 
     if autoPositionState.GK then
         autoPositionState.GKConn = game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function()
@@ -15477,14 +16039,13 @@ do
     local nativeAutoQteToggle = autoQteSection:Toggle(
         "Auto QTE",
         nil,
-        true,
+        false,
         function(value)
             setQTEEnabled(value)
         end
     )
 
-    -- CreateToggle restores config silently, so start the runtime if the
-    -- recovered/default state is already ON. V18 capture recorded Value=true.
+    -- Original source Default=false. A saved config may still restore ON.
     if nativeAutoQteToggle
         and nativeAutoQteToggle.Value == true then
         setQTEEnabled(true)
