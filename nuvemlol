@@ -1,23 +1,3 @@
--- [[ EVORE22 BIG MAJOR NATIVE LAYOUT PARITY ]]
--- [[ EVORE18.7 BALL MAGNET/COUNTER PARITY CLEANUP ]]
--- [[ EVORE18.6.1 COMPILE HOTFIX ]]
--- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
--- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
--- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
--- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
--- [[ V16 CAPTURE PARITY PATCH ]]
--- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
--- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
--- Native UI settings are evidence-driven; custom extras remain separate.
-
--- evo hub // re — STABLE ROLLBACK BASE
--- V15_CONTINUED local build restored after V19 bootstrap regression.
--- No PlaceId redirect / no optional remote feature-pack loaders.
--- Gameplay parity work must be ported into this executable base feature-by-feature.
-
-
--- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
--- Built from the exact 3,552-instance runtime tree and callback captures.
 local Luna = (function()
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
@@ -6579,38 +6559,62 @@ helptab:Label("Show / Hide GUI: K")
 helptab:Label("Auto Config: ON - saves to celeron/AzureLatch.json")
 
 --- IGNORE THESE
+-- ================================================================
+-- V22.1: LOCAL BYTENET BUFFER BOOTSTRAP
+-- The old Celeron lineage blocked the whole hub waiting forever for an
+-- external Pastebin to create Lighting.BUFFERSTRINGS. Air Dribble lived in
+-- an earlier task.spawn, which is why it was the only Main section visible
+-- whenever that external bootstrap failed.
+--
+-- Only two legacy buffers are still consumed by this build:
+--   base     = bytenet_use packet id + trailing \1
+--   grabball = bytenet_findBall packet id
+-- Both are derivable from the game's current Networking map.
+-- ================================================================
 local buffers = {}
 
-do
-    local source = game:HttpGet("https://pastebin.com/raw/8XJh7dzh")
-    local f, err = loadstring(source)
+local networkingObject = game:GetService("ReplicatedStorage")
+    :WaitForChild("BytenetStorage")
+    :WaitForChild("Networking")
 
-    if not f then
-        warn(err)
-        return
+local networkingValue =
+    networkingObject:IsA("StringValue")
+    and networkingObject.Value
+    or ""
+
+local function byteNetPacketId(name, fallback)
+    local found =
+        networkingValue:match(
+            '"' .. tostring(name) .. '"%s*:%s*(%d+)'
+        )
+
+    local id = tonumber(found) or tonumber(fallback) or 0
+    return math.clamp(math.floor(id), 0, 255)
+end
+
+local function byteNetPacketString(name, fallback, trailingOne)
+    local value = string.char(byteNetPacketId(name, fallback))
+
+    if trailingOne then
+        value ..= "\1"
     end
 
-    f()
+    return value
 end
 
-repeat
-    task.wait()
-until game.Lighting:FindFirstChild("BUFFERSTRINGS")
+buffers["base"] =
+    byteNetPacketString("bytenet_use", 30, true)
 
-for _, val in ipairs(game.Lighting:FindFirstChild("BUFFERSTRINGS"):GetChildren()) do
-    buffers[val.Name] = val.Value
-end
+buffers["grabball"] =
+    byteNetPacketString("bytenet_findBall", 29, false)
 
-game.Lighting:FindFirstChild("BUFFERSTRINGS"):Destroy()
+local role =
+    byteNetPacketId("bytenet_selectRole", 0)
 
-local role = game:GetService("ReplicatedStorage")
-    :WaitForChild("BytenetStorage")
-    :WaitForChild("Networking").Value
-    :match('"bytenet_selectRole"%s*:%s*(%d+)')
-
-role = role and tonumber(role)
-
-local pick = role and string.char(role) or ""
+local pick =
+    role > 0
+    and string.char(role)
+    or ""
 ---
 
 local Players = game:GetService("Players")
@@ -17048,3 +17052,41 @@ end)
 
 
 -- Luna provides its own navigation UI.
+
+
+-- V22.1 final layout settle: feature creation spans both the synchronous
+-- legacy body and deferred native passes. Refresh both columns after they
+-- have had time to register rather than relying on creation timing.
+task.defer(function()
+    task.wait(0.75)
+
+    pcall(function()
+        if mainReal and mainReal.RefreshLayout then
+            mainReal.RefreshLayout()
+        end
+    end)
+
+    pcall(function()
+        if playerReal and playerReal.RefreshLayout then
+            playerReal.RefreshLayout()
+        end
+    end)
+
+    pcall(function()
+        if visualsReal and visualsReal.RefreshLayout then
+            visualsReal.RefreshLayout()
+        end
+    end)
+
+    pcall(function()
+        if miscReal and miscReal.RefreshLayout then
+            miscReal.RefreshLayout()
+        end
+    end)
+
+    pcall(function()
+        if extraReal and extraReal.RefreshLayout then
+            extraReal.RefreshLayout()
+        end
+    end)
+end)
