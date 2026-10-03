@@ -1,3 +1,25 @@
+-- [[ EVORE22.2 UI SCALE TONUMBER HOTFIX ]]
+-- [[ EVORE22.1 NONBLOCKING LOAD FIX ]]
+-- [[ EVORE22 BIG MAJOR NATIVE LAYOUT PARITY ]]
+-- [[ EVORE18.7 BALL MAGNET/COUNTER PARITY CLEANUP ]]
+-- [[ EVORE18.6.1 COMPILE HOTFIX ]]
+-- [[ EVORE18.6 CLEAN CELERON BALL/CD + PASS PLACEMENT ]]
+-- [[ EVORE18.5 NATIVE QTE + SMALL KEYBINDS + NOTIFY ROUTER ]]
+-- [[ EVORE18.4 ORIGINAL UI MOTION PARITY ]]
+-- [[ EVORE18.2 UI + OWNERSHIP PARITY ]]
+-- [[ V16 CAPTURE PARITY PATCH ]]
+-- Stable parent: EvoRE15_STABLE_ROLLBACK.txt
+-- Evidence: EvoHub_ZeroClickRip_V16 (successful 10/10-stage capture)
+-- Native UI settings are evidence-driven; custom extras remain separate.
+
+-- evo hub // re — STABLE ROLLBACK BASE
+-- V15_CONTINUED local build restored after V19 bootstrap regression.
+-- No PlaceId redirect / no optional remote feature-pack loaders.
+-- Gameplay parity work must be ported into this executable base feature-by-feature.
+
+
+-- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
+-- Built from the exact 3,552-instance runtime tree and callback captures.
 local Luna = (function()
     local Players = game:GetService("Players")
     local UIS = game:GetService("UserInputService")
@@ -6472,7 +6494,10 @@ local uiScaleControl = uiSettings:CreateDropdown({
     MultipleOptions = false,
     Callback = function(value)
         local selected = type(value) == "table" and value[1] or value
-        local numeric = tonumber(tostring(selected):gsub("%%", ""))
+        local cleanedScale =
+            (tostring(selected):gsub("%%", ""))
+        local numeric = tonumber(cleanedScale)
+
         if numeric then
             Window:SetScale(numeric / 100)
         end
@@ -6481,8 +6506,17 @@ local uiScaleControl = uiSettings:CreateDropdown({
 
 do
     local selected = uiScaleControl and uiScaleControl:GetValue()
-    local numeric = tonumber(tostring(selected or (Luna.IsMobile and "50%" or "100%")):gsub("%%", ""))
-    Window:SetScale((numeric or (Luna.IsMobile and 50 or 100)) / 100)
+    local cleanedScale =
+        (tostring(
+            selected
+            or (Luna.IsMobile and "50%" or "100%")
+        ):gsub("%%", ""))
+
+    local numeric = tonumber(cleanedScale)
+
+    Window:SetScale(
+        (numeric or (Luna.IsMobile and 50 or 100)) / 100
+    )
 end
 
 local uiColorControl = uiSettings:CreateColorPicker({
