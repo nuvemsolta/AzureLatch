@@ -1,3 +1,4 @@
+-- [[ EVORE22.4 ROOT SCOPE + STARTUP FIX ]]
 -- [[ EVORE22.3 FULL STABILITY REVIEW ]]
 -- [[ EVORE22.2 UI SCALE TONUMBER HOTFIX ]]
 -- [[ EVORE22.1 NONBLOCKING LOAD FIX ]]
@@ -19,6 +20,66 @@
 -- Gameplay parity work must be ported into this executable base feature-by-feature.
 
 
+-- ================================================================
+-- V22.4 ROOT-SCOPE STABILITY HELPERS
+-- These helpers are intentionally declared BEFORE the Luna IIFE because
+-- native passes, packet bootstrap and late mobile modules use them too.
+-- ================================================================
+local function safeEnumMember(enumType, name)
+    if typeof(name) == "EnumItem" then
+        return name
+    end
+
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+
+    local ok, result = pcall(function()
+        return enumType[name]
+    end)
+
+    if ok and typeof(result) == "EnumItem" then
+        return result
+    end
+
+    return nil
+end
+
+local function safeInputEnum(value, fallback)
+    if typeof(value) == "EnumItem" then
+        return value
+    end
+
+    if type(value) ~= "string" then
+        return fallback
+    end
+
+    return safeEnumMember(Enum.KeyCode, value)
+        or safeEnumMember(Enum.UserInputType, value)
+        or fallback
+end
+
+local function safeWaitForChild(parent, name, timeout)
+    if typeof(parent) ~= "Instance" then
+        return nil
+    end
+
+    local existing = parent:FindFirstChild(name)
+    if existing then
+        return existing
+    end
+
+    local ok, result = pcall(function()
+        return parent:WaitForChild(name, timeout or 8)
+    end)
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
 -- EVOHUB UI LIBRARY RE V2 EXACT VISUAL
 -- Built from the exact 3,552-instance runtime tree and callback captures.
 local Luna = (function()
@@ -29,64 +90,6 @@ local Luna = (function()
     local CoreGui = game:GetService("CoreGui")
 
     local LocalPlayer = Players.LocalPlayer
-
-    -- V22.3 stability helpers.
-    -- Dynamic Enum indexing throws for invalid members in Roblox; it does not
-    -- return nil. Every persisted/input key must go through these helpers.
-    local function safeEnumMember(enumType, name)
-        if typeof(name) == "EnumItem" then
-            return name
-        end
-
-        if type(name) ~= "string" or name == "" then
-            return nil
-        end
-
-        local ok, result = pcall(function()
-            return enumType[name]
-        end)
-
-        if ok and typeof(result) == "EnumItem" then
-            return result
-        end
-
-        return nil
-    end
-
-    local function safeInputEnum(value, fallback)
-        if typeof(value) == "EnumItem" then
-            return value
-        end
-
-        if type(value) ~= "string" then
-            return fallback
-        end
-
-        return safeEnumMember(Enum.KeyCode, value)
-            or safeEnumMember(Enum.UserInputType, value)
-            or fallback
-    end
-
-    local function safeWaitForChild(parent, name, timeout)
-        if typeof(parent) ~= "Instance" then
-            return nil
-        end
-
-        local existing = parent:FindFirstChild(name)
-        if existing then
-            return existing
-        end
-
-        local ok, result = pcall(function()
-            return parent:WaitForChild(name, timeout or 8)
-        end)
-
-        if ok then
-            return result
-        end
-
-        return nil
-    end
 
     local Library = {
         IsMobile = UIS.TouchEnabled,
@@ -2399,6 +2402,17 @@ local Luna = (function()
 
     return Library
 end)()
+
+do
+    local coreHelpersOk =
+        type(safeEnumMember) == "function"
+        and type(safeInputEnum) == "function"
+        and type(safeWaitForChild) == "function"
+
+    if not coreHelpersOk then
+        warn("[EVORE22.4] CRITICAL: root stability helpers unavailable")
+    end
+end
 
 -- V15: native EvoHub feature-body pass + exact sidebar
 local Window = Luna:CreateWindow({
