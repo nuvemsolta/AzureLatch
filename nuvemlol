@@ -1,3 +1,4 @@
+-- [[ EVORE22.3 FULL STABILITY REVIEW ]]
 -- [[ EVORE22.2 UI SCALE TONUMBER HOTFIX ]]
 -- [[ EVORE22.1 NONBLOCKING LOAD FIX ]]
 -- [[ EVORE22 BIG MAJOR NATIVE LAYOUT PARITY ]]
@@ -28,6 +29,64 @@ local Luna = (function()
     local CoreGui = game:GetService("CoreGui")
 
     local LocalPlayer = Players.LocalPlayer
+
+    -- V22.3 stability helpers.
+    -- Dynamic Enum indexing throws for invalid members in Roblox; it does not
+    -- return nil. Every persisted/input key must go through these helpers.
+    local function safeEnumMember(enumType, name)
+        if typeof(name) == "EnumItem" then
+            return name
+        end
+
+        if type(name) ~= "string" or name == "" then
+            return nil
+        end
+
+        local ok, result = pcall(function()
+            return enumType[name]
+        end)
+
+        if ok and typeof(result) == "EnumItem" then
+            return result
+        end
+
+        return nil
+    end
+
+    local function safeInputEnum(value, fallback)
+        if typeof(value) == "EnumItem" then
+            return value
+        end
+
+        if type(value) ~= "string" then
+            return fallback
+        end
+
+        return safeEnumMember(Enum.KeyCode, value)
+            or safeEnumMember(Enum.UserInputType, value)
+            or fallback
+    end
+
+    local function safeWaitForChild(parent, name, timeout)
+        if typeof(parent) ~= "Instance" then
+            return nil
+        end
+
+        local existing = parent:FindFirstChild(name)
+        if existing then
+            return existing
+        end
+
+        local ok, result = pcall(function()
+            return parent:WaitForChild(name, timeout or 8)
+        end)
+
+        if ok then
+            return result
+        end
+
+        return nil
+    end
 
     local Library = {
         IsMobile = UIS.TouchEnabled,
@@ -1744,8 +1803,7 @@ local Luna = (function()
                         or Enum.KeyCode.Unknown
 
                     local function enumFromName(name)
-                        if type(name) ~= "string" then return nil end
-                        return Enum.KeyCode[name] or Enum.UserInputType[name]
+                        return safeInputEnum(name, nil)
                     end
 
                     if type(current) == "string" then
@@ -1873,17 +1931,26 @@ local Luna = (function()
                             if type(Library.OnControlVisualChanged) == "function" then
                                 pcall(Library.OnControlVisualChanged, object, "active")
                             end
-                            pcall(callback, true)
+                            local ok, err = pcall(callback, true)
+                            if not ok then
+                                warn("[EVORE22.3] Keybind callback error (" .. nameText .. "): " .. tostring(err))
+                            end
 
                         elseif object.Mode == "Toggle" then
                             object.Active = not object.Active
                             if type(Library.OnControlVisualChanged) == "function" then
                                 pcall(Library.OnControlVisualChanged, object, "active")
                             end
-                            pcall(callback, object.Active)
+                            local ok, err = pcall(callback, object.Active)
+                            if not ok then
+                                warn("[EVORE22.3] Keybind callback error (" .. nameText .. "): " .. tostring(err))
+                            end
 
                         else
-                            pcall(callback, true)
+                            local ok, err = pcall(callback, true)
+                            if not ok then
+                                warn("[EVORE22.3] Keybind callback error (" .. nameText .. "): " .. tostring(err))
+                            end
                         end
                     end)
 
@@ -1897,7 +1964,10 @@ local Luna = (function()
                                 pcall(Library.OnControlVisualChanged, object, "active")
                             end
 
-                            pcall(callback, false)
+                            local ok, err = pcall(callback, false)
+                            if not ok then
+                                warn("[EVORE22.3] Keybind callback error (" .. nameText .. "): " .. tostring(err))
+                            end
                         end
                     end)
 
@@ -2695,10 +2765,7 @@ local function makeContainer(realTab, section, tabName, folderName)
         local current = defaultKey
 
         if type(saved) == "string" then
-            current =
-                Enum.KeyCode[saved]
-                or Enum.UserInputType[saved]
-                or defaultKey
+            current = safeInputEnum(saved, defaultKey)
         elseif typeof(saved) == "EnumItem" then
             current = saved
         end
@@ -3115,7 +3182,7 @@ task.spawn(function()
             local v = configGet(key, default.Name)
             if typeof(v) == "EnumItem" then return v end
             if type(v) == "string" then
-                return Enum.KeyCode[v] or default
+                return safeInputEnum(v, default)
             end
             return default
         end
@@ -6607,14 +6674,32 @@ helptab:Label("Auto Config: ON - saves to celeron/AzureLatch.json")
 -- ================================================================
 local buffers = {}
 
-local networkingObject = game:GetService("ReplicatedStorage")
-    :WaitForChild("BytenetStorage")
-    :WaitForChild("Networking")
+local bootstrapReplicatedStorage =
+    game:GetService("ReplicatedStorage")
+
+local bytenetStorage =
+    safeWaitForChild(
+        bootstrapReplicatedStorage,
+        "BytenetStorage",
+        8
+    )
+
+local networkingObject =
+    safeWaitForChild(
+        bytenetStorage,
+        "Networking",
+        8
+    )
 
 local networkingValue =
-    networkingObject:IsA("StringValue")
+    networkingObject
+    and networkingObject:IsA("StringValue")
     and networkingObject.Value
     or ""
+
+if networkingValue == "" then
+    warn("[EVORE22.3] Networking map unavailable; using packet fallbacks.")
+end
 
 local function byteNetPacketId(name, fallback)
     local found =
@@ -6691,7 +6776,7 @@ testFeatures:Label("Ball Features (Test).")
 local testFeatureRuntime = {
     Players = Players,
     LocalPlayer = Players.LocalPlayer,
-    ByteNetReliable = ReplicatedStorage:WaitForChild("ByteNetReliable"),
+    ByteNetReliable = safeWaitForChild(ReplicatedStorage, "ByteNetReliable", 8),
     basePacket = buffer.fromstring(buffers["base"]),
 }
 
@@ -6792,12 +6877,14 @@ testFeatures:Button(
 
                         if heldPart and heldPart:IsA("BasePart") then
                             hrp.CFrame = heldPart.CFrame
-                            pcall(function()
-                                testFeatureRuntime.ByteNetReliable:FireServer(
-                                    testFeatureRuntime.basePacket,
-                                    {{"tackle"}}
-                                )
-                            end)
+                            if testFeatureRuntime.ByteNetReliable then
+                                pcall(function()
+                                    testFeatureRuntime.ByteNetReliable:FireServer(
+                                        testFeatureRuntime.basePacket,
+                                        {{"tackle"}}
+                                    )
+                                end)
+                            end
                         end
                     end
                 end
@@ -6848,7 +6935,7 @@ local ballmag = mainUI:FolderInGroup(
     "Main"
 )
 
-local ballMagnetRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
+local ballMagnetRemote = safeWaitForChild(ReplicatedStorage, "ByteNetReliable", 8)
 local ballMagnetTerrain =
     Workspace:FindFirstChildOfClass("Terrain") or Workspace.Terrain
 
@@ -7103,11 +7190,13 @@ local function startBallMagnet()
             return
         end
 
-        pcall(function()
-            ballMagnetRemote:FireServer(
-                packetBufferOneByte("bytenet_findBall", 29, false)
-            )
-        end)
+        if ballMagnetRemote then
+            pcall(function()
+                ballMagnetRemote:FireServer(
+                    packetBufferOneByte("bytenet_findBall", 29, false)
+                )
+            end)
+        end
     end)
 end
 
@@ -7801,7 +7890,7 @@ do
     }
 
     local variantRemote =
-        ReplicatedStorage:WaitForChild("ByteNetReliable")
+        safeWaitForChild(ReplicatedStorage, "ByteNetReliable", 8)
 
     local function worldCharacterFor(name)
         local chars = Workspace:FindFirstChild("characters")
@@ -7930,12 +8019,18 @@ do
     end
 
     local function pressSkill(skillName)
-        pcall(function()
+        if not variantRemote then
+            return false
+        end
+
+        local ok = pcall(function()
             variantRemote:FireServer(
                 variantUseBuffer(),
                 {{ tostring(skillName) }}
             )
         end)
+
+        return ok
     end
 
     local function resetVariantCycle()
@@ -8102,7 +8197,7 @@ do
     if type(env.CeleronTrapRuntime) == "table" and type(env.CeleronTrapRuntime.destroy) == "function" then
         pcall(env.CeleronTrapRuntime.destroy)
     end
-    local remote = storage:WaitForChild("ByteNetReliable")
+    local remote = safeWaitForChild(storage, "ByteNetReliable", 8)
     local values = storage:FindFirstChild("workspace")
     local holderValue = values and values:FindFirstChild("ballHolder")
     local packet = buffer.create(2)
@@ -12994,7 +13089,7 @@ do
     local autoActivateRunService = game:GetService("RunService")
     local autoActivatePlayers = game:GetService("Players")
     local autoActivateReplicatedStorage = game:GetService("ReplicatedStorage")
-    local autoActivateRemote = autoActivateReplicatedStorage:WaitForChild("ByteNetReliable")
+    local autoActivateRemote = safeWaitForChild(autoActivateReplicatedStorage, "ByteNetReliable", 8)
     local autoActivatePacket = buffer.fromstring(buffers["base"])
     local autoActivatePlayer = autoActivatePlayers.LocalPlayer
 
@@ -13389,8 +13484,20 @@ local currentLineupMode = "Freeze"
 
 local function updateCharacterRefs(char)
     character = char
-    hrp = character:WaitForChild("HumanoidRootPart")
-    humanoid = character:WaitForChild("Humanoid")
+
+    hrp = character
+        and (
+            character:FindFirstChild("HumanoidRootPart")
+            or safeWaitForChild(character, "HumanoidRootPart", 5)
+        )
+        or nil
+
+    humanoid = character
+        and (
+            character:FindFirstChildOfClass("Humanoid")
+            or safeWaitForChild(character, "Humanoid", 5)
+        )
+        or nil
 end
 
 if player.Character then 
@@ -16115,7 +16222,7 @@ do
     }
 
     local passPlayer = Players.LocalPlayer
-    local passRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
+    local passRemote = safeWaitForChild(ReplicatedStorage, "ByteNetReliable", 8)
     local passKeys = {
         [Enum.KeyCode.One] = "skill1",
         [Enum.KeyCode.Two] = "skill2",
@@ -16668,7 +16775,7 @@ local formlessState = {
     trackHumanoid = nil
 }
 
-local formlessRemote = ReplicatedStorage:WaitForChild("ByteNetReliable")
+local formlessRemote = safeWaitForChild(ReplicatedStorage, "ByteNetReliable", 8)
 local formlessPacket = buffer.fromstring(buffers["base"])
 local formlessAnimation = Instance.new("Animation")
 formlessAnimation.AnimationId = "rbxassetid://76587445975710"
@@ -16806,11 +16913,9 @@ othersil:Textbox("Formless Keybind", "Enter Key (Example: Y, V, L.)", function(t
     end
 
     local formatted = text:gsub("%s+", "")
-    local ok, keyCode = pcall(function()
-        return Enum.KeyCode[formatted]
-    end)
+    local keyCode = safeEnumMember(Enum.KeyCode, formatted)
 
-    if ok and keyCode then
+    if keyCode then
         formlessBindKey = keyCode
         notifyFormless("Bind Set To: " .. keyCode.Name)
         return
@@ -17004,11 +17109,9 @@ local function resolveMobileKey(value)
         end
     end
 
-    local ok, keyCode = pcall(function()
-        return Enum.KeyCode[enumName]
-    end)
+    local keyCode = safeEnumMember(Enum.KeyCode, enumName)
 
-    if ok and keyCode then
+    if keyCode then
         return keyCode
     end
 
